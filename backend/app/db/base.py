@@ -1,0 +1,6 @@
+from app.db.base_class import Base  # noqa
+from app.models.user import User  # noqa
+from app.models.boutique import Boutique  # noqa
+from app.models.dress import Dress  # noqa
+from app.models.shortlist_item import ShortlistItem  # noqa
+from app.models.booking import Booking  # noqa

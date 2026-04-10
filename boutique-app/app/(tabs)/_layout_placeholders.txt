@@ -1,0 +1,13 @@
+import React from 'react';
+import { View, Text, SafeAreaView } from 'react-native';
+
+const PlaceholderScreen = ({ title }: { title: string }) => (
+  <SafeAreaView className="flex-1 bg-white items-center justify-center px-10">
+    <Text className="text-2xl font-bold mb-2 text-center" style={{ fontFamily: 'Helvetica Neue' }}>{title}</Text>
+    <Text className="text-sm text-black/40 text-center">This feature is coming soon to your Boutique Portal.</Text>
+  </SafeAreaView>
+);
+
+export const BookingsScreen = () => <PlaceholderScreen title="Booking Management" />;
+export const CatalogScreen = () => <PlaceholderScreen title="Dress Catalog" />;
+export const AccountScreen = () => <PlaceholderScreen title="Store Account" />;

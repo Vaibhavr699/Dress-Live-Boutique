@@ -1,0 +1,218 @@
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
+
+export default function LoginScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { setToken, setUser } = useAuthStore();
+  
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleLogin = async () => {
+    const normalizedEmail = email.trim();
+    const normalizedPassword = password.trim();
+
+    if (!normalizedEmail || !normalizedPassword) {
+      Alert.alert('Error', 'Please enter your email and password');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // 1. Get access token (OAuth2 format)
+      const formData = new URLSearchParams();
+      formData.append('username', normalizedEmail);
+      formData.append('password', normalizedPassword);
+
+      const loginData = await api.postForm('/login/access-token', formData);
+      const token = loginData.access_token;
+      
+      setToken(token);
+
+      // 2. Get user profile
+      const user = await api.get('/users/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      setUser(user);
+
+      // 3. Success -> Go to app
+      router.replace('/(tabs)');
+    } catch (error: any) {
+      Alert.alert('Login Failed', error.message || 'Incorrect email or password');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <SafeAreaView className="flex-1 px-8 pb-12">
+          {/* Back Button */}
+          <View className="flex-row justify-between items-center mb-8">
+            <TouchableOpacity onPress={() => router.back()} className="-ml-2">
+              <Ionicons name="chevron-back" size={24} color="#1A1A1A" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Dress Live Title */}
+          <Text 
+            className="text-black text-center mb-20"
+            style={{ 
+              fontFamily: 'Helvetica Neue',
+              fontSize: 28,
+              fontWeight: '400',
+              lineHeight: 28,
+              letterSpacing: 0
+            }}
+          >
+            Dress Live
+          </Text>
+
+          {/* Section Header */}
+          <Text 
+            className="text-[#1A1A1A] uppercase mb-12 opacity-70"
+            style={{ 
+              fontFamily: 'Helvetica Neue',
+              fontSize: 12,
+              fontWeight: '300',
+              lineHeight: 12,
+              letterSpacing: 0.72
+            }}
+          >
+            Add Your Log In Info
+          </Text>
+
+          {/* Input Fields */}
+          <View className="gap-10 mb-8">
+            <View className="border-b border-[#E0E0E0] pb-2">
+              <Text 
+                className="text-[#1A1A1A]/50 uppercase mb-1"
+                style={{ 
+                  fontFamily: 'Helvetica Neue',
+                  fontSize: 12,
+                  fontWeight: '300',
+                  lineHeight: 12,
+                  letterSpacing: 0.72
+                }}
+              >
+                Email *
+              </Text>
+              <TextInput 
+                className="text-[#1A1A1A] text-sm font-light py-1" 
+                autoCapitalize="none"
+                keyboardType="email-address"
+                value={email}
+                onChangeText={setEmail}
+              />
+            </View>
+
+            <View className="border-b border-[#E0E0E0] pb-2 relative">
+              <Text 
+                className="text-[#1A1A1A]/50 uppercase mb-1"
+                style={{ 
+                  fontFamily: 'Helvetica Neue',
+                  fontSize: 12,
+                  fontWeight: '300',
+                  lineHeight: 12,
+                  letterSpacing: 0.72
+                }}
+              >
+                Password *
+              </Text>
+              <TextInput 
+                className="text-[#1A1A1A] text-sm font-light py-1 pr-10" 
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={setPassword}
+              />
+              <TouchableOpacity 
+                onPress={() => setShowPassword(!showPassword)}
+                className="absolute right-0 bottom-3"
+              >
+                <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={18} color="#1A1A1A" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Forgot Password Link */}
+          <TouchableOpacity 
+            onPress={() => router.push('/forgot-password')}
+            className="items-end mb-16"
+          >
+            <Text 
+              className="text-[#1A1A1A] opacity-60"
+              style={{ 
+                fontFamily: 'Helvetica Neue',
+                fontSize: 12,
+                fontWeight: '300',
+                lineHeight: 12
+              }}
+            >
+              Forgot your password?
+            </Text>
+          </TouchableOpacity>
+
+          {/* Action Button */}
+          <TouchableOpacity 
+            activeOpacity={0.9}
+            onPress={handleLogin}
+            disabled={loading}
+            className="bg-[#1A1A1A] py-6 items-center mb-10"
+          >
+            {loading ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-white text-sm font-bold tracking-[3px] uppercase">
+                Log In
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          {/* Sign Up Footer */}
+          <View className="flex-row justify-center items-center gap-6">
+            <Text 
+              className="text-[#1A1A1A]/60"
+              style={{ 
+                fontFamily: 'Helvetica Neue',
+                fontSize: 14,
+                fontWeight: '300',
+                lineHeight: 14,
+                letterSpacing: 0
+              }}
+            >
+              No Account?
+            </Text>
+            <TouchableOpacity onPress={() => router.replace('/signup')}>
+              <Text 
+                className="text-[#1A1A1A] font-bold"
+                style={{ 
+                  fontFamily: 'Helvetica Neue',
+                  fontSize: 14,
+                  fontWeight: '300',
+                  lineHeight: 14,
+                  letterSpacing: 0
+                }}
+              >
+                Sign Up
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </ScrollView>
+
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      />
+    </View>
+  );
+}
