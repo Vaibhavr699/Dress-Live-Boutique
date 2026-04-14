@@ -1,21 +1,53 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { api } from '@shared/api/api';
 
 export default function ConfirmDeleteScreen() {
   const router = useRouter();
+  const { source } = useLocalSearchParams<{ source?: string }>();
   const insets = useSafeAreaInsets();
-  const { logout } = useAuthStore();
+  const { logout, user } = useAuthStore();
+  const [email, setEmail] = useState(user?.email || '');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleFinalDelete = () => {
-    Alert.alert(
-      'Account Deleted',
-      'Your account has been successfully removed. All data has been cleared.',
-      [{ text: 'OK', onPress: logout }]
-    );
+  const handleFinalDelete = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Missing Details', 'Please confirm your email and password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.delete('/users/me', {
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password.trim(),
+        }),
+      });
+      logout();
+      Alert.alert('Account Deleted', 'Your account has been successfully removed.', [
+        { text: 'OK', onPress: () => router.replace('/landing') },
+      ]);
+    } catch (error) {
+      Alert.alert('Delete Failed', error instanceof Error ? error.message : 'Could not delete your account.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleBack = () => {
+    if (source === 'profile') {
+      router.replace({
+        pathname: '/profile-delete-account',
+        params: { source },
+      });
+      return;
+    }
+    router.back();
   };
 
   return (
@@ -25,7 +57,7 @@ export default function ConfirmDeleteScreen() {
         className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={handleBack} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
       </View>
@@ -37,28 +69,39 @@ export default function ConfirmDeleteScreen() {
         </Text>
 
         <View className="mb-8">
-          <Text className="text-black/30 text-[9px] font-bold uppercase mb-2 tracking-[0.5px]">Region</Text>
+          <Text className="text-black/30 text-[9px] font-bold uppercase mb-2 tracking-[0.5px]">Email</Text>
           <TextInput 
-            placeholder="Region"
+            placeholder="Email"
             className="border-b border-[#F0F0F0] py-4 text-black text-sm"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
           />
         </View>
 
         <View className="mb-10">
-          <Text className="text-black/30 text-[9px] font-bold uppercase mb-2 tracking-[0.5px]">Postal Code</Text>
+          <Text className="text-black/30 text-[9px] font-bold uppercase mb-2 tracking-[0.5px]">Password</Text>
           <TextInput 
-            placeholder="Postal Code"
+            placeholder="Password"
             className="border-b border-[#F0F0F0] py-4 text-black text-sm"
-            keyboardType="number-pad"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
           />
         </View>
 
         <TouchableOpacity 
           activeOpacity={0.9}
           onPress={handleFinalDelete}
+          disabled={loading}
           className="w-full bg-[#FF3B30] py-4 items-center justify-center mt-10"
         >
-          <Text className="text-white text-[12px] font-bold tracking-[2.5px] uppercase">Delete All</Text>
+          {loading ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white text-[12px] font-bold tracking-[2.5px] uppercase">Delete All</Text>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </View>

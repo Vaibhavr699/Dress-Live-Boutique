@@ -50,7 +50,7 @@ export default function DeleteAccountConfirmationScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => router.replace('/')}
+          onPress={() => router.replace('/landing')}
           className="bg-[#DD2C2C] py-4 items-center justify-center mt-20"
         >
           <Text className="text-[11px] uppercase tracking-[1px] text-white">Delete All</Text>

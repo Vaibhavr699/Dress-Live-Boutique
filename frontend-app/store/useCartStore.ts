@@ -7,8 +7,9 @@ interface CartItem {
   id: string;
   name: string;
   price: string;
-  image: any;
+  imageUrl?: string | null;
   quantity: number;
+  selected: boolean;
 }
 
 interface CartState {
@@ -16,6 +17,7 @@ interface CartState {
   addItem: (item: Omit<CartItem, 'quantity'>) => void;
   removeItem: (id: string) => void;
   updateQuantity: (id: string, quantity: number) => void;
+  toggleSelected: (id: string) => void;
   clearCart: () => void;
   totalItems: () => number;
 }
@@ -52,7 +54,7 @@ export const useCartStore = create<CartState>()(
         if (existingItem) {
           set({
             items: currentItems.map((i) =>
-              i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i
+              i.id === item.id ? { ...i, quantity: i.quantity + 1, selected: true } : i
             ),
           });
         } else {
@@ -63,9 +65,21 @@ export const useCartStore = create<CartState>()(
         set({ items: get().items.filter((i) => i.id !== id) });
       },
       updateQuantity: (id, quantity) => {
+        if (quantity <= 0) {
+          set({ items: get().items.filter((i) => i.id !== id) });
+          return;
+        }
+
         set({
           items: get().items.map((i) =>
-            i.id === id ? { ...i, quantity: Math.max(0, quantity) } : i
+            i.id === id ? { ...i, quantity } : i
+          ),
+        });
+      },
+      toggleSelected: (id) => {
+        set({
+          items: get().items.map((i) =>
+            i.id === id ? { ...i, selected: !i.selected } : i
           ),
         });
       },

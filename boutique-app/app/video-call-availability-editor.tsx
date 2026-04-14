@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, SafeAreaView, ScrollView } from 'react-na
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useTeamStore } from '../store/useTeamStore';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const TIME_OPTIONS = [
@@ -31,7 +32,10 @@ export default function VideoCallAvailabilityEditorScreen() {
     returnState?: string;
     businessSchedule?: string;
     consultantSchedule?: string;
+    memberId?: string;
+    memberName?: string;
   }>();
+  const updateMemberAvailability = useTeamStore((state) => state.updateMemberAvailability);
   const incomingSchedule = params.mode === 'business' ? params.businessSchedule : params.consultantSchedule;
   const parsedSchedule = incomingSchedule
     ? (JSON.parse(incomingSchedule) as { day: string; value: string }[])
@@ -85,6 +89,16 @@ export default function VideoCallAvailabilityEditorScreen() {
   const handleSave = () => {
     const returnState = params.returnState;
     const mode = params.mode;
+    const nextConsultantSchedule = summaryItems;
+
+    if (typeof params.memberId === 'string' && params.memberId.length > 0) {
+      updateMemberAvailability(params.memberId, nextConsultantSchedule);
+      router.replace({
+        pathname: '/team-member-details',
+        params: { id: params.memberId },
+      });
+      return;
+    }
 
     let nextState = 'complete';
     if (mode === 'business' && returnState === 'empty') {
@@ -119,7 +133,9 @@ export default function VideoCallAvailabilityEditorScreen() {
           className="text-[24px] text-black mb-1"
           style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
         >
-          Set Video Call Availability
+          {typeof params.memberName === 'string' && params.memberName.length > 0
+            ? `${params.memberName} Availability`
+            : 'Set Video Call Availability'}
         </Text>
         <Text className="text-[10px] text-black/45 leading-4 mb-6">
           Let customers know when you are available

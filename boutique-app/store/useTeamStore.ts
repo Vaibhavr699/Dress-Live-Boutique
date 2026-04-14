@@ -5,14 +5,30 @@ import * as SecureStore from 'expo-secure-store';
 
 export type TeamMemberImageKey = 'avatar' | 'catalog';
 
+export type TeamAvailabilityEntry = {
+  day: string;
+  value: string;
+};
+
+export const DEFAULT_TEAM_AVAILABILITY: TeamAvailabilityEntry[] = [
+  { day: 'Monday', value: 'Available: 11:00AM To 01:00PM' },
+  { day: 'Tuesday', value: 'Available: 11:00AM To 01:00PM' },
+  { day: 'Wednesday', value: 'Available: 11:00AM To 01:00PM' },
+  { day: 'Thursday', value: 'Available: 11:00AM To 01:00PM' },
+  { day: 'Friday', value: 'Available: 11:00AM To 01:00PM' },
+  { day: 'Saturday', value: 'Closed' },
+  { day: 'Sunday', value: 'Closed' },
+];
+
 export interface TeamMember {
   id: string;
   name: string;
   role: string;
   email: string;
   status: 'Online' | 'Offline';
-  languages: string;
+  languages: string[];
   availabilityOn: boolean;
+  availabilitySchedule: TeamAvailabilityEntry[];
   imageKey: TeamMemberImageKey;
 }
 
@@ -20,14 +36,16 @@ type TeamMemberInput = {
   name: string;
   role: string;
   email: string;
-  languages: string;
+  languages: string[];
   availabilityOn: boolean;
+  availabilitySchedule?: TeamAvailabilityEntry[];
 };
 
 interface TeamState {
   members: TeamMember[];
   addMember: (member: TeamMemberInput) => string;
   updateMember: (id: string, updates: TeamMemberInput) => void;
+  updateMemberAvailability: (id: string, availabilitySchedule: TeamAvailabilityEntry[]) => void;
   deleteMember: (id: string) => void;
 }
 
@@ -61,8 +79,9 @@ const INITIAL_MEMBERS: TeamMember[] = [
     role: 'Sale Executive',
     email: 'example@gmail.com',
     status: 'Offline',
-    languages: 'English, French',
+    languages: ['English', 'French'],
     availabilityOn: true,
+    availabilitySchedule: DEFAULT_TEAM_AVAILABILITY,
     imageKey: 'avatar',
   },
   {
@@ -71,8 +90,9 @@ const INITIAL_MEMBERS: TeamMember[] = [
     role: 'Sale Executive',
     email: 'amina@example.com',
     status: 'Offline',
-    languages: 'English, German',
+    languages: ['English', 'German'],
     availabilityOn: false,
+    availabilitySchedule: DEFAULT_TEAM_AVAILABILITY,
     imageKey: 'catalog',
   },
 ];
@@ -93,6 +113,7 @@ export const useTeamStore = create<TeamState>()(
             {
               id: newId,
               status: member.availabilityOn ? 'Online' : 'Offline',
+              availabilitySchedule: member.availabilitySchedule ?? DEFAULT_TEAM_AVAILABILITY,
               imageKey: 'avatar',
               ...member,
             },
@@ -109,6 +130,22 @@ export const useTeamStore = create<TeamState>()(
                   ...member,
                   ...updates,
                   status: updates.availabilityOn ? 'Online' : 'Offline',
+                  availabilitySchedule: updates.availabilitySchedule ?? member.availabilitySchedule,
+                }
+              : member
+          ),
+        });
+      },
+      updateMemberAvailability: (id, availabilitySchedule) => {
+        const hasOpenSlot = availabilitySchedule.some((entry) => entry.value !== 'Closed');
+        set({
+          members: get().members.map((member) =>
+            member.id === id
+              ? {
+                  ...member,
+                  availabilitySchedule,
+                  availabilityOn: hasOpenSlot,
+                  status: hasOpenSlot ? 'Online' : 'Offline',
                 }
               : member
           ),

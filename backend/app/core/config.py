@@ -21,13 +21,22 @@ class Settings(BaseSettings):
     POSTGRES_PASSWORD: str
     POSTGRES_DB: str
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
+    SUPABASE_URL: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+    SUPABASE_STORAGE_BUCKET: str = "profile-images"
+    RESEND_API_KEY: Optional[str] = None
+    EMAIL_FROM: str = "Dress Live <no-reply@dresslive.app>"
 
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         if self.SQLALCHEMY_DATABASE_URI:
+            if not self.SUPABASE_URL and self.POSTGRES_SERVER.endswith(".supabase.co"):
+                self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"
             return self
 
         self.SQLALCHEMY_DATABASE_URI = f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
+        if not self.SUPABASE_URL and self.POSTGRES_SERVER.endswith(".supabase.co"):
+            self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"
         return self
 
     SECRET_KEY: str

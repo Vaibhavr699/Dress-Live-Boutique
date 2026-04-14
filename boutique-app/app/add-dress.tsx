@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 const STATUS_OPTIONS = ['Published', 'Private'] as const;
 const CATEGORY_OPTIONS = ['Abendkleider', 'Hochzeitskleider', 'Add Ons'] as const;
@@ -145,6 +146,7 @@ function UploadRow({
 export default function AddDressScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { user } = useAuthStore();
 
   const [loading, setLoading] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -209,6 +211,11 @@ export default function AddDressScreen() {
       return;
     }
 
+    if (!user?.boutique_id) {
+      Alert.alert('Boutique Missing', 'Your account is not linked to a boutique yet.');
+      return;
+    }
+
     setLoading(true);
     try {
       await api.post('/dresses/', {
@@ -223,7 +230,7 @@ export default function AddDressScreen() {
           .join(', '),
         colors: selectedColor,
         image_url: frontImage || backImage || '',
-        boutique_id: 1,
+        boutique_id: user.boutique_id,
         is_ai_enabled:
           selectedServices.includes('AI TRY ON') ||
           selectedServices.includes('LIVE TRY-ON'),

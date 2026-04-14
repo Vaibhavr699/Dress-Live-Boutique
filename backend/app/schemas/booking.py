@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class BookingBase(BaseModel):
@@ -58,8 +58,32 @@ class Booking(BaseModel):
         from_attributes = True
 
 
+class BookingCustomerSummary(BaseModel):
+    id: int
+    full_name: Optional[str] = None
+    email: EmailStr
+
+
+class BookingDressSummary(BaseModel):
+    id: int
+    name: str
+    price: float
+    colors: Optional[str] = None
+    sizes: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class BookingBoutiqueSummary(BaseModel):
+    id: int
+    name: Optional[str] = None
+    location: Optional[str] = None
+
+
 class BookingView(Booking):
-    dress_ids: List[int] = []
+    dress_ids: List[int] = Field(default_factory=list)
+    customer: Optional[BookingCustomerSummary] = None
+    dresses: List[BookingDressSummary] = Field(default_factory=list)
+    boutique: Optional[BookingBoutiqueSummary] = None
 
     @field_validator("dress_ids", mode="before")
     @classmethod

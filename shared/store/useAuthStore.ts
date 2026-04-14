@@ -6,6 +6,15 @@ interface User {
   id: number;
   email: string;
   full_name: string;
+  profile_image_url?: string | null;
+  profile_image_uri?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  apartment_number?: string | null;
+  state_province?: string | null;
+  region?: string | null;
+  postal_code?: string | null;
+  country_code?: string | null;
   is_active: boolean;
   is_superuser: boolean;
   role?: 'buyer' | 'partner';

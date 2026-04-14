@@ -197,6 +197,12 @@ export default function TeamScreen() {
                   </Text>
                   <Text className="text-[11px] text-black/55 mt-1">{member.role}</Text>
                   <Text className="text-[11px] text-black/55 mt-0.5">{member.email}</Text>
+                  <Text className="text-[10px] text-black/45 mt-2">
+                    Languages: {member.languages.join(', ')}
+                  </Text>
+                  <Text className="text-[10px] text-black/45 mt-1">
+                    Availability: {member.availabilityOn ? 'Enabled' : 'Disabled'}
+                  </Text>
                 </View>
               </View>
 

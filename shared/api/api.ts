@@ -144,6 +144,32 @@ export const api = {
     }
   },
 
+  async postMultipart(endpoint: string, formData: FormData, options: any = {}) {
+    try {
+      const authHeader = this.getHeaders()['Authorization'];
+      const response = await fetch(`${BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          ...(authHeader ? { 'Authorization': authHeader } : {}),
+          ...options.headers,
+        },
+        body: formData,
+      });
+
+      const data = await parseResponseBody(response);
+
+      if (!response.ok) {
+        throw new Error((typeof data === 'object' && data?.detail) || 'Upload failed');
+      }
+
+      return data;
+    } catch (error: any) {
+      const apiError = createApiError(error);
+      console.error(`API POST Multipart Error [${endpoint}] (${BASE_URL}):`, apiError);
+      throw apiError;
+    }
+  },
+
   async get(endpoint: string, options: any = {}) {
     try {
       const response = await fetch(`${BASE_URL}${endpoint}`, {
@@ -176,6 +202,7 @@ export const api = {
           ...this.getHeaders(),
           ...options.headers,
         },
+        ...(options.body ? { body: options.body } : {}),
       });
 
       const data = await parseResponseBody(response);

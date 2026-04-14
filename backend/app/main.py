@@ -56,6 +56,30 @@ def ensure_boutique_visibility_column() -> None:
                 """
             )
         )
+        connection.execute(
+            text(
+                """
+                ALTER TABLE "user"
+                ADD COLUMN IF NOT EXISTS profile_image_url VARCHAR NULL
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                ALTER TABLE "user"
+                ADD COLUMN IF NOT EXISTS password_otp_hash VARCHAR NULL
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                ALTER TABLE "user"
+                ADD COLUMN IF NOT EXISTS password_otp_expires_at VARCHAR NULL
+                """
+            )
+        )
 
 @app.get("/")
 async def root():

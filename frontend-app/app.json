@@ -47,6 +47,18 @@
           }
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Dress Live to access your location so we can show your current area."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Dress Live to access your photos so you can upload a profile picture."
+        }
+      ],
       "expo-font",
       "expo-secure-store"
     ],

@@ -41,7 +41,7 @@ export default function BoutiqueDashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuthStore();
-  const BOUTIQUE_ID = 1;
+  const boutiqueId = user?.boutique_id ?? null;
   
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<any[]>([]);
@@ -50,33 +50,49 @@ export default function BoutiqueDashboard() {
   const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
 
   const fetchDresses = useCallback(async () => {
+    if (!boutiqueId) {
+      setDresses([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const data = await api.get(`/dresses/?boutique_id=${BOUTIQUE_ID}`);
+      const data = await api.get(`/dresses/?boutique_id=${boutiqueId}`);
       setDresses(data);
     } catch (error) {
       console.error('Failed to fetch dresses:', error);
     } finally {
       setLoading(false);
     }
-  }, [BOUTIQUE_ID]);
+  }, [boutiqueId]);
 
   const fetchBoutiqueVisibility = useCallback(async () => {
+    if (!boutiqueId) {
+      setIsStoreVisible(false);
+      return;
+    }
+
     try {
-      const boutique = await api.get(`/boutiques/${BOUTIQUE_ID}`);
+      const boutique = await api.get(`/boutiques/${boutiqueId}`);
       setIsStoreVisible(boutique.is_visible_to_customers ?? true);
     } catch (error) {
       console.error('Failed to fetch boutique visibility:', error);
     }
-  }, [BOUTIQUE_ID]);
+  }, [boutiqueId]);
 
   const handleStoreVisibilityChange = useCallback(
     async (value: boolean) => {
+      if (!boutiqueId) {
+        Alert.alert('Boutique Missing', 'Your account is not linked to a boutique yet.');
+        return;
+      }
+
       const previousValue = isStoreVisible;
       setIsStoreVisible(value);
       setIsUpdatingVisibility(true);
 
       try {
-        await api.put(`/boutiques/${BOUTIQUE_ID}`, {
+        await api.put(`/boutiques/${boutiqueId}`, {
           is_visible_to_customers: value,
         });
       } catch (error: any) {
@@ -86,7 +102,7 @@ export default function BoutiqueDashboard() {
         setIsUpdatingVisibility(false);
       }
     },
-    [BOUTIQUE_ID, isStoreVisible]
+    [boutiqueId, isStoreVisible]
   );
 
   useFocusEffect(
@@ -156,6 +172,13 @@ export default function BoutiqueDashboard() {
         {loading ? (
           <View className="flex-1 items-center justify-center py-20">
             <ActivityIndicator color="black" />
+          </View>
+        ) : !boutiqueId ? (
+          <View className="flex-1 items-center justify-center py-20 px-10">
+            <Text className="text-lg font-bold mb-2 text-center">Boutique setup incomplete</Text>
+            <Text className="text-xs text-black/40 text-center leading-5">
+              This seller account is not linked to a boutique yet, so inventory cannot load.
+            </Text>
           </View>
         ) : dresses.length === 0 ? (
           <View className="flex-1 items-center justify-center py-20 px-10">

@@ -1,22 +1,61 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuthStore } from '@shared/store/useAuthStore';
+import { api } from '@shared/api/api';
 
 export default function VerifyPasswordScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { newPassword, source, email } = useLocalSearchParams<{ newPassword?: string; source?: string; email?: string }>();
+  const { setUser } = useAuthStore();
   const [code, setCode] = useState('');
   const [errorVisible, setErrorVisible] = useState(false);
   const [fieldError, setFieldError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleVerify = () => {
-    if (!code) {
+  const handleVerify = async () => {
+    if (!code.trim()) {
       setFieldError('This field is mandatory');
       return;
     }
-    setErrorVisible(true);
+
+    if (!newPassword || newPassword.trim().length < 8) {
+      setErrorVisible(true);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const updatedUser = await api.put('/users/me/password/otp', { code, new_password: newPassword });
+      setUser(updatedUser);
+      router.replace('/(tabs)/profile');
+    } catch (error) {
+      setFieldError(error instanceof Error ? error.message : 'Could not update your password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    try {
+      await api.post('/users/me/password/otp', { email: typeof email === 'string' ? email : undefined });
+      Alert.alert('Verification Code', 'A new code has been sent to your email.');
+    } catch (error) {
+      Alert.alert('OTP Failed', error instanceof Error ? error.message : 'Could not resend verification code.');
+    }
+  };
+  const handleBack = () => {
+    if (source === 'profile') {
+      router.replace({
+        pathname: '/profile-security-password',
+        params: { source },
+      });
+      return;
+    }
+    router.back();
   };
 
   return (
@@ -26,7 +65,7 @@ export default function VerifyPasswordScreen() {
         className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={handleBack} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
       </View>
@@ -34,7 +73,7 @@ export default function VerifyPasswordScreen() {
       <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
         <Text className="text-black text-xs font-bold uppercase mb-4 tracking-[1px] opacity-40">Confirm New Password</Text>
         <Text className="text-black/50 text-[12px] leading-5 mb-10">
-          Please enter the code sent to{'\n'}example@gmail.com
+          Please enter the code sent to {typeof email === 'string' && email.length > 0 ? email : 'your email'}.
         </Text>
 
         <View className="mb-6">
@@ -45,7 +84,7 @@ export default function VerifyPasswordScreen() {
                 setCode(t);
                 setFieldError('');
             }}
-            placeholder="Enter code"
+            placeholder="Enter verification code"
             className={`border-b border-[#F0F0F0] py-4 text-black text-sm ${fieldError ? 'border-red-500' : ''}`}
             keyboardType="number-pad"
           />
@@ -57,13 +96,20 @@ export default function VerifyPasswordScreen() {
           )}
         </View>
 
+        <TouchableOpacity onPress={handleResend} disabled={loading} className="mb-6">
+          <Text className="text-black/50 text-[11px] underline">Resend code</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity 
           activeOpacity={0.9}
           onPress={handleVerify}
+          disabled={loading}
           className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
           style={{ marginTop: 240 }}
         >
-          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Verify</Text>
+          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">
+            {loading ? 'Updating...' : 'Verify'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
 

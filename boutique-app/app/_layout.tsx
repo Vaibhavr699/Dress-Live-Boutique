@@ -16,7 +16,7 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const segments = useSegments();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
 
   const [loaded, error] = useFonts({
@@ -49,12 +49,25 @@ export default function RootLayout() {
     if (!isReady) return;
 
     const inProtectedTabs = segments[0] === '(tabs)';
+    const onPublicAuthScreen = segments[0] === 'login' || segments[0] === 'signup';
+    const hasRoleMismatch = isAuthenticated && !!user && user.role !== 'partner';
+
+    if (hasRoleMismatch) {
+      logout();
+      router.replace('/login');
+      return;
+    }
+
+    if (isAuthenticated && user?.role === 'partner' && !inProtectedTabs && onPublicAuthScreen) {
+      router.replace('/(tabs)');
+      return;
+    }
 
     if (!isAuthenticated && inProtectedTabs) {
       // Keep protected pages behind login, but do not auto-skip the public landing flow.
-      router.replace('/');
+      router.replace('/landing');
     }
-  }, [isAuthenticated, segments, isReady, router]);
+  }, [isAuthenticated, user, segments, isReady, router, logout]);
 
   if (!loaded && !error) {
     return null;
@@ -64,6 +77,7 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="landing" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="signup" options={{ headerShown: false, animation: 'fade' }} />

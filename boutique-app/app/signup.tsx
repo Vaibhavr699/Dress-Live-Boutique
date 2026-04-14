@@ -79,6 +79,7 @@ export default function SignupScreen() {
         email,
         password,
         full_name: ownerName,
+        role: 'partner',
         boutique_info: {
             name: shopName,
             description: shopDescription,

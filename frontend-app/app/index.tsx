@@ -87,7 +87,7 @@ export default function LandingPage() {
             {/* "Get Started" Button Overlay */}
             <TouchableOpacity 
               activeOpacity={0.9}
-              onPress={() => router.push('/auth-choice')}
+              onPress={() => router.push('/(tabs)')}
               style={{ 
                 position: 'absolute', 
                 bottom: 0, 
@@ -113,7 +113,7 @@ export default function LandingPage() {
             style={{ borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center' }}
           >
             <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
-              You have already account? Log in
+              Log in / Sign up
             </Text>
           </TouchableOpacity>
         </View>

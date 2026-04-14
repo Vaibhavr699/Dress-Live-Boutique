@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
 import { Image } from 'expo-image';
+import { useCartStore } from '@/store/useCartStore';
 
 const HOME_ICON = require('../../assets/svg/Home.svg');
 const CART_ICON = require('../../assets/svg/Cart.svg');
@@ -9,7 +10,17 @@ const WISHLIST_ICON = require('../../assets/svg/Wishlist.svg');
 const BOOKING_ICON = require('../../assets/svg/Booking.svg');
 const PROFILE_ICON = require('../../assets/svg/Profile.svg');
 
-const TabIcon = ({ name, color, focused }: { name: string, color: string, focused: boolean }) => {
+const TabIcon = ({
+  name,
+  color,
+  focused,
+  badgeCount = 0,
+}: {
+  name: string,
+  color: string,
+  focused: boolean,
+  badgeCount?: number,
+}) => {
   const getIconSource = () => {
     switch (name) {
       case 'home': return HOME_ICON;
@@ -29,6 +40,11 @@ const TabIcon = ({ name, color, focused }: { name: string, color: string, focuse
         tintColor={focused ? "#1A1A1A" : "#1A1A1A50"}
         contentFit="contain"
       />
+      {badgeCount > 0 ? (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{badgeCount > 99 ? '99+' : badgeCount}</Text>
+        </View>
+      ) : null}
     </View>
   );
 };
@@ -52,6 +68,10 @@ const CustomLabel = ({ title, focused }: { title: string, focused: boolean }) =>
 );
 
 export default function TabLayout() {
+  const cartCount = useCartStore((state) =>
+    state.items.reduce((total, item) => total + item.quantity, 0)
+  );
+
   return (
     <Tabs
       screenOptions={{
@@ -82,7 +102,9 @@ export default function TabLayout() {
         name="cart"
         options={{
           tabBarLabel: ({ focused }) => <CustomLabel title="Cart" focused={focused} />,
-          tabBarIcon: ({ color, focused }) => <TabIcon name="cart" color={color} focused={focused} />,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="cart" color={color} focused={focused} badgeCount={cartCount} />
+          ),
         }}
       />
       <Tabs.Screen
@@ -149,6 +171,12 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="my-measurements"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
         name="payment-methods"
         options={{
           href: null,
@@ -206,6 +234,25 @@ const styles = StyleSheet.create({
     height: 24,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  badge: {
+    position: 'absolute',
+    top: -8,
+    right: -10,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#1A1A1A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '700',
+    lineHeight: 10,
   },
   labelContainer: {
     alignItems: 'center',
