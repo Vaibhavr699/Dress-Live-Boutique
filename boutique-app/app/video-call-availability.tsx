@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, SafeAreaView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { DEFAULT_TEAM_AVAILABILITY, useTeamStore } from '../store/useTeamStore';
 
 type AvailabilityState = 'empty' | 'business' | 'complete';
 
@@ -50,14 +51,27 @@ export default function VideoCallAvailabilityScreen() {
     state?: AvailabilityState;
     businessSchedule?: string;
     consultantSchedule?: string;
+    memberId?: string;
+    memberName?: string;
   }>();
+  const members = useTeamStore((state) => state.members);
+  const teamMember =
+    typeof params.memberId === 'string'
+      ? members.find((member) => member.id === params.memberId) ?? null
+      : null;
   const state = (params.state as AvailabilityState) || 'empty';
   const businessSchedule = params.businessSchedule
     ? (JSON.parse(params.businessSchedule) as { day: string; value: string }[])
     : BUSINESS_HOURS;
-  const consultantSchedule = params.consultantSchedule
-    ? (JSON.parse(params.consultantSchedule) as { day: string; value: string }[])
-    : CONSULTANT_HOURS;
+  const consultantSchedule = teamMember
+    ? teamMember.availabilitySchedule
+    : params.consultantSchedule
+      ? (JSON.parse(params.consultantSchedule) as { day: string; value: string }[])
+      : CONSULTANT_HOURS;
+  const memberName =
+    typeof params.memberName === 'string' && params.memberName.length > 0
+      ? params.memberName
+      : teamMember?.name;
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -70,11 +84,11 @@ export default function VideoCallAvailabilityScreen() {
           className="text-[24px] text-black mb-1"
           style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
         >
-          Set Video Call Availability
+          {teamMember ? `${memberName} Availability` : 'Set Video Call Availability'}
         </Text>
         <Text className="text-[10px] text-black/45 leading-4 mb-6">
-          {state === 'empty'
-            ? 'Each shop can invite their consultant and availabilities'
+          {teamMember
+            ? 'Define when this consultant can take appointments.'
             : 'Each shop can invite their consultant and availabilities'}
         </Text>
 
@@ -83,58 +97,36 @@ export default function VideoCallAvailabilityScreen() {
             className="text-[12px] text-black mb-1"
             style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
           >
-            Set Business Hours Availability
+            {teamMember ? 'Consultant Availability' : 'Set Business Hours Availability'}
           </Text>
           <Text className="text-[10px] text-black/45 leading-4 mb-4">
-            Let customers know when you are available
+            {teamMember ? 'Choose the days and times this consultant is available.' : 'Let customers know when you are available'}
           </Text>
 
-          {state === 'complete' ? (
-            <>
-              <HoursList items={consultantSchedule} />
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() =>
-                  router.push({
-                    pathname: '/video-call-availability-editor',
-                    params: {
-                      mode: 'consultant',
-                      returnState: 'complete',
-                      businessSchedule: JSON.stringify(businessSchedule),
-                      consultantSchedule: JSON.stringify(consultantSchedule),
-                    },
-                  })
-                }
-                className="border border-black py-4 items-center justify-center mt-4"
-              >
-                <Text className="text-[11px] uppercase tracking-[1px] text-black">
-                  Edit Video Call Availability
-                </Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() =>
-                router.push({
-                  pathname: '/video-call-availability-editor',
-                  params: {
-                    mode: 'consultant',
-                    returnState: state,
-                    businessSchedule: JSON.stringify(businessSchedule),
-                    consultantSchedule: JSON.stringify(consultantSchedule),
-                  },
-                })
-              }
-              className="border border-black py-4 items-center justify-center"
-            >
-              <Text className="text-[11px] uppercase tracking-[1px] text-black">
-                Set Video Call Availability
-              </Text>
-            </TouchableOpacity>
-          )}
+          <HoursList items={consultantSchedule.length > 0 ? consultantSchedule : DEFAULT_TEAM_AVAILABILITY} />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() =>
+              router.push({
+                pathname: '/video-call-availability-editor',
+                params: {
+                  mode: 'consultant',
+                  returnState: teamMember ? 'complete' : state,
+                  businessSchedule: JSON.stringify(businessSchedule),
+                  consultantSchedule: JSON.stringify(consultantSchedule),
+                  ...(teamMember ? { memberId: teamMember.id, memberName: teamMember.name } : {}),
+                },
+              })
+            }
+            className="border border-black py-4 items-center justify-center mt-4"
+          >
+            <Text className="text-[11px] uppercase tracking-[1px] text-black">
+              {teamMember ? 'Edit Consultant Availability' : state === 'complete' ? 'Edit Video Call Availability' : 'Set Video Call Availability'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
+        {teamMember ? null : (
         <View className="border-t border-[#EDEDED] pt-6">
           <Text
             className="text-[12px] text-black mb-1"
@@ -191,6 +183,7 @@ export default function VideoCallAvailabilityScreen() {
             </>
           )}
         </View>
+        )}
 
         <View className="mt-auto flex-row pb-10 pt-8">
           <TouchableOpacity
@@ -206,7 +199,7 @@ export default function VideoCallAvailabilityScreen() {
             className="flex-1 bg-black py-4 items-center justify-center ml-1"
           >
             <Text className="text-[11px] uppercase tracking-[1px] text-white">
-              {state === 'empty' ? 'Save & Published' : 'Save Changes'}
+              {teamMember ? 'Done' : state === 'empty' ? 'Save & Published' : 'Save Changes'}
             </Text>
           </TouchableOpacity>
         </View>

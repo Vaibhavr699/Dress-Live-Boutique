@@ -42,5 +42,22 @@ class CRUDShortlist:
         db.commit()
         return db_obj
 
+    def replace_for_user(self, db: Session, *, user_id: int, dress_ids: List[int]) -> List[ShortlistItem]:
+        unique_ids: List[int] = []
+        seen = set()
+        for dress_id in dress_ids:
+            if dress_id in seen:
+                continue
+            seen.add(dress_id)
+            unique_ids.append(dress_id)
+
+        limited_ids = unique_ids[:4]
+
+        db.query(ShortlistItem).filter(ShortlistItem.user_id == user_id).delete()
+        for dress_id in limited_ids:
+            db.add(ShortlistItem(user_id=user_id, dress_id=dress_id))
+        db.commit()
+        return self.get_multi_by_user(db, user_id=user_id)
+
 
 crud_shortlist = CRUDShortlist()

@@ -1,41 +1,29 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Dimensions } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-type CartItem = {
-  id: string;
-  name: string;
-  price: string;
-  image: any;
-  selected: boolean;
-};
+import { useCartStore } from '@/store/useCartStore';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  
-  // Mock cart items
-  const [cartItems, setCartItems] = useState<CartItem[]>([
-    { id: '1', name: 'Bella Gown', price: '1800 EUR', image: require('@/assets/images/Dashboard image 1.png'), selected: true },
-    { id: '2', name: 'Bella Gown', price: '1800 EUR', image: require('@/assets/images/Dashboard image 2.png'), selected: true },
-    { id: '3', name: 'Bella Gown', price: '1800 EUR', image: require('@/assets/images/Dashboard image 3.png'), selected: false },
-    { id: '4', name: 'Bella Gown', price: '1800 EUR', image: require('@/assets/images/Dashboard image 3.png'), selected: false },
-  ]);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const cartItems = useCartStore((state) => state.items);
+  const removeItem = useCartStore((state) => state.removeItem);
+  const updateQuantity = useCartStore((state) => state.updateQuantity);
+  const toggleSelected = useCartStore((state) => state.toggleSelected);
 
   const toggleSelect = (id: string) => {
-    setCartItems(prev => prev.map(item => 
-      item.id === id ? { ...item, selected: !item.selected } : item
-    ));
+    toggleSelected(id);
   };
 
-  const removeItem = (id: string) => {
-    setCartItems(prev => prev.filter(item => item.id !== id));
-  };
-
-  const selectedCount = cartItems.filter(item => item.selected).length;
+  const selectedCount = useMemo(
+    () => cartItems.filter((item) => item.selected).reduce((total, item) => total + item.quantity, 0),
+    [cartItems]
+  );
   const isEmpty = cartItems.length === 0;
 
   return (
@@ -46,7 +34,7 @@ export default function CartScreen() {
         style={{ paddingTop: insets.top + 10 }}
       >
         <Text className="text-black text-sm font-bold uppercase tracking-[2px]">
-          Shopping Cart {cartItems.length}
+          Shopping Cart {cartItems.reduce((total, item) => total + item.quantity, 0)}
         </Text>
       </View>
 
@@ -81,7 +69,7 @@ export default function CartScreen() {
                 {/* Checkbox */}
                 <TouchableOpacity 
                   onPress={() => toggleSelect(item.id)}
-                  className={`w-5 h-5 border border-[#F0F0F0] items-center justify-center mt-8 mr-6 ${item.selected ? 'bg-white' : ''}`}
+                  className="w-5 h-5 border border-[#F0F0F0] items-center justify-center mt-8 mr-6"
                 >
                   {item.selected && <View className="w-2.5 h-2.5 bg-black" />}
                 </TouchableOpacity>
@@ -90,13 +78,28 @@ export default function CartScreen() {
                 <View className="flex-1">
                   <View className="flex-row mb-2">
                     <Image 
-                      source={item.image} 
+                      source={item.imageUrl ? { uri: item.imageUrl } : require('@/assets/images/Dashboard image 3.png')} 
                       style={{ width: 100, height: 120, borderRadius: 2 }}
                       contentFit="cover"
                     />
                     <View className="ml-6 flex-1 py-1">
                       <Text className="text-black text-sm font-medium mb-1">{item.name}</Text>
                       <Text className="text-black/40 text-[12px] font-light">{item.price}</Text>
+                      <View className="flex-row items-center mt-4">
+                        <TouchableOpacity
+                          onPress={() => updateQuantity(item.id, item.quantity - 1)}
+                          className="w-8 h-8 border border-[#F0F0F0] items-center justify-center"
+                        >
+                          <Ionicons name="remove" size={14} color="black" />
+                        </TouchableOpacity>
+                        <Text className="mx-4 text-black text-[12px] font-medium">{item.quantity}</Text>
+                        <TouchableOpacity
+                          onPress={() => updateQuantity(item.id, item.quantity + 1)}
+                          className="w-8 h-8 border border-[#F0F0F0] items-center justify-center"
+                        >
+                          <Ionicons name="add" size={14} color="black" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
 
@@ -124,8 +127,15 @@ export default function CartScreen() {
           >
             <TouchableOpacity 
               activeOpacity={0.9}
-              onPress={() => router.push('/(tabs)/checkout')}
-              className="w-full bg-black py-4 items-center justify-center"
+              disabled={selectedCount === 0}
+              onPress={() => {
+                if (!isAuthenticated) {
+                  router.push('/auth-choice');
+                  return;
+                }
+                router.push('/(tabs)/checkout');
+              }}
+              className={`w-full py-4 items-center justify-center ${selectedCount === 0 ? 'bg-black/30' : 'bg-black'}`}
             >
               <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">
                 Continue ({selectedCount})

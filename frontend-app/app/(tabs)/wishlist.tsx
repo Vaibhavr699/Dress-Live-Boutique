@@ -6,6 +6,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
+import { useShortlistStore } from '@/store/useShortlistStore';
 
 type ShortlistItem = {
   id: number;
@@ -23,25 +25,38 @@ type Dress = {
 export default function WishlistScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const guestDressIds = useShortlistStore((state) => state.dressIds);
+  const removeGuest = useShortlistStore((state) => state.remove);
   const [wishlistItems, setWishlistItems] = useState<Dress[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadWishlist = useCallback(async () => {
     try {
-      const shortlistItems = await api.get('/shortlists/me');
-      const normalizedShortlist = Array.isArray(shortlistItems) ? (shortlistItems as ShortlistItem[]) : [];
+      const shortlistDressIds = isAuthenticated
+        ? (() => {
+            // backend shortlist
+            return api
+              .get('/shortlists/me')
+              .then((shortlistItems) => {
+                const normalizedShortlist = Array.isArray(shortlistItems) ? (shortlistItems as ShortlistItem[]) : [];
+                return normalizedShortlist.map((item) => item.dress_id);
+              });
+          })()
+        : Promise.resolve(guestDressIds);
 
-      if (normalizedShortlist.length === 0) {
+      const resolvedDressIds = await shortlistDressIds;
+      if (resolvedDressIds.length === 0) {
         setWishlistItems([]);
         return;
       }
 
       const dresses = await Promise.all(
-        normalizedShortlist.map(async (item) => {
+        resolvedDressIds.map(async (dressId) => {
           try {
-            return await api.get(`/dresses/${item.dress_id}`);
+            return await api.get(`/dresses/${dressId}`);
           } catch (error) {
-            console.error(`Failed to load shortlisted dress ${item.dress_id}:`, error);
+            console.error(`Failed to load shortlisted dress ${dressId}:`, error);
             return null;
           }
         })
@@ -54,7 +69,7 @@ export default function WishlistScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [guestDressIds, isAuthenticated]);
 
   useFocusEffect(
     useCallback(() => {
@@ -64,6 +79,11 @@ export default function WishlistScreen() {
   );
 
   const removeFromWishlist = async (dressId: number) => {
+    if (!isAuthenticated) {
+      removeGuest(dressId);
+      setWishlistItems((prev) => prev.filter((item) => item.id !== dressId));
+      return;
+    }
     try {
       await api.delete(`/shortlists/me/${dressId}`);
       setWishlistItems((prev) => prev.filter((item) => item.id !== dressId));

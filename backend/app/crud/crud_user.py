@@ -1,6 +1,8 @@
 from typing import Any, Dict, Optional, Union
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash, verify_password
+from app.models.booking import Booking
+from app.models.shortlist_item import ShortlistItem
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 
@@ -17,6 +19,14 @@ class CRUDUser:
             email=obj_in.email,
             hashed_password=get_password_hash(obj_in.password),
             full_name=obj_in.full_name,
+            profile_image_url=obj_in.profile_image_url,
+            phone=obj_in.phone,
+            address=obj_in.address,
+            apartment_number=obj_in.apartment_number,
+            state_province=obj_in.state_province,
+            region=obj_in.region,
+            postal_code=obj_in.postal_code,
+            country_code=obj_in.country_code,
             is_active=obj_in.is_active,
             is_superuser=obj_in.is_superuser,
             role=obj_in.role,
@@ -63,6 +73,17 @@ class CRUDUser:
 
     def is_superuser(self, user: User) -> bool:
         return user.is_superuser
+
+    def remove(self, db: Session, *, id: int) -> Optional[User]:
+        user = self.get(db, id=id)
+        if not user:
+            return None
+
+        db.query(ShortlistItem).filter(ShortlistItem.user_id == id).delete()
+        db.query(Booking).filter(Booking.user_id == id).delete()
+        db.delete(user)
+        db.commit()
+        return user
 
 
 crud_user = CRUDUser()

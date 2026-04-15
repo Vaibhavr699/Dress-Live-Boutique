@@ -6,19 +6,40 @@ const API_PORT = '8000';
 const FALLBACK_API_URL = 'http://192.168.29.254:8000/api/v1';
 
 function normalizeBaseUrl(url: string) {
-  const trimmedUrl = url.trim().replace(/\/+$/, '');
+  const raw = url.trim();
+  if (!raw) return `${FALLBACK_API_URL}`;
 
-  if (trimmedUrl.endsWith(API_PATH)) {
-    return trimmedUrl;
+  // Make env/app.json values resilient to common mistakes like:
+  // - missing scheme: "116.202.210.102:20245"
+  // - stray query: "http://host:port?api/v1"
+  // - trailing slashes
+  const withScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(raw) ? raw : `http://${raw}`;
+
+  try {
+    const parsed = new URL(withScheme);
+    parsed.search = '';
+    parsed.hash = '';
+
+    const basePath = parsed.pathname.replace(/\/+$/, '');
+    parsed.pathname = basePath.endsWith(API_PATH) ? basePath : `${basePath}${API_PATH}`;
+
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    const trimmedUrl = withScheme.replace(/[?#].*$/, '').replace(/\/+$/, '');
+    if (trimmedUrl.endsWith(API_PATH)) return trimmedUrl;
+    return `${trimmedUrl}${API_PATH}`;
   }
-
-  return `${trimmedUrl}${API_PATH}`;
 }
 
 function getBaseUrl() {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
   if (envUrl) {
     return normalizeBaseUrl(envUrl);
+  }
+
+  const appConfigUrl = Constants.expoConfig?.extra?.apiBaseUrl;
+  if (typeof appConfigUrl === 'string' && appConfigUrl.trim()) {
+    return normalizeBaseUrl(appConfigUrl);
   }
 
   const expoHostUri = Constants.expoConfig?.hostUri;
@@ -49,16 +70,18 @@ async function parseResponseBody(response: Response) {
 function createApiError(error: any) {
   const message = typeof error?.message === 'string' ? error.message : '';
 
+  // In React Native, fetch failures often hide the actual root cause (e.g. cleartext policy),
+  // so preserve the original message to make debugging possible on device.
   if (message.includes('Network request failed') || message.includes('Failed to fetch')) {
-    return new Error(
-      `Cannot reach the API server at ${BASE_URL}. Make sure the phone and computer are on the same Wi-Fi and the backend is running on 0.0.0.0:${API_PORT}.`
-    );
+    const details = message ? ` (${message})` : '';
+    return new Error(`Cannot reach the API server at ${BASE_URL}.${details}`);
   }
 
   return error;
 }
 
 export const api = {
+  baseUrl: BASE_URL,
   getHeaders() {
     const token = useAuthStore.getState().token;
     return {
@@ -144,6 +167,32 @@ export const api = {
     }
   },
 
+  async postMultipart(endpoint: string, formData: FormData, options: any = {}) {
+    try {
+      const authHeader = this.getHeaders()['Authorization'];
+      const response = await fetch(`${BASE_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          ...(authHeader ? { 'Authorization': authHeader } : {}),
+          ...options.headers,
+        },
+        body: formData,
+      });
+
+      const data = await parseResponseBody(response);
+
+      if (!response.ok) {
+        throw new Error((typeof data === 'object' && data?.detail) || 'Upload failed');
+      }
+
+      return data;
+    } catch (error: any) {
+      const apiError = createApiError(error);
+      console.error(`API POST Multipart Error [${endpoint}] (${BASE_URL}):`, apiError);
+      throw apiError;
+    }
+  },
+
   async get(endpoint: string, options: any = {}) {
     try {
       const response = await fetch(`${BASE_URL}${endpoint}`, {
@@ -176,6 +225,7 @@ export const api = {
           ...this.getHeaders(),
           ...options.headers,
         },
+        ...(options.body ? { body: options.body } : {}),
       });
 
       const data = await parseResponseBody(response);

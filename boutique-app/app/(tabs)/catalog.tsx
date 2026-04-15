@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 type Dress = {
   id: number;
@@ -13,24 +14,30 @@ type Dress = {
   image_url?: string | null;
 };
 
-const BOUTIQUE_ID = 1;
-
 export default function CatalogScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { user } = useAuthStore();
+  const boutiqueId = user?.boutique_id ?? null;
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<Dress[]>([]);
 
   const fetchDresses = useCallback(async () => {
+    if (!boutiqueId) {
+      setDresses([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const data = await api.get(`/dresses/?boutique_id=${BOUTIQUE_ID}`);
+      const data = await api.get(`/dresses/?boutique_id=${boutiqueId}`);
       setDresses(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Failed to fetch dresses for catalog:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [boutiqueId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -69,6 +76,13 @@ export default function CatalogScreen() {
           {loading ? (
             <View className="py-20 items-center">
               <ActivityIndicator color="#1A1A1A" />
+            </View>
+          ) : !boutiqueId ? (
+            <View className="py-24 items-center">
+              <Text className="text-[14px] text-black mb-2">Boutique missing</Text>
+              <Text className="text-[11px] text-center text-black/35 leading-5 px-10">
+                This seller account is not linked to a boutique yet, so catalog inventory cannot load.
+              </Text>
             </View>
           ) : dresses.length === 0 ? (
             <View className="py-24 items-center">

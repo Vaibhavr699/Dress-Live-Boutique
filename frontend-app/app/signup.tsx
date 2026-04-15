@@ -59,6 +59,7 @@ export default function SignupScreen() {
         email,
         password,
         full_name: name,
+        role: 'buyer',
       });
 
       Alert.alert(

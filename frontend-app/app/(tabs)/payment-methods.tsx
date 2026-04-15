@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,8 +8,16 @@ const { width } = Dimensions.get('window');
 
 export default function PaymentMethodsScreen() {
   const router = useRouter();
+  const { source } = useLocalSearchParams<{ source?: string }>();
   const insets = useSafeAreaInsets();
   const [selectedMethod, setSelectedMethod] = React.useState('paypal');
+  const handleBack = () => {
+    if (source === 'profile') {
+      router.replace('/(tabs)/profile');
+      return;
+    }
+    router.back();
+  };
 
   const methods = [
     { id: 'card', label: 'CARD', icon: <Ionicons name="card-outline" size={24} color={selectedMethod === 'card' ? 'black' : 'black'} />, subtitle: 'Card' },
@@ -26,7 +34,7 @@ export default function PaymentMethodsScreen() {
         className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={handleBack} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
         <Text className="text-black text-sm font-bold uppercase tracking-[2px] ml-4">Payment Methods</Text>
@@ -62,7 +70,12 @@ export default function PaymentMethodsScreen() {
         >
           <TouchableOpacity 
             activeOpacity={0.9}
-            onPress={() => router.push('/(tabs)/payment-details')}
+            onPress={() =>
+              router.push({
+                pathname: source === 'profile' ? '/profile-payment-details' : '/(tabs)/payment-details',
+                params: { source },
+              })
+            }
             className="w-full bg-black py-4 items-center justify-center"
           >
             <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">

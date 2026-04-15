@@ -9,7 +9,7 @@ import { useAuthStore } from '@shared/store/useAuthStore';
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { setToken, setUser } = useAuthStore();
+  const { setToken, setUser, logout } = useAuthStore();
   
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -42,6 +42,12 @@ export default function LoginScreen() {
         headers: { Authorization: `Bearer ${token}` }
       });
 
+      if (user.role !== 'partner') {
+        logout();
+        Alert.alert('Seller Access Only', 'This app is only available to boutique partner accounts.');
+        return;
+      }
+
       setUser(user);
 
       // 3. Success -> Go to app
@@ -59,7 +65,7 @@ export default function LoginScreen() {
         <SafeAreaView className="flex-1 px-8 pb-12">
           {/* Back Button */}
           <View className="flex-row justify-between items-center mb-8">
-            <TouchableOpacity onPress={() => router.back()} className="-ml-2">
+            <TouchableOpacity onPress={() => router.replace('/')} className="-ml-2">
               <Ionicons name="chevron-back" size={24} color="#1A1A1A" />
             </TouchableOpacity>
           </View>

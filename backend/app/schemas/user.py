@@ -14,6 +14,14 @@ class UserBase(BaseModel):
     is_active: Optional[bool] = True
     is_superuser: bool = False
     full_name: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    apartment_number: Optional[str] = None
+    state_province: Optional[str] = None
+    region: Optional[str] = None
+    postal_code: Optional[str] = None
+    country_code: Optional[str] = None
     role: Literal["buyer", "partner"] = "buyer"
     boutique_id: Optional[int] = None
 

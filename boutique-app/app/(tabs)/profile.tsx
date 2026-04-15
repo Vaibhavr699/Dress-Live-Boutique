@@ -1,10 +1,11 @@
-import React from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { api } from '@shared/api/api';
 
 const MENU_ITEMS = [
   { label: 'Business Adresse', route: '/edit-address' },
@@ -18,7 +19,44 @@ const MENU_ITEMS = [
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { logout } = useAuthStore();
+  const { logout, user } = useAuthStore();
+  const [loading, setLoading] = useState(true);
+  const [boutique, setBoutique] = useState<{
+    name?: string | null;
+    location?: string | null;
+    logo_url?: string | null;
+    header_image_url?: string | null;
+  } | null>(null);
+
+  const loadProfile = useCallback(async () => {
+    if (!user?.boutique_id) {
+      setBoutique(null);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const data = await api.get(`/boutiques/${user.boutique_id}`);
+      setBoutique(data);
+    } catch (error) {
+      console.error('Failed to load boutique profile:', error);
+      setBoutique(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.boutique_id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      loadProfile();
+    }, [loadProfile])
+  );
+
+  const profileImageSource =
+    boutique?.logo_url || boutique?.header_image_url
+      ? { uri: boutique?.logo_url || boutique?.header_image_url || '' }
+      : require('../../assets/images/avatar.png');
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -37,15 +75,24 @@ export default function ProfileScreen() {
             <View className="flex-row items-start justify-between mb-10">
               <View className="flex-row flex-1">
                 <Image
-                  source={require('../../assets/images/avatar.png')}
+                  source={profileImageSource}
                   style={{ width: 90, height: 90 }}
                   contentFit="cover"
                 />
                 <View className="ml-4 justify-center">
                   <Text className="text-[12px] text-black/50 mb-1">Shop Name:</Text>
-                  <Text className="text-[16px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
-                    Parla Weddings
-                  </Text>
+                  {loading ? (
+                    <ActivityIndicator color="#1A1A1A" />
+                  ) : (
+                    <>
+                      <Text className="text-[16px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                        {boutique?.name || 'Not available'}
+                      </Text>
+                      {boutique?.location ? (
+                        <Text className="text-[11px] text-black/45 mt-2">{boutique.location}</Text>
+                      ) : null}
+                    </>
+                  )}
                 </View>
               </View>
 
@@ -56,10 +103,12 @@ export default function ProfileScreen() {
 
             <View className="mb-10">
               <Text className="text-[12px] uppercase tracking-[1px] text-black/75 mb-5">Owner Information</Text>
+              <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Full Name</Text>
+              <Text className="text-[14px] text-black/80 mb-5">{user?.full_name || 'Not available'}</Text>
               <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Email</Text>
-              <Text className="text-[14px] text-black/80 mb-5">example@gmail.com</Text>
+              <Text className="text-[14px] text-black/80 mb-5">{user?.email || 'Not available'}</Text>
               <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Phone Number</Text>
-              <Text className="text-[14px] text-black/80">+49 300 111 222 3333</Text>
+              <Text className="text-[14px] text-black/80">Not available from backend</Text>
             </View>
 
             {MENU_ITEMS.map((item) => (
@@ -86,7 +135,7 @@ export default function ProfileScreen() {
           activeOpacity={0.85}
           onPress={() => {
             logout();
-            router.replace('/');
+            router.replace('/landing');
           }}
           className="flex-row items-center"
         >

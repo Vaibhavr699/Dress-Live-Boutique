@@ -193,7 +193,13 @@ export default function BoutiqueDetailsScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity 
                     onPress={() => {
-                      addItem(item);
+                      addItem({
+                        id: item.id,
+                        name: item.name,
+                        price: item.price,
+                        imageUrl: null,
+                        selected: true,
+                      });
                       Alert.alert('Added', `${item.name} has been added your bag.`);
                     }}
                     className="p-1 items-center justify-center w-8 h-8 rounded-full border border-black/10"

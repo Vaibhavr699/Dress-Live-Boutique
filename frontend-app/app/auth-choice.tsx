@@ -28,7 +28,13 @@ export default function AuthChoiceScreen() {
         {/* Header/Back Button */}
         <View className="px-6 py-4">
           <TouchableOpacity 
-            onPress={() => router.back()}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+                return;
+              }
+              router.replace('/landing');
+            }}
             className="w-10 h-10 items-center justify-center rounded-full bg-black/10"
           >
             <Ionicons name="chevron-back" size={24} color="black" />

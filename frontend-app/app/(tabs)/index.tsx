@@ -1,11 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { api } from '@shared/api/api';
 import { useFocusEffect } from '@react-navigation/native';
+import { useCartStore } from '@/store/useCartStore';
 
 const CATEGORIES = ["All", "Abendkleider", "Hochzeitskleider", "Add-Ons"];
 
@@ -27,19 +29,20 @@ type Boutique = {
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const addItem = useCartStore((state) => state.addItem);
   const [activeCategory, setActiveCategory] = useState('All');
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<Dress[]>([]);
   const [boutiques, setBoutiques] = useState<Record<number, Boutique>>({});
-  const [shortlistDressIds, setShortlistDressIds] = useState<number[]>([]);
-  const [updatingDressId, setUpdatingDressId] = useState<number | null>(null);
+  const [currentLocationLabel, setCurrentLocationLabel] = useState('Tap to use current location');
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadCatalog = useCallback(async () => {
     try {
-      const [dressData, boutiqueData, shortlistData] = await Promise.all([
+      const [dressData, boutiqueData] = await Promise.all([
         api.get('/dresses/?visible_only=true'),
         api.get('/boutiques/'),
-        api.get('/shortlists/me'),
       ]);
 
       setDresses(Array.isArray(dressData) ? dressData : []);
@@ -50,11 +53,6 @@ export default function DashboardScreen() {
               return acc;
             }, {})
           : {}
-      );
-      setShortlistDressIds(
-        Array.isArray(shortlistData)
-          ? shortlistData.map((item: { dress_id: number }) => item.dress_id)
-          : []
       );
     } catch (error) {
       console.error('Failed to load customer catalog:', error);
@@ -71,27 +69,70 @@ export default function DashboardScreen() {
   );
 
   const visibleDresses = useMemo(() => {
-    if (activeCategory === 'All') {
-      return dresses;
+    const categoryFiltered = activeCategory === 'All' ? dresses : dresses;
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return categoryFiltered;
     }
 
-    return dresses;
-  }, [activeCategory, dresses]);
+    return categoryFiltered.filter((dress) => {
+      const boutique = boutiques[dress.boutique_id];
+      const searchableText = [dress.name, boutique?.name, boutique?.location]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
 
-  const toggleShortlist = async (dressId: number) => {
-    setUpdatingDressId(dressId);
+      return searchableText.includes(normalizedQuery);
+    });
+  }, [activeCategory, boutiques, dresses, searchQuery]);
+
+  const handleFetchCurrentLocation = async () => {
+    if (locationLoading) {
+      return;
+    }
+
+    setLocationLoading(true);
     try {
-      if (shortlistDressIds.includes(dressId)) {
-        await api.delete(`/shortlists/me/${dressId}`);
-        setShortlistDressIds((prev) => prev.filter((id) => id !== dressId));
-      } else {
-        await api.post('/shortlists/me', { dress_id: dressId });
-        setShortlistDressIds((prev) => [...prev, dressId]);
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Location Permission', 'Please allow location access to use your current location.');
+        return;
       }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      let nextLabel = `${position.coords.latitude.toFixed(3)}, ${position.coords.longitude.toFixed(3)}`;
+
+      try {
+        const places = await Location.reverseGeocodeAsync({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        const firstPlace = places[0];
+        if (firstPlace) {
+          nextLabel = [
+            firstPlace.city || firstPlace.subregion,
+            firstPlace.region,
+            firstPlace.country,
+          ]
+            .filter(Boolean)
+            .join(', ');
+        }
+      } catch (error) {
+        console.warn('Reverse geocoding unavailable, using coordinates instead.', error);
+      }
+
+      setCurrentLocationLabel(nextLabel || 'Current location loaded');
     } catch (error) {
-      Alert.alert('Wishlist', error instanceof Error ? error.message : 'Could not update wishlist.');
+      Alert.alert(
+        'Location Error',
+        error instanceof Error ? error.message : 'Could not fetch your current location.'
+      );
     } finally {
-      setUpdatingDressId(null);
+      setLocationLoading(false);
     }
   };
 
@@ -117,33 +158,56 @@ export default function DashboardScreen() {
           </Text>
         </View>
 
-
-        {/* Separator / Search Prompt */}
-        <View className="items-center justify-center border-t border-[#F0F0F0] py-4 mt-2">
-          <Text 
-            className="text-[#1A1A1A50] uppercase"
-            style={{ 
-              fontFamily: 'Helvetica Neue',
-              fontWeight: '300',
-              fontSize: 12,
-              lineHeight: 12,
-              letterSpacing: 0.72,
-            }}
-          >
-            WHAT ARE YOU LOOKING?
-          </Text>
+        <View className="pt-2 mt-2">
+          <View className="flex-row items-center rounded-full border border-[#E7E7E7] bg-[#FAFAFA] px-4 py-3">
+            <Ionicons name="search-outline" size={18} color="#8C8C8C" />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search dresses, boutiques, locations"
+              placeholderTextColor="#A0A0A0"
+              className="flex-1 ml-3 text-[#1A1A1A]"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 18,
+                paddingVertical: 0,
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {searchQuery ? (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close-circle" size={18} color="#8C8C8C" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
 
-
-        {/* Location Picker */}
         
       </View>
-      <View className="flex-row items-center justify-center mt-4">
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={handleFetchCurrentLocation}
+        className="flex-row items-center justify-center mt-4 mb-2 px-6"
+      >
           <Ionicons name="location-outline" size={16} color="#1A1A1A" />
-          <Text className="text-[#1A1A1A] text-xs font-light ml-2 tracking-[0.5px]">
-            Current Location
-          </Text>
-        </View>
+          {locationLoading ? (
+            <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
+          ) : (
+            <Text
+              className="text-[#1A1A1A] text-xs font-light ml-2 tracking-[0.5px]"
+              numberOfLines={1}
+            >
+              {currentLocationLabel}
+            </Text>
+          )}
+      </TouchableOpacity>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Categories Tab Bar */}
@@ -248,11 +312,21 @@ export default function DashboardScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       className="p-1"
-                      disabled={updatingDressId === dress.id}
-                      onPress={() => toggleShortlist(dress.id)}
+                    onPress={() =>
+                      addItem({
+                        id: String(dress.id),
+                        name: dress.name,
+                        price:
+                          typeof dress.price === 'number'
+                            ? `${dress.price.toFixed(0)} EUR`
+                            : `${dress.price} EUR`,
+                        imageUrl: dress.image_url ?? null,
+                        selected: true,
+                      })
+                    }
                     >
                       <Ionicons
-                        name={shortlistDressIds.includes(dress.id) ? 'heart' : 'add'}
+                        name="add"
                         size={20}
                         color="#1A1A1A"
                       />

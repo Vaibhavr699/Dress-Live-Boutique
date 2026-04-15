@@ -1,18 +1,35 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const { width } = Dimensions.get('window');
+import { useCartStore } from '@/store/useCartStore';
 
 export default function OrderSummaryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { type } = useLocalSearchParams();
+  const cartItems = useCartStore((state) => state.items);
   
   const isConfirmed = type === 'confirmed';
+  const selectedItems = useMemo(
+    () => cartItems.filter((item) => item.selected),
+    [cartItems]
+  );
+  const total = useMemo(
+    () =>
+      selectedItems.reduce((sum, item) => {
+        const numericPrice = Number.parseFloat(item.price.replace(/[^\d.]/g, '')) || 0;
+        return sum + numericPrice * item.quantity;
+      }, 0) + (selectedItems.length > 0 ? 15 : 0),
+    [selectedItems]
+  );
+  const firstItem = selectedItems[0] ?? null;
+  const totalQuantity = useMemo(
+    () => selectedItems.reduce((sum, item) => sum + item.quantity, 0),
+    [selectedItems]
+  );
 
   return (
     <View className="flex-1 bg-white">
@@ -25,6 +42,21 @@ export default function OrderSummaryScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} className="px-8">
+        {selectedItems.length === 0 ? (
+          <View className="items-center justify-center py-20">
+            <Text className="text-black text-lg mb-3">No checkout items found</Text>
+            <Text className="text-black/45 text-[12px] text-center leading-5 px-4">
+              Add items to the cart and select them before opening the order summary.
+            </Text>
+            <TouchableOpacity
+              onPress={() => router.replace('/(tabs)/cart')}
+              className="mt-8 border-b border-black pb-1"
+            >
+              <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Return to Cart</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
         {/* Status Section */}
         <View className="items-center mb-10">
           <View className="w-16 h-16 bg-[#F2FBF6] rounded-full items-center justify-center mb-6">
@@ -41,24 +73,37 @@ export default function OrderSummaryScreen() {
           <Text className="text-black/50 text-[12px] text-center px-4 leading-5 mb-2">
             {isConfirmed 
               ? 'Your measurements have been securely received. The boutique is reviewing your order.' 
-              : "You've selected the Royal Princess Gown. Here is the summary of your fitting session."
+              : "You've selected pieces from your cart. Here is the summary before payment."
             }
           </Text>
-          <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1px]">Order Number: 234-K</Text>
+          <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1px]">
+            Order Number: {selectedItems.map((item) => item.id).join('-')}
+          </Text>
         </View>
 
         {/* Product Card */}
         <View className="flex-row items-center mb-10 border-t border-b border-[#F0F0F0] py-6">
           <Image 
-            source={require('@/assets/images/Dashboard image 3.png')} 
+            source={firstItem?.imageUrl ? { uri: firstItem.imageUrl } : require('@/assets/images/Dashboard image 3.png')} 
             style={{ width: 80, height: 100, borderRadius: 2 }}
             contentFit="cover"
           />
           <View className="ml-6 flex-1">
-            <Text className="text-black text-sm font-medium mb-1">Dress title show here</Text>
-            <Text className="text-black/40 text-[12px] mb-2">Shop name here</Text>
-            <Text className="text-black text-sm font-bold">$1,455</Text>
+            <Text className="text-black text-sm font-medium mb-1">{firstItem?.name}</Text>
+            <Text className="text-black/40 text-[12px] mb-2">{totalQuantity} item(s) selected</Text>
+            <Text className="text-black text-sm font-bold">{total.toFixed(0)} EUR</Text>
           </View>
+        </View>
+
+        <View className="mb-10">
+          {selectedItems.map((item) => (
+            <View key={item.id} className="flex-row justify-between mb-3">
+              <Text className="text-black/60 text-[12px]">
+                {item.name} x{item.quantity}
+              </Text>
+              <Text className="text-black text-[12px]">{item.price}</Text>
+            </View>
+          ))}
         </View>
 
         {/* Action Buttons */}
@@ -73,7 +118,15 @@ export default function OrderSummaryScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity 
-              onPress={() => router.push('/(tabs)/booking-calendar')}
+              onPress={() =>
+                router.push({
+                  pathname: '/(tabs)/booking-calendar',
+                  params: {
+                    appointmentType: 'in_store',
+                    source: 'cart',
+                  },
+                })
+              }
               activeOpacity={0.8}
               className="w-full border border-black py-4 items-center justify-center"
             >
@@ -87,10 +140,14 @@ export default function OrderSummaryScreen() {
               onPress={() => router.push('/(tabs)/order-summary?type=confirmed')}
               className="w-full bg-black py-4 items-center justify-center mb-6"
             >
-              <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Pay Now - $1,350</Text>
+              <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">
+                Confirm Selection - {total.toFixed(0)} EUR
+              </Text>
             </TouchableOpacity>
-            <Text className="text-black/30 text-[10px] text-center italic">Includes secure payment & return policy acceptance.</Text>
+            <Text className="text-black/30 text-[10px] text-center italic">Payment collection will be added later. For now, continue to measurement scheduling.</Text>
           </View>
+        )}
+          </>
         )}
       </ScrollView>
     </View>

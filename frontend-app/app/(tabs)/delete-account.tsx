@@ -1,12 +1,20 @@
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function DeleteAccountScreen() {
   const router = useRouter();
+  const { source } = useLocalSearchParams<{ source?: string }>();
   const insets = useSafeAreaInsets();
+  const handleBack = () => {
+    if (source === 'profile') {
+      router.replace('/(tabs)/profile');
+      return;
+    }
+    router.back();
+  };
 
   return (
     <View className="flex-1 bg-white">
@@ -15,7 +23,7 @@ export default function DeleteAccountScreen() {
         className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity onPress={handleBack} className="mr-4">
           <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
       </View>
@@ -38,7 +46,12 @@ export default function DeleteAccountScreen() {
 
         <TouchableOpacity 
           activeOpacity={0.9}
-          onPress={() => router.push('/(tabs)/confirm-delete')}
+          onPress={() =>
+            router.push({
+              pathname: source === 'profile' ? '/profile-confirm-delete' : '/(tabs)/confirm-delete',
+              params: { source },
+            })
+          }
           className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
           style={{ marginTop: 120 }}
         >

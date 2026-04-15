@@ -97,7 +97,7 @@ export default function TeamMemberDetailsScreen() {
             </Text>
             <View className="flex-row items-center">
               <Ionicons name="globe-outline" size={24} color="#1A1A1A" />
-              <Text className="text-[13px] text-black ml-4">{member.languages}</Text>
+              <Text className="text-[13px] text-black ml-4">{member.languages.join(', ')}</Text>
             </View>
           </View>
 
@@ -105,6 +105,9 @@ export default function TeamMemberDetailsScreen() {
             <View>
               <Text className="text-[13px] tracking-[2px] text-black/65 mb-2">Availability badge</Text>
               <Text className="text-[18px] text-black/80">{member.availabilityOn ? 'ON' : 'OFF'}</Text>
+              <Text className="text-[11px] text-black/45 mt-2">
+                {member.availabilitySchedule.filter((entry) => entry.value !== 'Closed').length} days configured
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -112,7 +115,11 @@ export default function TeamMemberDetailsScreen() {
               onPress={() =>
                 router.push({
                   pathname: '/video-call-availability',
-                  params: { state: 'complete' },
+                  params: {
+                    state: 'complete',
+                    memberId: member.id,
+                    memberName: member.name,
+                  },
                 })
               }
               className="border border-black px-6 py-4 flex-row items-center"

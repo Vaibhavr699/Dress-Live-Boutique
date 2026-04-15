@@ -5,11 +5,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { useShortlistStore } from '@/store/useShortlistStore';
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { setToken, setUser } = useAuthStore();
+  const { setToken, setUser, logout } = useAuthStore();
+  const guestShortlistIds = useShortlistStore((state) => state.dressIds);
+  const clearGuestShortlist = useShortlistStore((state) => state.clear);
   
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -42,7 +45,35 @@ export default function LoginScreen() {
         headers: { Authorization: `Bearer ${token}` }
       });
 
+      if (user.role !== 'buyer') {
+        logout();
+        Alert.alert('Buyer Access Only', 'This app is only available to buyer accounts.');
+        return;
+      }
+
       setUser(user);
+
+      // Merge guest shortlist into backend shortlist (max 4)
+      try {
+        if (Array.isArray(guestShortlistIds) && guestShortlistIds.length > 0) {
+          const backendShortlist = await api.get('/shortlists/me', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const backendIds = Array.isArray(backendShortlist)
+            ? backendShortlist.map((item: { dress_id: number }) => item.dress_id)
+            : [];
+          const merged = Array.from(new Set([...guestShortlistIds, ...backendIds])).slice(0, 4);
+          await api.put(
+            '/shortlists/me',
+            { dress_ids: merged },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          clearGuestShortlist();
+        }
+      } catch (error) {
+        // Non-blocking: user can still log in; shortlist sync can be retried later.
+        console.warn('Guest shortlist sync failed:', error);
+      }
 
       // 3. Success -> Go to app
       router.replace('/(tabs)');

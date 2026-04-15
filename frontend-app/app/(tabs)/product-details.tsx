@@ -6,11 +6,16 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCartStore } from '@/store/useCartStore';
 import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
+import { useShortlistStore } from '@/store/useShortlistStore';
 
 export default function ProductDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const insets = useSafeAreaInsets();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const guestDressIds = useShortlistStore((state) => state.dressIds);
+  const toggleGuest = useShortlistStore((state) => state.toggle);
   const [optionModalVisible, setOptionModalVisible] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [dress, setDress] = useState<any>(null);
@@ -21,32 +26,54 @@ export default function ProductDetailsScreen() {
 
   useEffect(() => {
     if (!id) {
+      setDress(null);
+      setIsShortlisted(false);
       setLoading(false);
       return;
     }
 
+    let isActive = true;
+    setLoading(true);
+    setDress(null);
+    setIsShortlisted(false);
+
     const loadDress = async () => {
       try {
-        const [dressData, shortlistData] = await Promise.all([
-          api.get(`/dresses/${id}`),
-          api.get('/shortlists/me'),
-        ]);
+        const dressData = await api.get(`/dresses/${id}`);
+
+        if (!isActive) {
+          return;
+        }
 
         setDress(dressData);
-        setIsShortlisted(
-          Array.isArray(shortlistData)
-            ? shortlistData.some((item: { dress_id: number }) => item.dress_id === Number(id))
-            : false
-        );
+        if (isAuthenticated) {
+          const shortlistData = await api.get('/shortlists/me');
+          if (!isActive) return;
+          setIsShortlisted(
+            Array.isArray(shortlistData)
+              ? shortlistData.some((item: { dress_id: number }) => item.dress_id === Number(id))
+              : false
+          );
+        } else {
+          setIsShortlisted(guestDressIds.includes(Number(id)));
+        }
       } catch (error) {
-        console.error('Failed to load dress details:', error);
+        if (isActive) {
+          console.error('Failed to load dress details:', error);
+        }
       } finally {
-        setLoading(false);
+        if (isActive) {
+          setLoading(false);
+        }
       }
     };
 
     loadDress();
-  }, [id]);
+
+    return () => {
+      isActive = false;
+    };
+  }, [guestDressIds, id, isAuthenticated]);
 
   const product = useMemo(() => {
     const normalizedPrice =
@@ -56,7 +83,8 @@ export default function ProductDetailsScreen() {
       id: String(dress?.id ?? 'p-1'),
       name: dress?.name ?? 'Elegant Satin A-Line',
       price: normalizedPrice,
-      image: dress?.image_url ? { uri: dress.image_url } : require('@/assets/images/Dashboard image 3.png'),
+      imageUrl: dress?.image_url ?? null,
+      selected: true,
     };
   }, [dress]);
 
@@ -73,8 +101,17 @@ export default function ProductDetailsScreen() {
       return;
     }
 
-    setShortlistLoading(true);
+    if (!isAuthenticated) {
+      const result = toggleGuest(Number(dress.id));
+      if (!result.ok) {
+        Alert.alert('Selection', 'You can select a maximum of 4 dresses.');
+        return;
+      }
+      setIsShortlisted((prev) => !prev);
+      return;
+    }
 
+    setShortlistLoading(true);
     try {
       if (isShortlisted) {
         await api.delete(`/shortlists/me/${dress.id}`);
@@ -84,7 +121,7 @@ export default function ProductDetailsScreen() {
         setIsShortlisted(true);
       }
     } catch (error) {
-      Alert.alert('Wishlist', error instanceof Error ? error.message : 'Could not update wishlist.');
+      Alert.alert('Selection', error instanceof Error ? error.message : 'Could not update selection.');
     } finally {
       setShortlistLoading(false);
     }
@@ -111,7 +148,8 @@ export default function ProductDetailsScreen() {
         {/* Header Image Section */}
         <View className="relative w-full aspect-[1/1.1]">
           <Image 
-            source={product.image} 
+            key={product.id}
+            source={product.imageUrl ? { uri: product.imageUrl } : require('@/assets/images/Dashboard image 3.png')} 
             style={{ width: '100%', height: '100%' }}
             contentFit="cover"
           />

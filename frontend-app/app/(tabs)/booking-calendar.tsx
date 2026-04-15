@@ -4,6 +4,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
+import { useCartStore } from '@/store/useCartStore';
+import { useAuthStore } from '@shared/store/useAuthStore';
+import { useShortlistStore } from '@/store/useShortlistStore';
 
 const { width } = Dimensions.get('window');
 
@@ -16,16 +19,30 @@ type Dress = {
   name: string;
 };
 
+type CartItem = {
+  id: string;
+  name: string;
+  selected: boolean;
+};
+
 export default function BookingCalendarScreen() {
   const router = useRouter();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const guestDressIds = useShortlistStore((state) => state.dressIds);
   const params = useLocalSearchParams<{
     dressId?: string;
     bookingId?: string;
     appointmentType?: string;
     scheduledFor?: string;
     language?: string;
+    source?: string;
   }>();
   const insets = useSafeAreaInsets();
+  const cartItems = useCartStore((state) => state.items);
+  const selectedCartItems = useMemo(
+    () => cartItems.filter((item) => item.selected),
+    [cartItems]
+  );
   const normalizedLanguage =
     typeof params.language === 'string' && params.language.length > 0 ? params.language : 'English';
   const normalizedScheduledFor =
@@ -33,6 +50,7 @@ export default function BookingCalendarScreen() {
   const normalizedDressId = typeof params.dressId === 'string' ? Number(params.dressId) : null;
   const normalizedBookingId = typeof params.bookingId === 'string' ? Number(params.bookingId) : null;
   const normalizedAppointmentType = params.appointmentType === 'in_store' ? 'in_store' : 'video';
+  const selectionSource = params.source === 'cart' ? 'cart' : 'wishlist';
   const [selectedDate, setSelectedDate] = useState(13);
   const [selectedLanguage, setSelectedLanguage] = useState(normalizedLanguage);
   const [dropdownVisible, setDropdownVisible] = useState(false);
@@ -58,14 +76,36 @@ export default function BookingCalendarScreen() {
   useEffect(() => {
     const loadSelectedDresses = async () => {
       try {
-        const shortlistResponse = await api.get('/shortlists/me');
-        const shortlistItems = Array.isArray(shortlistResponse) ? (shortlistResponse as ShortlistItem[]) : [];
-        const shortlistDressIds = shortlistItems.map((item) => item.dress_id);
+        if (selectionSource === 'cart') {
+          const cartDressItems = (selectedCartItems as CartItem[])
+            .map((item) => ({
+              id: Number(item.id),
+              name: item.name,
+            }))
+            .filter((item) => !Number.isNaN(item.id))
+            .slice(0, 4);
+
+          setSelectedDressIds(cartDressItems.map((item) => item.id));
+          setSelectedDressNames(cartDressItems.map((item) => item.name));
+          return;
+        }
+
+        const shortlistDressIds = isAuthenticated
+          ? (() => {
+              return api.get('/shortlists/me').then((shortlistResponse) => {
+                const shortlistItems = Array.isArray(shortlistResponse)
+                  ? (shortlistResponse as ShortlistItem[])
+                  : [];
+                return shortlistItems.map((item) => item.dress_id);
+              });
+            })()
+          : Promise.resolve(guestDressIds);
         const directDressId = normalizedDressId;
 
+        const resolvedIds = await shortlistDressIds;
         const mergedDressIds = Array.from(
           new Set([
-            ...shortlistDressIds,
+            ...resolvedIds,
             ...(directDressId && !Number.isNaN(directDressId) ? [directDressId] : []),
           ])
         ).slice(0, 4);
@@ -93,20 +133,40 @@ export default function BookingCalendarScreen() {
           setSelectedDressNames([]);
         }
       } catch (error) {
-        Alert.alert('Booking', error instanceof Error ? error.message : 'Could not load shortlist.');
+        Alert.alert(
+          'Booking',
+          error instanceof Error
+            ? error.message
+            : selectionSource === 'cart'
+              ? 'Could not load selected cart dresses.'
+              : 'Could not load shortlist.'
+        );
       } finally {
         setLoading(false);
       }
     };
 
     loadSelectedDresses();
-  }, [normalizedDressId]);
+  }, [guestDressIds, isAuthenticated, normalizedDressId, selectedCartItems, selectionSource]);
 
   const scheduleLabel = useMemo(() => `Tuesday, ${selectedDate.toString().padStart(2, '0')} May - 10:00 AM`, [selectedDate]);
 
   const handleSubmit = async () => {
+    if (!isAuthenticated) {
+      Alert.alert('Login Required', 'Please create an account or log in to book an appointment.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Continue', onPress: () => router.replace('/auth-choice') },
+      ]);
+      return;
+    }
+
     if (selectedDressIds.length === 0) {
-      Alert.alert('Booking', 'Add at least one dress to your wishlist before creating a booking.');
+      Alert.alert(
+        'Booking',
+        selectionSource === 'cart'
+          ? 'Select at least one dress in your cart before creating a booking.'
+          : 'Add at least one dress to your wishlist before creating a booking.'
+      );
       return;
     }
 
@@ -177,7 +237,9 @@ export default function BookingCalendarScreen() {
           </Text>
           {selectedDressNames.length === 0 ? (
             <Text className="text-black/50 text-[12px] leading-5">
-              No dresses selected yet. Add dresses to your wishlist first.
+              {selectionSource === 'cart'
+                ? 'No cart dresses selected yet. Choose at least one dress in your cart first.'
+                : 'No dresses selected yet. Add dresses to your wishlist first.'}
             </Text>
           ) : (
             selectedDressNames.map((dressName) => (

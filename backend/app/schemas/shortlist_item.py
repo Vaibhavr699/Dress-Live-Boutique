@@ -1,5 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel
+from typing import List
 
 
 class ShortlistItemBase(BaseModel):
@@ -17,3 +18,7 @@ class ShortlistItem(ShortlistItemBase):
 
     class Config:
         from_attributes = True
+
+
+class ShortlistReplacePayload(BaseModel):
+    dress_ids: List[int]
