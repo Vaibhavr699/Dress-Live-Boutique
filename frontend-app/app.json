@@ -3,6 +3,7 @@
     "name": "frontend",
     "slug": "frontend",
     "version": "1.0.0",
+    "owner": "vaibhavr696",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "frontend",
@@ -10,27 +11,30 @@
     "ios": {
       "jsEngine": "hermes",
       "supportsTablet": true,
-      "newArchEnabled": true
+      "newArchEnabled": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
     },
     "android": {
       "jsEngine": "hermes",
       "newArchEnabled": true,
-
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
-
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.atul.customer.app"
     },
     "web": {
       "jsEngine": "jsc",
       "output": "single",
-
-
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -65,7 +69,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": false
-
+    },
+    "extra": {
+      "apiBaseUrl": "http://116.202.210.102:20245",
+      "router": {},
+      "eas": {
+        "projectId": "f01060f1-dcfb-4996-993f-04ad9c97fbc1"
+      }
     }
   }
 }

@@ -1,0 +1,40 @@
+INFO:     Will watch for changes in these directories: ['/home/python/Ken/Dress-Live-Boutique/backend']
+INFO:     Uvicorn running on http://0.0.0.0:20245 (Press CTRL+C to quit)
+INFO:     Started reloader process [323238] using StatReload
+INFO:     Started server process [323241]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     CORS enabled for: ['http://localhost:8081', 'http://127.0.0.1:8081', 'http://localhost:8082', 'http://127.0.0.1:8082', 'http://localhost:3000', '*']
+INFO:     23.154.136.106:43935 - "GET / HTTP/1.1" 200 OK
+INFO:     23.154.136.106:43935 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     18.207.151.241:57988 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     18.207.151.241:57988 - "GET / HTTP/1.1" 200 OK
+INFO:     23.154.136.106:37493 - "GET / HTTP/1.1" 200 OK
+INFO:     23.154.136.106:37493 - "GET /docs HTTP/1.1" 200 OK
+INFO:     23.154.136.106:37493 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     49.36.184.184:51490 - "GET / HTTP/1.1" 200 OK
+INFO:     49.36.184.184:51490 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     49.36.184.184:51492 - "GET /api/v1 HTTP/1.1" 404 Not Found
+INFO:     49.36.184.184:51600 - "GET /docs HTTP/1.1" 200 OK
+INFO:     49.36.184.184:51600 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     49.36.184.184:51734 - "GET /api/v1 HTTP/1.1" 404 Not Found
+INFO:     34.202.205.49:32884 - "HEAD /api/v1 HTTP/1.1" 404 Not Found
+INFO:     34.202.205.49:32884 - "GET /api/v1 HTTP/1.1" 404 Not Found
+INFO:     116.202.210.102:53662 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     49.36.184.184:51943 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     49.36.184.184:52090 - "GET /api/v1 HTTP/1.1" 404 Not Found
+INFO:     49.36.184.184:52089 - "GET /docs HTTP/1.1" 200 OK
+INFO:     49.36.184.184:52089 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     49.36.184.184:52107 - "GET /api HTTP/1.1" 404 Not Found
+INFO:     49.36.184.184:52107 - "GET /api/v1 HTTP/1.1" 404 Not Found
+INFO:     49.36.184.184:52108 - "GET / HTTP/1.1" 200 OK
+INFO:     49.36.184.184:52235 - "POST /api/v1/login/access-token HTTP/1.1" 422 Unprocessable Entity
+INFO:     49.36.184.184:52336 - "POST /api/v1/login/access-token HTTP/1.1" 422 Unprocessable Entity
+INFO:     49.36.184.184:52340 - "POST /api/v1/login/access-token HTTP/1.1" 422 Unprocessable Entity
+INFO:     49.36.184.184:52365 - "POST /api/v1/login/access-token HTTP/1.1" 200 OK
+INFO:     49.36.184.184:48337 - "GET / HTTP/1.1" 200 OK
+INFO:     49.36.184.184:48337 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     49.36.184.184:43496 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     44.222.203.12:56518 - "HEAD /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     44.222.203.12:56518 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
+INFO:     44.222.203.12:56518 - "GET /api/v1/openapi.json HTTP/1.1" 200 OK
