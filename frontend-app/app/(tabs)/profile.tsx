@@ -81,8 +81,9 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-        {/* User Info Card */}
-        <View className="px-8 pt-10 pb-8">
+          <>
+            {/* User Info Card */}
+            <View className="px-8 pt-10 pb-8">
           <View className="flex-row items-center relative">
             <Image
               source={
@@ -112,10 +113,10 @@ export default function ProfileScreen() {
               <Feather name="edit-3" size={18} color="black" />
             </TouchableOpacity>
           </View>
-        </View>
+            </View>
 
-        {/* Menu List */}
-        <View className="px-8">
+            {/* Menu List */}
+            <View className="px-8">
           {menuItems.map((item, idx) => (
             <TouchableOpacity 
               key={idx}
@@ -131,10 +132,10 @@ export default function ProfileScreen() {
               <Ionicons name="chevron-forward" size={16} color="black" />
             </TouchableOpacity>
           ))}
-        </View>
+            </View>
 
-        {/* Personal Info */}
-        <View className="px-8 mt-8">
+            {/* Personal Info */}
+            <View className="px-8 mt-8">
           <Text className="text-black/30 text-[10px] font-bold uppercase mb-6 tracking-[1px]">Personal Information</Text>
           
           <View className="mb-6">
@@ -177,6 +178,7 @@ export default function ProfileScreen() {
         </View>
 
         <View className="h-24" />
+          </>
         )}
       </ScrollView>
 
