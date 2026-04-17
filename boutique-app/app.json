@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "Boutique Partner",
-    "slug": "boutique-partner",
+    "name": "Dress Live Partner",
+    "slug": "dress-live-partner",
     "version": "1.0.0",
     "owner": "vaibhavr696",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "boutique-partner",
+    "scheme": "dress-live-partner",
     "userInterfaceStyle": "automatic",
     "ios": {
       "jsEngine": "hermes",
@@ -24,9 +24,9 @@
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundImage": "./assets/images/icon.png",
+        "monochromeImage": "./assets/images/icon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,

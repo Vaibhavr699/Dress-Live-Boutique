@@ -58,6 +58,18 @@ export default function ProfileScreen() {
       ? { uri: boutique?.logo_url || boutique?.header_image_url || '' }
       : require('../../assets/images/avatar.png');
 
+  const ownerPhone = [user?.country_code, user?.phone].filter(Boolean).join(' ').trim();
+  const ownerAddress = [
+    user?.address,
+    user?.apartment_number,
+    user?.region,
+    user?.state_province,
+    user?.postal_code,
+  ]
+    .filter(Boolean)
+    .join(', ')
+    .trim();
+
   return (
     <SafeAreaView className="flex-1 bg-white">
       <ScrollView
@@ -108,7 +120,9 @@ export default function ProfileScreen() {
               <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Email</Text>
               <Text className="text-[14px] text-black/80 mb-5">{user?.email || 'Not available'}</Text>
               <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Phone Number</Text>
-              <Text className="text-[14px] text-black/80">Not available from backend</Text>
+              <Text className="text-[14px] text-black/80 mb-5">{ownerPhone || 'Not added yet'}</Text>
+              <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Address</Text>
+              <Text className="text-[14px] text-black/80">{ownerAddress || 'Not added yet'}</Text>
             </View>
 
             {MENU_ITEMS.map((item) => (
