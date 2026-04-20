@@ -116,7 +116,7 @@ export default function OTPVerifyScreen() {
             {/* Resend Link */}
             <View className="flex-row justify-center items-center gap-4">
               <Text className="text-[#1A1A1A]/40 text-[13px] font-light">
-                Haven't got the email yet?
+                Haven&apos;t got the email yet?
               </Text>
               <TouchableOpacity onPress={() => {}}>
                 <Text className="text-[#1A1A1A] text-[13px] font-medium border-b border-[#1A1A1A]">

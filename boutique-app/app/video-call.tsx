@@ -1,10 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, TextInput } from 'react-native';
-import { useRouter } from 'expo-router';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  SafeAreaView,
+  TextInput,
+  Platform,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+} from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Image } from 'expo-image';
-import { Feather, Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { api } from '@shared/api/api';
+import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
+import { buildTryonSwitchPayload } from '@shared/videoCallSignals';
+import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 
 type VideoCallStage = 'waiting' | 'analysis' | 'live';
 
@@ -74,48 +87,26 @@ function WaitingPreview({
   );
 }
 
-function LivePreview() {
-  return (
-    <>
-      <View className="relative">
-        <Image
-          source={require('../assets/images/Dashboard image 3.png')}
-          style={{ width: '100%', height: 320 }}
-          contentFit="cover"
-        />
-
-        <View className="absolute right-4 top-4 border border-white/70 bg-white/90">
-          <Image
-            source={require('../assets/images/Dashboard image 2.png')}
-            style={{ width: 68, height: 92 }}
-            contentFit="cover"
-          />
-        </View>
-      </View>
-
-      <View className="items-center mt-4">
-        <View className="flex-row items-center">
-          <TouchableOpacity className="w-10 h-10 items-center justify-center">
-            <Ionicons name="mic-outline" size={18} color="#111111" />
-          </TouchableOpacity>
-          <TouchableOpacity className="w-10 h-10 items-center justify-center ml-2">
-            <Ionicons name="videocam" size={18} color="#111111" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <Text className="text-[10px] text-black/35 text-center mt-8 leading-4 px-10">
-        Advisor can control Try-On and switch dresses for you.
-      </Text>
-    </>
-  );
-}
-
 export default function BoutiqueVideoCallScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
   const [stageIndex, setStageIndex] = useState(0);
   const [internalNotes, setInternalNotes] = useState('');
+  const [ending, setEnding] = useState(false);
+  const [tokenData, setTokenData] = useState<{ url: string; token: string; room: string; identity: string } | null>(
+    null
+  );
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [bookingDresses, setBookingDresses] = useState<VideoCallBookingDress[]>([]);
+  const [liveSeconds, setLiveSeconds] = useState(0);
+
+  const bookingId = useMemo(() => {
+    const raw = params.bookingId;
+    if (typeof raw !== 'string') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }, [params.bookingId]);
 
   useEffect(() => {
     if (stageIndex >= STAGE_SEQUENCE.length - 1) {
@@ -130,6 +121,103 @@ export default function BoutiqueVideoCallScreen() {
   }, [stageIndex]);
 
   const stage = useMemo(() => STAGE_SEQUENCE[stageIndex], [stageIndex]);
+
+  useEffect(() => {
+    if (stage !== 'live') {
+      setLiveSeconds(0);
+      return;
+    }
+    const interval = setInterval(() => setLiveSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [stage]);
+
+  useEffect(() => {
+    if (!bookingId) return;
+    let mounted = true;
+    api
+      .get(`/bookings/${bookingId}`)
+      .then((data) => {
+        if (!mounted) return;
+        const dresses = Array.isArray((data as { dresses?: unknown }).dresses)
+          ? ((data as { dresses: VideoCallBookingDress[] }).dresses)
+          : [];
+        setBookingDresses(dresses);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setBookingDresses([]);
+        Alert.alert(
+          'Booking',
+          error instanceof Error ? error.message : 'Could not load dresses for this booking.'
+        );
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!bookingId) return;
+    let mounted = true;
+    setTokenLoading(true);
+    setTokenData(null);
+    api
+      .get(`/video-calls/token?booking_id=${bookingId}`)
+      .then((data) => {
+        if (!mounted) return;
+        setTokenData(data as any);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        Alert.alert(
+          'Video call',
+          error instanceof Error ? error.message : 'Could not start video call. Check LiveKit configuration on the server.'
+        );
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setTokenLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || bookingId == null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await api.post('/video-calls/dismiss-ring', { booking_id: bookingId });
+        if (cancelled) return;
+        await api.post('/video-calls/ring', { booking_id: bookingId });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bookingId]);
+
+  const handleEndCall = async () => {
+    if (ending) return;
+    setEnding(true);
+    try {
+      if (bookingId) {
+        await api.put(`/bookings/${bookingId}`, { status: 'completed' });
+      }
+    } catch (error) {
+      console.warn('Failed to mark booking completed:', error);
+    } finally {
+      setEnding(false);
+      router.replace({
+        pathname: '/video-call-summary',
+        params: { bookingId: bookingId ? String(bookingId) : '', notes: internalNotes || '' },
+      } as any);
+    }
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -147,7 +235,14 @@ export default function BoutiqueVideoCallScreen() {
             </Text>
 
             <View className="flex-row items-center">
-              <StatusChip label={stage === 'live' ? '00:02:34' : 'Good Connection'} tone={stage === 'live' ? 'timer' : 'green'} />
+              <StatusChip
+                label={
+                  stage === 'live'
+                    ? `00:${String(Math.floor(liveSeconds / 60)).padStart(2, '0')}:${String(liveSeconds % 60).padStart(2, '0')}`
+                    : 'Good Connection'
+                }
+                tone={stage === 'live' ? 'timer' : 'green'}
+              />
               <TouchableOpacity onPress={() => router.back()} className="ml-3">
                 <Feather name="x" size={18} color="#D68067" />
               </TouchableOpacity>
@@ -157,7 +252,150 @@ export default function BoutiqueVideoCallScreen() {
 
         <View className="flex-1 px-4 pt-4">
           {stage === 'live' ? (
-            <LivePreview />
+            Platform.OS === 'web' ? (
+              <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+                <Text className="text-white/70 text-[12px] text-center">
+                  Live video calls are not available in web preview. Test on iOS/Android.
+                </Text>
+              </View>
+            ) : !bookingId ? (
+              <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+                <Text className="text-white/70 text-[12px] text-center">
+                  This video call must be started from a booking.
+                </Text>
+              </View>
+            ) : !isLiveKitNativeSupported() ? (
+              <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+                <Text className="text-white/70 text-[12px] text-center leading-5">
+                  Video calls need a development build with WebRTC (Expo Go does not include LiveKit).{'\n\n'}
+                  Run: npx expo run:android
+                </Text>
+              </View>
+            ) : tokenLoading ? (
+              <View className="bg-black h-[320px] w-full items-center justify-center">
+                <ActivityIndicator color="white" />
+                <Text className="text-white/50 text-[11px] mt-4">Connecting…</Text>
+              </View>
+            ) : tokenData ? (
+              (() => {
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const livekitMod = require('@livekit/react-native');
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const lkClient = require('livekit-client');
+                const Track = lkClient?.Track;
+                if (
+                  !livekitMod ||
+                  typeof livekitMod.LiveKitRoom !== 'function' ||
+                  typeof livekitMod.useRoomContext !== 'function' ||
+                  !Track
+                ) {
+                  return (
+                    <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+                      <Text className="text-white/70 text-[12px] text-center leading-5">
+                        LiveKit failed to load. Stop Metro and run: npx expo start --clear, then rebuild the dev client.
+                      </Text>
+                    </View>
+                  );
+                }
+                const {
+                  LiveKitRoom,
+                  useTracks,
+                  VideoTrack,
+                  isTrackReference,
+                  useRoomContext,
+                  useRemoteParticipants,
+                } = livekitMod;
+
+                const RoomView = () => {
+                  const room = useRoomContext();
+                  const remoteParticipants = useRemoteParticipants();
+                  const tracks = useTracks([Track.Source.Camera]);
+                  const videoTracks = tracks.filter((t: any) => isTrackReference(t));
+                  const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
+                  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+                  const emptyMainMessage =
+                    remoteParticipants.length > 0
+                      ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
+                      : 'Waiting for customer…';
+
+                  return (
+                    <View style={{ width: '100%', height: 320 }}>
+                      {remote ? (
+                        <VideoTrack trackRef={remote} style={{ width: '100%', height: 320 }} />
+                      ) : (
+                        <View className="bg-black h-[320px] w-full items-center justify-center px-6">
+                          <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
+                        </View>
+                      )}
+
+                      {local ? (
+                        <View
+                          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
+                          style={{ width: 110, height: 150, borderRadius: 16 }}
+                        >
+                          <VideoTrack trackRef={local} style={{ width: '100%', height: '100%' }} />
+                        </View>
+                      ) : null}
+
+                      {/* Advisor: switch outfit (signals customer UI; Milestone B adds AI) */}
+                      <View className="absolute left-2 right-2 bottom-3 max-h-20">
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                          {bookingDresses.length === 0 ? (
+                            <View className="bg-black/70 px-3 py-2 rounded-md self-center">
+                              <Text className="text-white/80 text-[10px]">No dresses on this booking</Text>
+                            </View>
+                          ) : (
+                            <View className="flex-row items-center pr-2">
+                              {bookingDresses.map((d) => (
+                                <TouchableOpacity
+                                  key={d.id}
+                                  activeOpacity={0.9}
+                                  onPress={() => {
+                                    if (!bookingId || !room?.localParticipant) return;
+                                    try {
+                                      const payload = buildTryonSwitchPayload({
+                                        bookingId,
+                                        dressId: d.id,
+                                        dressName: d.name,
+                                      });
+                                      room.localParticipant.publishData(payload, { reliable: true } as any);
+                                    } catch {
+                                      // no-op
+                                    }
+                                  }}
+                                  className="bg-black px-3 py-2 mr-2 rounded-md max-w-[140px]"
+                                >
+                                  <Text className="text-white text-[10px] uppercase tracking-[0.5px]" numberOfLines={1}>
+                                    {d.name}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          )}
+                        </ScrollView>
+                      </View>
+                    </View>
+                  );
+                };
+
+                return (
+                  <LiveKitRoom
+                    serverUrl={tokenData.url}
+                    token={tokenData.token}
+                    connect={true}
+                    audio={true}
+                    video={true}
+                    options={{ adaptiveStream: { pixelDensity: 'screen' } }}
+                  >
+                    <RoomView />
+                  </LiveKitRoom>
+                );
+              })()
+            ) : (
+              <View className="bg-black h-[320px] w-full items-center justify-center">
+                <Text className="text-white/50 text-[11px]">Not connected</Text>
+              </View>
+            )
           ) : (
             <WaitingPreview
               title={stage === 'analysis' ? 'Waiting For Advisor To Join' : 'Waiting For Advisor To Join'}
@@ -201,11 +439,12 @@ export default function BoutiqueVideoCallScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 activeOpacity={0.9}
-                onPress={() => router.back()}
-                className="flex-1 bg-black py-4 items-center justify-center ml-1"
+                onPress={handleEndCall}
+                disabled={ending}
+                className={`flex-1 py-4 items-center justify-center ml-1 ${ending ? 'bg-black/40' : 'bg-black'}`}
               >
                 <Text className="text-[11px] uppercase tracking-[1px] text-white">
-                  Save & Continue
+                  {ending ? 'Ending…' : 'End Call'}
                 </Text>
               </TouchableOpacity>
             </View>

@@ -8,8 +8,33 @@ import * as Location from 'expo-location';
 import { api } from '@shared/api/api';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCartStore } from '@/store/useCartStore';
+import { useNotificationStore } from '@/store/useNotificationStore';
 
 const CATEGORIES = ["All", "Abendkleider", "Hochzeitskleider", "Add-Ons"];
+const PRICE_FILTERS = [
+  { id: 'any', label: 'Any', test: (_price: number) => true },
+  { id: 'lt500', label: '< 500', test: (price: number) => price < 500 },
+  { id: '500to1000', label: '500–1000', test: (price: number) => price >= 500 && price <= 1000 },
+  { id: 'gt1000', label: '> 1000', test: (price: number) => price > 1000 },
+] as const;
+
+const DISTANCE_FILTERS = [
+  { id: 'any', label: 'Any', maxKm: null as number | null },
+  { id: '5', label: '< 5 km', maxKm: 5 },
+  { id: '20', label: '< 20 km', maxKm: 20 },
+  { id: '50', label: '< 50 km', maxKm: 50 },
+] as const;
+
+type DistanceFilterId = (typeof DISTANCE_FILTERS)[number]['id'];
+
+type SortId = 'featured' | 'newest' | 'price_low' | 'price_high' | 'name_az';
+const SORT_OPTIONS: Array<{ id: SortId; label: string }> = [
+  { id: 'featured', label: 'Featured' },
+  { id: 'newest', label: 'Newest' },
+  { id: 'price_low', label: 'Price: Low' },
+  { id: 'price_high', label: 'Price: High' },
+  { id: 'name_az', label: 'Name: A–Z' },
+];
 
 type Dress = {
   id: number;
@@ -17,6 +42,9 @@ type Dress = {
   price: number;
   image_url?: string | null;
   boutique_id: number;
+  category?: string | null;
+  categories?: string[] | null;
+  created_at?: string | null;
 };
 
 type Boutique = {
@@ -24,19 +52,40 @@ type Boutique = {
   name: string;
   location?: string | null;
   is_visible_to_customers?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const addItem = useCartStore((state) => state.addItem);
+  const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
   const [activeCategory, setActiveCategory] = useState('All');
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<Dress[]>([]);
   const [boutiques, setBoutiques] = useState<Record<number, Boutique>>({});
   const [currentLocationLabel, setCurrentLocationLabel] = useState('Tap to use current location');
   const [locationLoading, setLocationLoading] = useState(false);
+  const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activePriceFilter, setActivePriceFilter] = useState<(typeof PRICE_FILTERS)[number]['id']>('any');
+  const [activeLocationFilter, setActiveLocationFilter] = useState<string>('All');
+  const [activeDistanceFilter, setActiveDistanceFilter] = useState<DistanceFilterId>('any');
+  const [sortId, setSortId] = useState<SortId>('featured');
+
+  const locationOptions = useMemo(() => {
+    const raw = Object.values(boutiques)
+      .map((b) => (b.location || '').trim())
+      .filter(Boolean);
+    const uniq = Array.from(new Set(raw));
+    return ['All', ...uniq.slice(0, 6)];
+  }, [boutiques]);
+
+  const canUseDistanceFilter = useMemo(() => {
+    if (!currentCoords) return false;
+    return Object.values(boutiques).some((b) => typeof b.latitude === 'number' && typeof b.longitude === 'number');
+  }, [boutiques, currentCoords]);
 
   const loadCatalog = useCallback(async () => {
     try {
@@ -69,15 +118,57 @@ export default function DashboardScreen() {
   );
 
   const visibleDresses = useMemo(() => {
-    const categoryFiltered = activeCategory === 'All' ? dresses : dresses;
+    const categoryFiltered =
+      activeCategory === 'All'
+        ? dresses
+        : dresses.filter((dress) => {
+            const raw =
+              (typeof dress.category === 'string' ? dress.category : null) ??
+              (Array.isArray(dress.categories) ? dress.categories.join(' ') : null) ??
+              ((dress as any)?.dress_category as string | null) ??
+              ((dress as any)?.type as string | null) ??
+              '';
+            return raw.toLowerCase().includes(activeCategory.toLowerCase());
+          });
     const normalizedQuery = searchQuery.trim().toLowerCase();
+    const priceTest = PRICE_FILTERS.find((p) => p.id === activePriceFilter)?.test ?? PRICE_FILTERS[0].test;
+    const activeDistance = DISTANCE_FILTERS.find((d) => d.id === activeDistanceFilter)?.maxKm ?? null;
 
-    if (!normalizedQuery) {
-      return categoryFiltered;
-    }
+    const haversineKm = (a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) => {
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const R = 6371;
+      const dLat = toRad(b.latitude - a.latitude);
+      const dLon = toRad(b.longitude - a.longitude);
+      const lat1 = toRad(a.latitude);
+      const lat2 = toRad(b.latitude);
+      const x =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+      return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    };
 
-    return categoryFiltered.filter((dress) => {
+    const filtered = categoryFiltered.filter((dress) => {
       const boutique = boutiques[dress.boutique_id];
+
+      if (activeLocationFilter !== 'All') {
+        const loc = (boutique?.location || '').trim();
+        if (loc !== activeLocationFilter) return false;
+      }
+
+      if (activeDistance && canUseDistanceFilter && currentCoords) {
+        const lat = boutique?.latitude;
+        const lon = boutique?.longitude;
+        if (typeof lat !== 'number' || typeof lon !== 'number') return false;
+        const km = haversineKm(currentCoords, { latitude: lat, longitude: lon });
+        if (!(km <= activeDistance)) return false;
+      }
+
+      if (!priceTest(typeof dress.price === 'number' ? dress.price : Number(dress.price))) {
+        return false;
+      }
+
+      if (!normalizedQuery) return true;
+
       const searchableText = [dress.name, boutique?.name, boutique?.location]
         .filter(Boolean)
         .join(' ')
@@ -85,7 +176,36 @@ export default function DashboardScreen() {
 
       return searchableText.includes(normalizedQuery);
     });
-  }, [activeCategory, boutiques, dresses, searchQuery]);
+
+    const sorted = [...filtered];
+    if (sortId === 'newest') {
+      sorted.sort((a, b) => {
+        const da = a.created_at ? Date.parse(a.created_at) : NaN;
+        const db = b.created_at ? Date.parse(b.created_at) : NaN;
+        if (Number.isFinite(da) && Number.isFinite(db)) return db - da;
+        return (b.id ?? 0) - (a.id ?? 0);
+      });
+    } else if (sortId === 'price_low') {
+      sorted.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+    } else if (sortId === 'price_high') {
+      sorted.sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
+    } else if (sortId === 'name_az') {
+      sorted.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    }
+
+    return sorted;
+  }, [
+    activeCategory,
+    activeDistanceFilter,
+    activeLocationFilter,
+    activePriceFilter,
+    boutiques,
+    canUseDistanceFilter,
+    currentCoords,
+    dresses,
+    searchQuery,
+    sortId,
+  ]);
 
   const handleFetchCurrentLocation = async () => {
     if (locationLoading) {
@@ -104,6 +224,7 @@ export default function DashboardScreen() {
         accuracy: Location.Accuracy.Balanced,
       });
 
+      setCurrentCoords({ latitude: position.coords.latitude, longitude: position.coords.longitude });
       let nextLabel = `${position.coords.latitude.toFixed(3)}, ${position.coords.longitude.toFixed(3)}`;
 
       try {
@@ -156,6 +277,25 @@ export default function DashboardScreen() {
           >
             Dress Live
           </Text>
+
+          <TouchableOpacity
+            onPress={() => router.push({ pathname: '/notifications' } as any)}
+            className="absolute right-0"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <View className="relative">
+              <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
+              {unreadCount > 0 ? (
+                <View
+                  className="absolute -top-1 -right-2 bg-black rounded-full min-w-[16px] h-[16px] items-center justify-center px-1"
+                >
+                  <Text className="text-white text-[9px] font-bold">
+                    {unreadCount > 9 ? '9+' : String(unreadCount)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </TouchableOpacity>
         </View>
 
         <View className="pt-2 mt-2">
@@ -240,6 +380,77 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           ))}
         </ScrollView>
+
+        {/* Filters + Sorting (premium browsing) */}
+        <View className="px-6 pt-5">
+          {canUseDistanceFilter ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 24 }}>
+              {DISTANCE_FILTERS.map((f) => {
+                const active = activeDistanceFilter === f.id;
+                return (
+                  <TouchableOpacity
+                    key={f.id}
+                    activeOpacity={0.85}
+                    onPress={() => setActiveDistanceFilter(f.id)}
+                    className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                  >
+                    <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{f.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : null}
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 24 }}>
+            {PRICE_FILTERS.map((f) => {
+              const active = activePriceFilter === f.id;
+              return (
+                <TouchableOpacity
+                  key={f.id}
+                  activeOpacity={0.85}
+                  onPress={() => setActivePriceFilter(f.id)}
+                  className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                >
+                  <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{f.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3" contentContainerStyle={{ paddingRight: 24 }}>
+            {locationOptions.map((loc) => {
+              const active = activeLocationFilter === loc;
+              return (
+                <TouchableOpacity
+                  key={loc}
+                  activeOpacity={0.85}
+                  onPress={() => setActiveLocationFilter(loc)}
+                  className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                >
+                  <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`} numberOfLines={1}>
+                    {loc}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3" contentContainerStyle={{ paddingRight: 24 }}>
+            {SORT_OPTIONS.map((opt) => {
+              const active = sortId === opt.id;
+              return (
+                <TouchableOpacity
+                  key={opt.id}
+                  activeOpacity={0.85}
+                  onPress={() => setSortId(opt.id)}
+                  className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                >
+                  <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
 
         {/* Product Feed */}
         <View className="px-6 py-6">

@@ -6,6 +6,7 @@ import { Image } from 'expo-image';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { FigmaConfirmModal } from '../../components/FigmaConfirmModal';
 
 type Dress = {
   id: number;
@@ -21,6 +22,9 @@ export default function CatalogScreen() {
   const boutiqueId = user?.boutique_id ?? null;
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<Dress[]>([]);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [dressPendingDelete, setDressPendingDelete] = useState<Dress | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchDresses = useCallback(async () => {
     if (!boutiqueId) {
@@ -45,6 +49,27 @@ export default function CatalogScreen() {
       fetchDresses();
     }, [fetchDresses])
   );
+
+  const openDelete = (dress: Dress) => {
+    setDressPendingDelete(dress);
+    setDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!dressPendingDelete?.id) return;
+    setIsDeleting(true);
+    try {
+      await api.delete(`/dresses/${dressPendingDelete.id}`);
+      setDeleteModalOpen(false);
+      setDressPendingDelete(null);
+      setLoading(true);
+      await fetchDresses();
+    } catch (error: any) {
+      Alert.alert('Delete Failed', error?.message || 'Could not delete this dress listing.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -132,7 +157,7 @@ export default function CatalogScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       activeOpacity={0.85}
-                      onPress={() => Alert.alert('Delete Disabled', 'The delete screen has been removed from the Boutique app flow.')}
+                      onPress={() => openDelete(dress)}
                       className="flex-1 bg-[#C9491A] py-3 ml-1 items-center justify-center flex-row"
                     >
                       <Ionicons name="trash-outline" size={12} color="white" />
@@ -145,6 +170,19 @@ export default function CatalogScreen() {
           )}
         </View>
       </ScrollView>
+
+      <FigmaConfirmModal
+        visible={deleteModalOpen}
+        onClose={() => (isDeleting ? null : setDeleteModalOpen(false))}
+        title="Delete Dress Listing?"
+        description="Are you sure you want to delete this dress form your catalog? This action can not be undone and the listing will no longer be visible to brides."
+        iconName="trash"
+        tone="danger"
+        leftButtonText={isDeleting ? 'DELETING...' : 'ACCEPT'}
+        onLeftPress={() => (isDeleting ? null : handleConfirmDelete())}
+        rightButtonText="CANCEL"
+        onRightPress={() => (isDeleting ? null : setDeleteModalOpen(false))}
+      />
     </SafeAreaView>
   );
 }

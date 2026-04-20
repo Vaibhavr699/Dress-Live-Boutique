@@ -8,6 +8,11 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
+import { Platform, View } from 'react-native';
+import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
+import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
+import '@shared/polyfills/domExceptionNative';
+import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
@@ -33,6 +38,20 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [loaded, error]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!isLiveKitNativeSupported()) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const lk = require('@livekit/react-native');
+      if (lk && typeof lk.registerGlobals === 'function') {
+        lk.registerGlobals();
+      }
+    } catch {
+      // no-op
+    }
+  }, []);
 
   useEffect(() => {
     // Check if hydration is done from the store itself
@@ -96,12 +115,17 @@ export default function RootLayout() {
     }
   }, [isAuthenticated, user, segments, isReady, router, logout]);
 
+  useIncomingVideoRingPoller(
+    (loaded || !!error) && isAuthenticated && user?.role === 'buyer'
+  );
+
   if (!loaded && !error) {
     return null;
   }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <View style={{ flex: 1 }}>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="landing" options={{ headerShown: false, animation: 'fade' }} />
@@ -120,11 +144,14 @@ export default function RootLayout() {
         <Stack.Screen name="profile-confirm-delete" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="profile-payment-methods" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="profile-payment-details" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="booking-history" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="video-call-summary" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
-
-
+      <IncomingVideoCallBar app="buyer" />
       <StatusBar style="auto" />
+      </View>
     </ThemeProvider>
   );
 }

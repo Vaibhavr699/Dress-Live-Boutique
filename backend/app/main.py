@@ -14,10 +14,17 @@ app = FastAPI(
 
 # Set all CORS enabled origins
 if settings.BACKEND_CORS_ORIGINS:
+    allow_origins = [str(origin) for origin in settings.BACKEND_CORS_ORIGINS]
+    # If wildcard is present, disable credentials so browsers accept `Access-Control-Allow-Origin: *`.
+    # We use Bearer tokens (not cookies), so credentials are not required.
+    allow_credentials = "*" not in allow_origins
+    if "*" in allow_origins:
+        allow_origins = ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

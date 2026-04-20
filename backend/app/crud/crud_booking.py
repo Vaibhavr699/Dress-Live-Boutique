@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
@@ -50,6 +51,22 @@ class CRUDBooking:
         for field in update_data:
             if hasattr(db_obj, field):
                 setattr(db_obj, field, update_data[field])
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
+
+    def set_video_ring(self, db: Session, *, db_obj: Booking, from_user_id: int) -> Booking:
+        db_obj.video_ring_at = datetime.now(timezone.utc)
+        db_obj.video_ring_from_user_id = from_user_id
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
+
+    def clear_video_ring(self, db: Session, *, db_obj: Booking) -> Booking:
+        db_obj.video_ring_at = None
+        db_obj.video_ring_from_user_id = None
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)

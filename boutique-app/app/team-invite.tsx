@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, TextInput, Alert, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +18,7 @@ export default function TeamInviteScreen() {
   const [role, setRole] = useState('');
   const [email, setEmail] = useState('');
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+  const [languagesOpen, setLanguagesOpen] = useState(false);
   const [availabilityOn, setAvailabilityOn] = useState(false);
   const editingMember = useMemo(
     () => members.find((member) => member.id === params.id) ?? null,
@@ -125,27 +126,56 @@ export default function TeamInviteScreen() {
 
         <View className="mb-8">
           <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-3">Select Languages *</Text>
-          <View className="flex-row flex-wrap">
-            {LANGUAGE_OPTIONS.map((option) => {
-              const isSelected = selectedLanguages.includes(option);
-              return (
-                <TouchableOpacity
-                  key={option}
-                  activeOpacity={0.85}
-                  onPress={() => toggleLanguage(option)}
-                  className={`mr-2 mb-2 px-4 py-3 border ${isSelected ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+          <View className="relative" style={{ zIndex: languagesOpen ? 60 : 1 }}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setLanguagesOpen((v) => !v)}
+              className="border border-[#D9D9D9] px-4 py-4 flex-row items-center justify-between"
+            >
+              <Text className={`text-[12px] ${selectedLanguages.length ? 'text-black' : 'text-black/35'}`}>
+                {selectedLanguages.length ? selectedLanguages.join(', ') : 'Select languages'}
+              </Text>
+              <Ionicons name={languagesOpen ? 'chevron-up' : 'chevron-down'} size={16} color="#1A1A1A" />
+            </TouchableOpacity>
+
+            {languagesOpen ? (
+              <>
+                <Pressable className="absolute inset-0" onPress={() => setLanguagesOpen(false)} />
+                <View
+                  className="absolute left-0 right-0 top-full mt-2 border border-[#D9D9D9] bg-white"
+                  style={{
+                    zIndex: 70,
+                    elevation: 12,
+                    shadowColor: '#000',
+                    shadowOpacity: 0.08,
+                    shadowRadius: 10,
+                    shadowOffset: { width: 0, height: 6 },
+                  }}
                 >
-                  <Text className={`text-[12px] ${isSelected ? 'text-white' : 'text-black/75'}`}>
-                    {option}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+                  {LANGUAGE_OPTIONS.map((option, index) => {
+                    const isSelected = selectedLanguages.includes(option);
+                    return (
+                      <TouchableOpacity
+                        key={option}
+                        activeOpacity={0.85}
+                        onPress={() => toggleLanguage(option)}
+                        className="px-4 py-4 flex-row items-center justify-between"
+                        style={{
+                          borderBottomWidth: index === LANGUAGE_OPTIONS.length - 1 ? 0 : 1,
+                          borderBottomColor: '#ECECEC',
+                        }}
+                      >
+                        <Text className="text-[12px] text-black">{option}</Text>
+                        {isSelected ? <Ionicons name="checkmark" size={18} color="black" /> : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            ) : null}
           </View>
           <Text className="text-[10px] text-black/35 mt-2">
-            {selectedLanguages.length > 0
-              ? `Selected: ${selectedLanguages.join(', ')}`
-              : 'Choose one or more languages for this team member.'}
+            {selectedLanguages.length > 0 ? 'Tap to add/remove languages.' : 'Choose one or more languages for this team member.'}
           </Text>
         </View>
 

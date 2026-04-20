@@ -3,7 +3,7 @@ import { useAuthStore } from '../store/useAuthStore';
 
 const API_PATH = '/api/v1';
 const API_PORT = '8000';
-const FALLBACK_API_URL = 'http://192.168.29.254:8000/api/v1';
+const FALLBACK_API_URL = 'http://localhost:8000/api/v1';
 
 function normalizeBaseUrl(url: string) {
   const raw = url.trim();

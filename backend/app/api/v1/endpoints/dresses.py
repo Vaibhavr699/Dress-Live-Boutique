@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.crud.crud_dress import crud_dress
 from app.schemas.dress import Dress, DressCreate, DressUpdate
+from app.models.user import User
 
 router = APIRouter()
 
@@ -69,3 +70,27 @@ def update_dress(
         raise HTTPException(status_code=404, detail="Dress not found")
     dress = crud_dress.update(db, db_obj=dress, obj_in=dress_in)
     return dress
+
+
+@router.delete("/{id}", response_model=Dress)
+def delete_dress(
+    *,
+    db: Session = Depends(deps.get_db),
+    id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Delete a dress listing (partner-only, boutique-scoped).
+    """
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Only partners can delete dresses.")
+    if not current_user.boutique_id:
+        raise HTTPException(status_code=400, detail="Partner account is not linked to a boutique.")
+
+    dress = crud_dress.get(db, id=id)
+    if not dress:
+        raise HTTPException(status_code=404, detail="Dress not found")
+    if dress.boutique_id != current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Not allowed to delete this dress.")
+
+    return crud_dress.remove(db, id=id)

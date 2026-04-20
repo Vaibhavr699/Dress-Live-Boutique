@@ -1,46 +1,103 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, Dimensions, ScrollView, Alert } from 'react-native';
-import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, ActivityIndicator } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-
-const { width, height } = Dimensions.get('window');
+import { api } from '@shared/api/api';
+import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
+import { parseTryonSwitchMessage } from '@shared/videoCallSignals';
+import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 
 type CallState = 'waiting' | 'active';
+type TokenResponse = { url: string; token: string; room: string; identity: string };
 
 export default function VideoCallScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
   const [callState, setCallState] = useState<CallState>('waiting');
   const [seconds, setSeconds] = useState(0);
   const [micOn, setMicOn] = useState(true);
-  const [cameraOn, setCameraOn] = useState(false);
-  
-  const [permission, requestPermission] = useCameraPermissions();
+  // Fitting sessions need the advisor to see the customer; default camera on (user can turn off).
+  const [cameraOn, setCameraOn] = useState(true);
+  const [tokenData, setTokenData] = useState<TokenResponse | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [bookingDresses, setBookingDresses] = useState<VideoCallBookingDress[]>([]);
+  const [ending, setEnding] = useState(false);
+
+  const bookingId = useMemo(() => {
+    const raw = params.bookingId;
+    if (typeof raw !== 'string') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }, [params.bookingId]);
 
   const toggleCamera = async () => {
-    if (!cameraOn) {
-      const currentPermission = permission || await requestPermission();
-      if (!currentPermission.granted) {
-        const { granted } = await requestPermission();
-        if (!granted) {
-          Alert.alert('Permission Denied', 'We need camera permission to show your video fitting.');
-          return;
-        }
-      }
-    }
-    setCameraOn(!cameraOn);
+    setCameraOn((v) => !v);
   };
 
-  // Simulate advisor joining after 5 seconds
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      setCallState('active');
-    }, 5000);
-    return () => clearTimeout(timeout);
-  }, []);
+    if (Platform.OS === 'web') return;
+    if (!bookingId) return;
+    let mounted = true;
+    setTokenLoading(true);
+    setTokenData(null);
+    api
+      .get(`/video-calls/token?booking_id=${bookingId}`)
+      .then((data) => {
+        if (!mounted) return;
+        setTokenData(data as TokenResponse);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        Alert.alert('Video call', error instanceof Error ? error.message : 'Could not start video call.');
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setTokenLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (!bookingId) return;
+    let mounted = true;
+    api
+      .get(`/bookings/${bookingId}`)
+      .then((data) => {
+        if (!mounted) return;
+        const dresses = Array.isArray((data as { dresses?: unknown }).dresses)
+          ? ((data as { dresses: VideoCallBookingDress[] }).dresses)
+          : [];
+        setBookingDresses(dresses);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setBookingDresses([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [bookingId]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || bookingId == null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await api.post('/video-calls/dismiss-ring', { booking_id: bookingId });
+        if (cancelled) return;
+        await api.post('/video-calls/ring', { booking_id: bookingId });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bookingId]);
 
   // Timer logic
   useEffect(() => {
@@ -57,6 +114,24 @@ export default function VideoCallScreen() {
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
     return `00:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleEndCall = async () => {
+    if (ending) return;
+    setEnding(true);
+    try {
+      if (bookingId) {
+        await api.put(`/bookings/${bookingId}`, { status: 'completed' });
+      }
+    } catch (error) {
+      // Keep UX smooth; failing to set completed shouldn't trap the user.
+      console.warn('Failed to mark booking completed:', error);
+    } finally {
+      setEnding(false);
+      setCallState('waiting');
+      setSeconds(0);
+      router.replace({ pathname: '/video-call-summary', params: { bookingId: bookingId ? String(bookingId) : '' } } as any);
+    }
   };
 
   return (
@@ -103,34 +178,135 @@ export default function VideoCallScreen() {
               shadowRadius: 10 
             }}
           >
-            {cameraOn ? (
-              <CameraView 
-                key="camera-view"
-                style={{ width: '100%', height: '100%' }}
-                facing="front"
-              />
+            {Platform.OS === 'web' ? (
+              <View className="flex-1 items-center justify-center px-8">
+                <Text className="text-white/60 text-[12px] text-center">
+                  Live video calls are not available in web preview. Please test on iOS/Android.
+                </Text>
+              </View>
+            ) : !bookingId ? (
+              <View className="flex-1 items-center justify-center px-8">
+                <Text className="text-white/70 text-[12px] text-center">
+                  This video call must be started from a booking.
+                </Text>
+              </View>
+            ) : !isLiveKitNativeSupported() ? (
+              <View className="flex-1 items-center justify-center px-8">
+                <Text className="text-white/70 text-[12px] text-center leading-5">
+                  Video calls need a development build with WebRTC (Expo Go does not include LiveKit).{'\n\n'}
+                  Run: npx expo run:android
+                </Text>
+              </View>
+            ) : tokenLoading ? (
+              <View className="flex-1 items-center justify-center">
+                <ActivityIndicator color="white" />
+                <Text className="text-white/50 text-[11px] mt-4">Connecting…</Text>
+              </View>
+            ) : tokenData ? (
+              (() => {
+                // Dynamic require so web bundling doesn't crash.
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const livekitMod = require('@livekit/react-native');
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const lkClient = require('livekit-client');
+                const Track = lkClient?.Track;
+                if (
+                  !livekitMod ||
+                  typeof livekitMod.LiveKitRoom !== 'function' ||
+                  typeof livekitMod.useRoomContext !== 'function' ||
+                  !Track
+                ) {
+                  return (
+                    <View className="flex-1 items-center justify-center px-8">
+                      <Text className="text-white/70 text-[12px] text-center leading-5">
+                        LiveKit failed to load. Stop Metro and run: npx expo start --clear, then rebuild the dev client.
+                      </Text>
+                    </View>
+                  );
+                }
+                const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext } = livekitMod;
+
+                const RoomView = () => {
+                  const room = useRoomContext();
+                  const tracks = useTracks([Track.Source.Camera]);
+                  const videoTracks = tracks.filter((t: any) => isTrackReference(t));
+                  const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
+                  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+
+                  const [activeDressLabel, setActiveDressLabel] = React.useState<string>('Advisor can switch dresses');
+
+                  React.useEffect(() => {
+                    if (!room || bookingId == null) return;
+                    const handler = (payload: Uint8Array) => {
+                      try {
+                        const raw = new TextDecoder().decode(payload);
+                        const msg = parseTryonSwitchMessage(raw);
+                        if (!msg || msg.bookingId !== bookingId) return;
+                        setActiveDressLabel(
+                          msg.dressName?.trim()
+                            ? `Active dress: ${msg.dressName.trim()}`
+                            : `Active dress #${msg.dressId}`
+                        );
+                      } catch {
+                        // ignore
+                      }
+                    };
+                    room.on('dataReceived', handler as any);
+                    return () => {
+                      room.off('dataReceived', handler as any);
+                    };
+                  }, [room, bookingId]);
+
+                  return (
+                    <View style={{ width: '100%', height: '100%' }}>
+                      {remote ? (
+                        <VideoTrack trackRef={remote} style={{ width: '100%', height: '100%' }} />
+                      ) : (
+                        <View className="flex-1 items-center justify-center">
+                          <Text className="text-white/50 text-[11px]">Waiting for advisor…</Text>
+                        </View>
+                      )}
+
+                      {local ? (
+                        <View
+                          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
+                          style={{ width: 110, height: 150, borderRadius: 16 }}
+                        >
+                          <VideoTrack trackRef={local} style={{ width: '100%', height: '100%' }} />
+                        </View>
+                      ) : null}
+
+                      <View className="absolute left-4 bottom-4 bg-black/60 px-3 py-2 rounded-full">
+                        <Text className="text-white text-[10px]">{activeDressLabel}</Text>
+                      </View>
+                    </View>
+                  );
+                };
+
+                return (
+                  <LiveKitRoom
+                    serverUrl={tokenData.url}
+                    token={tokenData.token}
+                    connect={true}
+                    audio={micOn}
+                    video={cameraOn}
+                    options={{ adaptiveStream: { pixelDensity: 'screen' } }}
+                    onConnected={() => setCallState('active')}
+                  >
+                    <RoomView />
+                  </LiveKitRoom>
+                );
+              })()
             ) : (
-
-
               <View className="flex-1 items-center justify-center">
                 <MaterialCommunityIcons name="video-off-outline" size={48} color="white" opacity={0.3} />
-                <Text className="text-white/30 text-xs mt-4 font-light uppercase tracking-[1px]">Camera Off</Text>
+                <Text className="text-white/30 text-xs mt-4 font-light uppercase tracking-[1px]">
+                  Not connected
+                </Text>
               </View>
             )}
 
-            {/* Advisor Inset (Only when active) */}
-            {callState === 'active' && (
-              <View 
-                className="absolute top-4 right-4 w-28 h-36 bg-white rounded-2xl border-2 border-white/40 overflow-hidden"
-                style={{ elevation: 10, shadowColor: '#000', shadowOpacity: 0.2 }}
-              >
-                <Image 
-                  source={require('@/assets/images/Dashboard image 2.png')} 
-                  style={{ width: '100%', height: '100%' }}
-                  contentFit="cover"
-                />
-              </View>
-            )}
+            {/* Inset handled by LiveKit tracks when connected */}
           </View>
 
           {/* Controls */}
@@ -165,6 +341,11 @@ export default function VideoCallScreen() {
               ? 'Your session will begin automatically as soon as boutique advisor joins.'
               : 'Advisor can control Try-On and switch dresses for you.'}
           </Text>
+          {bookingDresses.length > 0 ? (
+            <Text className="text-black/35 text-[11px] text-center mt-3 px-6">
+              {bookingDresses.length} dress{bookingDresses.length === 1 ? '' : 'es'} on this booking
+            </Text>
+          ) : null}
         </View>
 
         {/* Preparation Tips Section (only when waiting) */}
@@ -199,10 +380,13 @@ export default function VideoCallScreen() {
         >
           <TouchableOpacity 
             activeOpacity={0.9}
-            onPress={() => router.push('/(tabs)/checkout')}
-            className="w-full bg-black py-5 rounded-sm items-center justify-center shadow-lg"
+            onPress={handleEndCall}
+            disabled={ending}
+            className={`w-full py-5 rounded-sm items-center justify-center shadow-lg ${ending ? 'bg-black/40' : 'bg-black'}`}
           >
-            <Text className="text-white text-[12px] font-bold tracking-[3px] uppercase">End Call & Choose Dress</Text>
+            <Text className="text-white text-[12px] font-bold tracking-[3px] uppercase">
+              {ending ? 'Ending…' : 'End Call & Choose Dress'}
+            </Text>
           </TouchableOpacity>
         </View>
       )}

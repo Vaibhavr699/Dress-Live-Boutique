@@ -51,6 +51,8 @@ class Booking(BaseModel):
     selected_dress_ids: str
     appointment_fee: float
     is_paid: bool
+    video_ring_at: Optional[datetime] = None
+    video_ring_from_user_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
@@ -62,6 +64,7 @@ class BookingCustomerSummary(BaseModel):
     id: int
     full_name: Optional[str] = None
     email: EmailStr
+    profile_image_url: Optional[str] = None
 
 
 class BookingDressSummary(BaseModel):

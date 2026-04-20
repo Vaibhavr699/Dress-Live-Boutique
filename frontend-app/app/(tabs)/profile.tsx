@@ -21,6 +21,7 @@ export default function ProfileScreen() {
     { label: 'ADRESSES', route: '/profile-edit-address' },
     { label: 'MY MEASUREMENTS', route: '/profile-my-measurements' },
     { label: 'PAYMENT METHODS', route: '/profile-payment-methods' },
+    { label: 'BOOKING HISTORY', route: '/booking-history' },
   ];
 
   const handleLogout = () => {

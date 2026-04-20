@@ -1,10 +1,13 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
+import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
+import { useNotificationStore } from '@/store/useNotificationStore';
 
 type Booking = {
   id: number;
@@ -21,24 +24,48 @@ export default function BookingScreen() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  const setBookingHistoryFromApi = useBookingHistoryStore((state) => state.setFromApi);
+  const addNotification = useNotificationStore((s) => s.add);
+  const token = useAuthStore((s) => s.token);
+  const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated());
+
+  useEffect(() => {
+    const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
+    return unsub;
+  }, []);
 
   const loadBookings = useCallback(async () => {
+    if (!useAuthStore.getState().token) {
+      setBookings([]);
+      setBookingHistoryFromApi([]);
+      setLoading(false);
+      return;
+    }
     try {
       const data = await api.get('/bookings/me');
-      setBookings(Array.isArray(data) ? (data as Booking[]) : []);
+      const next = Array.isArray(data) ? (data as Booking[]) : [];
+      setBookings(next);
+      setBookingHistoryFromApi(next as any);
     } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('Not authenticated') || message.toLowerCase().includes('unauthorized')) {
+        setBookings([]);
+        setBookingHistoryFromApi([]);
+        return;
+      }
       console.error('Failed to load bookings:', error);
-      Alert.alert('Bookings', error instanceof Error ? error.message : 'Could not load bookings.');
+      Alert.alert('Bookings', message || 'Could not load bookings.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setBookingHistoryFromApi]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!hydrated) return;
       setLoading(true);
       loadBookings();
-    }, [loadBookings])
+    }, [loadBookings, token, hydrated])
   );
 
   const cancelBooking = async (id: number) => {
@@ -46,6 +73,11 @@ export default function BookingScreen() {
     try {
       const updated = await api.put(`/bookings/${id}`, { status: 'rejected' });
       setBookings((prev) => prev.map((booking) => (booking.id === id ? updated : booking)));
+      addNotification({
+        title: 'Booking cancelled',
+        body: 'Your booking was cancelled.',
+        action: { type: 'booking', bookingId: id },
+      });
     } catch (error) {
       Alert.alert('Bookings', error instanceof Error ? error.message : 'Could not cancel this booking.');
     } finally {
@@ -54,6 +86,15 @@ export default function BookingScreen() {
   };
 
   const isEmpty = bookings.length === 0;
+  const isLoggedIn = !!token;
+
+  if (!hydrated) {
+    return (
+      <View className="flex-1 bg-white items-center justify-center">
+        <ActivityIndicator color="#1A1A1A" />
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-white">
@@ -70,6 +111,21 @@ export default function BookingScreen() {
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color="#1A1A1A" />
+        </View>
+      ) : !isLoggedIn ? (
+        <View className="flex-1 items-center justify-center px-10">
+          <View className="mb-8 opacity-20">
+            <MaterialCommunityIcons name="calendar-check-outline" size={64} color="black" />
+          </View>
+          <Text className="text-black text-sm font-medium uppercase tracking-[2px] mb-2 text-center">
+            Sign in required
+          </Text>
+          <Text className="text-black/40 text-[10px] text-center font-light leading-4 px-6">
+            Log in with your buyer account to see your bookings and start video calls.
+          </Text>
+          <TouchableOpacity onPress={() => router.push('/login')} className="mt-10 border-b border-black pb-1">
+            <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Sign in</Text>
+          </TouchableOpacity>
         </View>
       ) : isEmpty ? (
         <View className="flex-1 items-center justify-center px-10">
@@ -159,7 +215,11 @@ export default function BookingScreen() {
 
                 {/* Main Action Button */}
                 <TouchableOpacity 
-                   onPress={() => booking.appointment_type === 'video' ? router.push('/(tabs)/video-call') : null}
+                   onPress={() =>
+                    booking.appointment_type === 'video'
+                      ? router.push({ pathname: '/(tabs)/video-call', params: { bookingId: String(booking.id) } } as any)
+                      : null
+                  }
                    className="w-full bg-black py-4 items-center justify-center mt-4"
                 >
                   <Text className="text-white text-[12px] font-bold tracking-[2.5px] uppercase">

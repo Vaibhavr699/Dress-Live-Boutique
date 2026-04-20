@@ -8,6 +8,11 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
+import { Platform, View } from 'react-native';
+import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
+import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
+import '@shared/polyfills/domExceptionNative';
+import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
 
 SplashScreen.preventAutoHideAsync();
@@ -30,6 +35,20 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [loaded, error]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!isLiveKitNativeSupported()) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const lk = require('@livekit/react-native');
+      if (lk && typeof lk.registerGlobals === 'function') {
+        lk.registerGlobals();
+      }
+    } catch {
+      // no-op
+    }
+  }, []);
 
   useEffect(() => {
     // Check if hydration is done from the store itself
@@ -69,12 +88,17 @@ export default function RootLayout() {
     }
   }, [isAuthenticated, user, segments, isReady, router, logout]);
 
+  useIncomingVideoRingPoller(
+    (loaded || !!error) && isAuthenticated && user?.role === 'partner'
+  );
+
   if (!loaded && !error) {
     return null;
   }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <View style={{ flex: 1 }}>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="landing" options={{ headerShown: false }} />
@@ -86,6 +110,7 @@ export default function RootLayout() {
         <Stack.Screen name="reset-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="add-dress" options={{ presentation: 'modal', headerShown: false }} />
         <Stack.Screen name="video-call" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="video-call-summary" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="video-call-availability" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="video-call-availability-editor" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="team-invite" options={{ headerShown: false, animation: 'slide_from_right' }} />
@@ -103,9 +128,9 @@ export default function RootLayout() {
         <Stack.Screen name="security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack>
-
-
+      <IncomingVideoCallBar app="partner" />
       <StatusBar style="auto" />
+      </View>
     </ThemeProvider>
   );
 }

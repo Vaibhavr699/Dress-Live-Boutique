@@ -7,6 +7,8 @@ import { api } from '@shared/api/api';
 import { useCartStore } from '@/store/useCartStore';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
+import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
+import { useNotificationStore } from '@/store/useNotificationStore';
 
 const { width } = Dimensions.get('window');
 
@@ -58,6 +60,8 @@ export default function BookingCalendarScreen() {
   const [selectedDressNames, setSelectedDressNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const upsertBookingHistory = useBookingHistoryStore((state) => state.upsert);
+  const addNotification = useNotificationStore((s) => s.add);
 
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dates = [
@@ -174,17 +178,25 @@ export default function BookingCalendarScreen() {
 
     try {
       if (bookingId) {
-        await api.put(`/bookings/${bookingId}`, {
+        const updated = await api.put(`/bookings/${bookingId}`, {
           status: 'rescheduled',
           scheduled_for: scheduleLabel,
           language: selectedLanguage,
           location: appointmentType === 'in_store' ? 'Boutique location to be confirmed' : null,
         });
+        if (updated && typeof updated === 'object') {
+          upsertBookingHistory(updated as any);
+          addNotification({
+            title: 'Booking updated',
+            body: `Your ${appointmentType === 'video' ? 'video call' : 'store visit'} was rescheduled.`,
+            action: { type: 'booking', bookingId: (updated as any).id ?? bookingId },
+          });
+        }
         Alert.alert('Booking', 'Your booking request was updated.', [
           { text: 'OK', onPress: () => router.replace('/(tabs)/booking') },
         ]);
       } else {
-        await api.post('/bookings/', {
+        const created = await api.post('/bookings/', {
           appointment_type: appointmentType,
           scheduled_for: scheduleLabel,
           language: selectedLanguage,
@@ -193,6 +205,14 @@ export default function BookingCalendarScreen() {
           appointment_fee: 49.9,
           is_paid: false,
         });
+        if (created && typeof created === 'object') {
+          upsertBookingHistory(created as any);
+          addNotification({
+            title: 'Booking requested',
+            body: `Your ${appointmentType === 'video' ? 'video call' : 'store visit'} request was sent.`,
+            action: { type: 'booking', bookingId: (created as any).id },
+          });
+        }
         Alert.alert('Booking', 'Your booking request was submitted.', [
           { text: 'OK', onPress: () => router.replace('/(tabs)/booking') },
         ]);

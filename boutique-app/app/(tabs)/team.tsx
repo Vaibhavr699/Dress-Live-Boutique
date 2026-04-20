@@ -106,15 +106,6 @@ export default function TeamScreen() {
               >
                 <Text className="text-[11px] uppercase tracking-[1px] text-white">Add Member</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => setMenuOpen((current) => !current)}
-                className="w-10 h-10 items-center justify-center"
-              >
-                <Ionicons name="ellipsis-vertical" size={18} color="#1A1A1A" />
-              </TouchableOpacity>
-
               {menuOpen ? (
                 <View
                   className="absolute right-0 top-full mt-2 w-[140px] border border-[#1A1A1A] bg-white"
