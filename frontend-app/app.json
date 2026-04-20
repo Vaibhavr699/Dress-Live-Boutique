@@ -1,9 +1,8 @@
 {
   "expo": {
     "name": "Dress Live",
-    "slug": "dress-live",
+    "slug": "frontend",
     "version": "1.0.0",
-    "owner": "vaibhavr696",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dress-live",
@@ -30,7 +29,12 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.atul.customer.app"
+      "package": "com.atul.customer.app",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "jsEngine": "jsc",
@@ -73,8 +77,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f01060f1-dcfb-4996-993f-04ad9c97fbc1"
+        "projectId": "efdd2f65-c614-4fa7-945d-faaca5181c66"
       }
-    }
+    },
+    "owner": "vaibhavr699"
   }
 }

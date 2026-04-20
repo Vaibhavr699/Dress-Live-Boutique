@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,13 +11,105 @@ import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 type CallState = 'waiting' | 'active';
 type TokenResponse = { url: string; token: string; room: string; identity: string };
 
+type LiveKitDeps = {
+  LiveKitRoom: any;
+  useTracks: any;
+  VideoTrack: any;
+  isTrackReference: any;
+  useRoomContext: any;
+  Track: any;
+  AudioSession: any;
+};
+
+function loadLiveKitDeps(): LiveKitDeps | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const livekitMod = require('@livekit/react-native');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const lkClient = require('livekit-client');
+    const Track = lkClient?.Track;
+    if (
+      !livekitMod ||
+      typeof livekitMod.LiveKitRoom !== 'function' ||
+      typeof livekitMod.useRoomContext !== 'function' ||
+      !Track
+    ) {
+      return null;
+    }
+    const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext } = livekitMod;
+    const AudioSession = livekitMod?.AudioSession;
+    return { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, Track, AudioSession };
+  } catch {
+    return null;
+  }
+}
+
+const BuyerRoomView = React.memo(function BuyerRoomView(props: { deps: LiveKitDeps; bookingId: number }) {
+  const { deps, bookingId } = props;
+  const room = deps.useRoomContext();
+  const tracks = deps.useTracks([deps.Track.Source.Camera]);
+  const videoTracks = tracks.filter((t: any) => deps.isTrackReference(t));
+  const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
+  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+
+  const [activeDressLabel, setActiveDressLabel] = React.useState<string>('Advisor can switch dresses');
+
+  React.useEffect(() => {
+    if (!room) return;
+    const handler = (payload: Uint8Array) => {
+      try {
+        const raw = new TextDecoder().decode(payload);
+        const msg = parseTryonSwitchMessage(raw);
+        if (!msg || msg.bookingId !== bookingId) return;
+        setActiveDressLabel(
+          msg.dressName?.trim() ? `Active dress: ${msg.dressName.trim()}` : `Active dress #${msg.dressId}`
+        );
+      } catch {
+        // ignore
+      }
+    };
+    room.on('dataReceived', handler as any);
+    return () => {
+      room.off('dataReceived', handler as any);
+    };
+  }, [room, bookingId]);
+
+  return (
+    <View style={{ width: '100%', height: '100%' }}>
+      {remote ? (
+        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: '100%' }} />
+      ) : (
+        <View className="flex-1 items-center justify-center">
+          <Text className="text-white/50 text-[11px]">Waiting for advisor…</Text>
+        </View>
+      )}
+
+      {local ? (
+        <View
+          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
+          style={{ width: 110, height: 150, borderRadius: 16 }}
+        >
+          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
+        </View>
+      ) : null}
+
+      <View className="absolute left-4 bottom-4 bg-black/60 px-3 py-2 rounded-full">
+        <Text className="text-white text-[10px]">{activeDressLabel}</Text>
+      </View>
+    </View>
+  );
+});
+
 export default function VideoCallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
+  const livekitSupported = useMemo(() => Platform.OS !== 'web' && isLiveKitNativeSupported(), []);
   const [callState, setCallState] = useState<CallState>('waiting');
   const [seconds, setSeconds] = useState(0);
   const [micOn, setMicOn] = useState(true);
+  const [speakerOn, setSpeakerOn] = useState(true);
+  const [lkConnected, setLkConnected] = useState(false);
   // Fitting sessions need the advisor to see the customer; default camera on (user can turn off).
   const [cameraOn, setCameraOn] = useState(true);
   const [tokenData, setTokenData] = useState<TokenResponse | null>(null);
@@ -32,12 +124,40 @@ export default function VideoCallScreen() {
     return Number.isFinite(n) ? n : null;
   }, [params.bookingId]);
 
+  const deps = useMemo(() => {
+    if (!livekitSupported) return null;
+    return loadLiveKitDeps();
+  }, [livekitSupported]);
+
+  const audioSessionRef = useRef<any>(null);
+  useEffect(() => {
+    audioSessionRef.current = deps?.AudioSession ?? null;
+  }, [deps]);
+
+  useEffect(() => {
+    if (!lkConnected) return;
+    const AudioSession = audioSessionRef.current;
+    if (!AudioSession) return;
+    (async () => {
+      try {
+        await AudioSession.startAudioSession();
+        if (Platform.OS === 'ios') {
+          await AudioSession.selectAudioOutput(speakerOn ? 'force_speaker' : 'default');
+        } else if (Platform.OS === 'android') {
+          await AudioSession.selectAudioOutput(speakerOn ? 'speaker' : 'earpiece');
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, [lkConnected, speakerOn]);
+
   const toggleCamera = async () => {
     setCameraOn((v) => !v);
   };
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (!livekitSupported) return;
     if (!bookingId) return;
     let mounted = true;
     setTokenLoading(true);
@@ -83,7 +203,7 @@ export default function VideoCallScreen() {
   }, [bookingId]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || bookingId == null) return;
+    if (!livekitSupported || bookingId == null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -133,6 +253,26 @@ export default function VideoCallScreen() {
       router.replace({ pathname: '/video-call-summary', params: { bookingId: bookingId ? String(bookingId) : '' } } as any);
     }
   };
+
+  if (!livekitSupported) {
+    return (
+      <View className="flex-1 bg-white px-8 items-center justify-center">
+        <MaterialCommunityIcons name="video-off-outline" size={48} color="#1A1A1A" />
+        <Text className="text-black text-[16px] font-medium mt-6 mb-2">Video calls need a development build</Text>
+        <Text className="text-black/45 text-[12px] text-center leading-5">
+          Expo Go does not include the native WebRTC module required for LiveKit video calls.
+          Open this app in a development build or EAS build to test video calling.
+        </Text>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          activeOpacity={0.9}
+          className="mt-8 border border-black px-6 py-3"
+        >
+          <Text className="text-black text-[11px] font-bold uppercase tracking-[1px]">Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-white">
@@ -204,18 +344,8 @@ export default function VideoCallScreen() {
               </View>
             ) : tokenData ? (
               (() => {
-                // Dynamic require so web bundling doesn't crash.
-                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                const livekitMod = require('@livekit/react-native');
-                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                const lkClient = require('livekit-client');
-                const Track = lkClient?.Track;
-                if (
-                  !livekitMod ||
-                  typeof livekitMod.LiveKitRoom !== 'function' ||
-                  typeof livekitMod.useRoomContext !== 'function' ||
-                  !Track
-                ) {
+                // Use memoized deps so the video tree stays stable.
+                if (!deps || bookingId == null) {
                   return (
                     <View className="flex-1 items-center justify-center px-8">
                       <Text className="text-white/70 text-[12px] text-center leading-5">
@@ -224,77 +354,22 @@ export default function VideoCallScreen() {
                     </View>
                   );
                 }
-                const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext } = livekitMod;
-
-                const RoomView = () => {
-                  const room = useRoomContext();
-                  const tracks = useTracks([Track.Source.Camera]);
-                  const videoTracks = tracks.filter((t: any) => isTrackReference(t));
-                  const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
-                  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
-
-                  const [activeDressLabel, setActiveDressLabel] = React.useState<string>('Advisor can switch dresses');
-
-                  React.useEffect(() => {
-                    if (!room || bookingId == null) return;
-                    const handler = (payload: Uint8Array) => {
-                      try {
-                        const raw = new TextDecoder().decode(payload);
-                        const msg = parseTryonSwitchMessage(raw);
-                        if (!msg || msg.bookingId !== bookingId) return;
-                        setActiveDressLabel(
-                          msg.dressName?.trim()
-                            ? `Active dress: ${msg.dressName.trim()}`
-                            : `Active dress #${msg.dressId}`
-                        );
-                      } catch {
-                        // ignore
-                      }
-                    };
-                    room.on('dataReceived', handler as any);
-                    return () => {
-                      room.off('dataReceived', handler as any);
-                    };
-                  }, [room, bookingId]);
-
-                  return (
-                    <View style={{ width: '100%', height: '100%' }}>
-                      {remote ? (
-                        <VideoTrack trackRef={remote} style={{ width: '100%', height: '100%' }} />
-                      ) : (
-                        <View className="flex-1 items-center justify-center">
-                          <Text className="text-white/50 text-[11px]">Waiting for advisor…</Text>
-                        </View>
-                      )}
-
-                      {local ? (
-                        <View
-                          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
-                          style={{ width: 110, height: 150, borderRadius: 16 }}
-                        >
-                          <VideoTrack trackRef={local} style={{ width: '100%', height: '100%' }} />
-                        </View>
-                      ) : null}
-
-                      <View className="absolute left-4 bottom-4 bg-black/60 px-3 py-2 rounded-full">
-                        <Text className="text-white text-[10px]">{activeDressLabel}</Text>
-                      </View>
-                    </View>
-                  );
-                };
 
                 return (
-                  <LiveKitRoom
+                  <deps.LiveKitRoom
                     serverUrl={tokenData.url}
                     token={tokenData.token}
                     connect={true}
                     audio={micOn}
                     video={cameraOn}
                     options={{ adaptiveStream: { pixelDensity: 'screen' } }}
-                    onConnected={() => setCallState('active')}
+                    onConnected={() => {
+                      setCallState('active');
+                      setLkConnected(true);
+                    }}
                   >
-                    <RoomView />
-                  </LiveKitRoom>
+                    <BuyerRoomView deps={deps} bookingId={bookingId} />
+                  </deps.LiveKitRoom>
                 );
               })()
             ) : (
@@ -318,6 +393,15 @@ export default function VideoCallScreen() {
               style={{ elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 }}
             >
               <Feather name={micOn ? "mic" : "mic-off"} size={22} color={micOn ? "black" : "white"} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setSpeakerOn((v) => !v)}
+              activeOpacity={0.8}
+              className={`w-14 h-14 rounded-full items-center justify-center ${speakerOn ? 'bg-[#F9F9F9]' : 'bg-[#FF3B30]'}`}
+              style={{ elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 }}
+            >
+              <Feather name={speakerOn ? 'volume-2' : 'volume-x'} size={22} color={speakerOn ? 'black' : 'white'} />
             </TouchableOpacity>
             
             <TouchableOpacity 

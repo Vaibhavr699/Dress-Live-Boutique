@@ -14,6 +14,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { Image } from 'expo-image';
+import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 // IMPORTANT: react-native-maps is native-only and will crash web bundling if imported at the top level.
 // We lazy-require it only on iOS/Android.
 
@@ -133,6 +136,7 @@ function UploadBox({
 export default function BusinessProfileEditScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user, setUser } = useAuthStore();
 
   const [coverPhoto, setCoverPhoto] = useState<string | null>(null);
   const [ownerPhoto, setOwnerPhoto] = useState<string | null>(null);
@@ -146,6 +150,8 @@ export default function BusinessProfileEditScreen() {
   const [pin, setPin] = useState<{ latitude: number; longitude: number }>(DEFAULT_REGION);
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const canUseNativeMaps = Platform.OS !== 'web';
   const Maps = useMemo(() => {
@@ -216,10 +222,33 @@ export default function BusinessProfileEditScreen() {
   }, [canUseNativeMaps, setFromCoords]);
 
   useEffect(() => {
-    // Auto-center on device location on open.
-    useCurrentLocation();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let alive = true;
+    (async () => {
+      try {
+        if (user?.boutique_id) {
+          const boutique = await api.get(`/boutiques/${user.boutique_id}`);
+          if (!alive) return;
+          setShopName((boutique?.name as string) || '');
+          setShopDescription((boutique?.description as string) || '');
+          setFullAddress((boutique?.location as string) || '');
+          setCoverPhoto((boutique?.header_image_url as string) || null);
+        }
+        if (!alive) return;
+        setOwnerName(user?.full_name || '');
+        setEmail(user?.email || '');
+        setPhoneNumber(user?.phone || '');
+        setOwnerPhoto(user?.profile_image_url || null);
+        setFullAddress((prev) => prev || user?.address || '');
+      } catch {
+        // ignore bootstrap errors
+      } finally {
+        if (alive) setInitialLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [user?.address, user?.boutique_id, user?.email, user?.full_name, user?.phone, user?.profile_image_url]);
 
   const pickImage = async (setter: (value: string | null) => void) => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -230,6 +259,60 @@ export default function BusinessProfileEditScreen() {
 
     if (!result.canceled) {
       setter(result.assets[0].uri);
+    }
+  };
+
+  const uploadUserProfileImage = async (uri: string | null) => {
+    if (!uri || /^https?:\/\//.test(uri)) return null;
+    const form = new FormData();
+    form.append('file', { uri, name: `owner-${Date.now()}.jpg`, type: 'image/jpeg' } as any);
+    const updatedUser = await api.postMultipart('/users/me/profile-image', form);
+    setUser(updatedUser as any);
+    return updatedUser as any;
+  };
+
+  const uploadBoutiqueCoverImage = async (uri: string | null) => {
+    if (!uri || /^https?:\/\//.test(uri) || !user?.boutique_id) return null;
+    const form = new FormData();
+    form.append('file', { uri, name: `cover-${Date.now()}.jpg`, type: 'image/jpeg' } as any);
+    const updatedBoutique = await api.postMultipart(`/boutiques/${user.boutique_id}/header-image`, form);
+    return updatedBoutique as any;
+  };
+
+  const handleSave = async () => {
+    if (saving) return;
+    if (!user?.boutique_id) {
+      setLocationError('Boutique missing for this account.');
+      return;
+    }
+    setSaving(true);
+    setLocationError(null);
+    try {
+      const [maybeBoutique, updatedUser] = await Promise.all([
+        uploadBoutiqueCoverImage(coverPhoto),
+        uploadUserProfileImage(ownerPhoto),
+      ]);
+
+      await api.put(`/boutiques/${user.boutique_id}`, {
+        name: shopName.trim(),
+        description: shopDescription.trim(),
+        location: fullAddress.trim(),
+        ...(maybeBoutique?.header_image_url ? { header_image_url: maybeBoutique.header_image_url } : {}),
+      });
+
+      const nextUser = await api.put('/users/me', {
+        full_name: ownerName.trim(),
+        email: email.trim(),
+        phone: phoneNumber.trim(),
+        address: fullAddress.trim(),
+        ...(updatedUser?.profile_image_url ? { profile_image_url: updatedUser.profile_image_url } : {}),
+      });
+      setUser(nextUser as any);
+      router.back();
+    } catch (e: any) {
+      setLocationError(e?.message || 'Could not save business profile changes.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -244,6 +327,13 @@ export default function BusinessProfileEditScreen() {
             <Ionicons name="arrow-back" size={18} color="black" />
           </TouchableOpacity>
 
+          {initialLoading ? (
+            <View className="py-16 items-center">
+              <ActivityIndicator color="#1A1A1A" />
+              <Text className="text-[11px] text-black/45 mt-4">Loading details…</Text>
+            </View>
+          ) : (
+            <>
           <Text
             className="text-[24px] text-black mb-1"
             style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
@@ -270,6 +360,11 @@ export default function BusinessProfileEditScreen() {
                 variant="cover"
               />
             </View>
+            {coverPhoto ? (
+              <View className="mt-3 border border-[#EAEAEA] overflow-hidden">
+                <ImagePreview uri={coverPhoto} />
+              </View>
+            ) : null}
 
             <View className="mt-5">
               <LabeledInput label="Shop Name *" value={shopName} onChangeText={setShopName} />
@@ -312,6 +407,11 @@ export default function BusinessProfileEditScreen() {
                 variant="owner"
               />
             </View>
+            {ownerPhoto ? (
+              <View className="mb-5">
+                <ImagePreview uri={ownerPhoto} square />
+              </View>
+            ) : null}
 
             <LabeledInput label="Owner Name *" value={ownerName} onChangeText={setOwnerName} />
             <LabeledInput
@@ -389,6 +489,8 @@ export default function BusinessProfileEditScreen() {
               Your shop location helps customer find you easily in search results and on the map.
             </Text>
           </View>
+            </>
+          )}
         </ScrollView>
 
         <View
@@ -404,13 +506,28 @@ export default function BusinessProfileEditScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             activeOpacity={0.9}
-            onPress={() => router.back()}
+            onPress={handleSave}
+            disabled={saving || initialLoading}
             className="flex-1 bg-black py-4 items-center justify-center ml-1"
           >
-            <Text className="text-[11px] uppercase tracking-[1px] text-white">Save Changes</Text>
+            {saving ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <Text className="text-[11px] uppercase tracking-[1px] text-white">Save Changes</Text>
+            )}
           </TouchableOpacity>
         </View>
       </View>
     </SafeAreaView>
+  );
+}
+
+function ImagePreview({ uri, square = false }: { uri: string; square?: boolean }) {
+  return (
+    <Image
+      source={{ uri }}
+      style={{ width: square ? 96 : '100%', height: square ? 96 : 140 }}
+      contentFit="cover"
+    />
   );
 }

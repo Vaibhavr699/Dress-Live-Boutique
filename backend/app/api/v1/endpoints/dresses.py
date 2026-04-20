@@ -1,12 +1,36 @@
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+import mimetypes
+from uuid import uuid4
+from urllib.parse import quote
+
+import httpx
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from app.api import deps
+from app.core.config import settings
 from app.crud.crud_dress import crud_dress
 from app.schemas.dress import Dress, DressCreate, DressUpdate
 from app.models.user import User
 
 router = APIRouter()
+
+def _ensure_supabase_storage_config() -> None:
+    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase Storage is not configured. Add SUPABASE_SERVICE_ROLE_KEY to backend/.env.",
+        )
+
+
+def _build_storage_headers(content_type: Optional[str] = None) -> dict[str, str]:
+    headers: dict[str, str] = {
+        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+        "apikey": settings.SUPABASE_SERVICE_ROLE_KEY or "",
+    }
+    if content_type:
+        headers["Content-Type"] = content_type
+    return headers
 
 @router.get("/", response_model=List[Dress])
 def read_dresses(
@@ -40,6 +64,52 @@ def create_dress(
     """
     dress = crud_dress.create(db, obj_in=dress_in)
     return dress
+
+
+@router.post("/upload-image", response_model=dict)
+async def upload_dress_image(
+    *,
+    file: UploadFile = File(...),
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Upload a dress image to Supabase Storage and return its public URL.
+    Partner-only.
+    """
+    if current_user.role != "partner":
+        raise HTTPException(status_code=403, detail="Only partners can upload dress images.")
+    if not current_user.boutique_id:
+        raise HTTPException(status_code=400, detail="Partner account is not linked to a boutique.")
+
+    _ensure_supabase_storage_config()
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    extension = mimetypes.guess_extension(file.content_type) or ".jpg"
+    object_path = f"dresses/{current_user.boutique_id}/{uuid4().hex}{extension}"
+    encoded_path = quote(object_path, safe="/")
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            f"{settings.SUPABASE_URL}/storage/v1/object/{settings.SUPABASE_STORAGE_BUCKET}/{encoded_path}",
+            headers={**_build_storage_headers(file.content_type), "x-upsert": "true"},
+            content=file_bytes,
+        )
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(status_code=502, detail="Could not upload dress image to Supabase Storage.")
+
+    public_url = (
+        f"{settings.SUPABASE_URL}/storage/v1/object/public/"
+        f"{settings.SUPABASE_STORAGE_BUCKET}/{encoded_path}"
+    )
+    return {"url": public_url}
 
 @router.get("/{id}", response_model=Dress)
 def read_dress(

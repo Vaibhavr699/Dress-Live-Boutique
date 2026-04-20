@@ -1,5 +1,20 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  TextInput,
+  Modal,
+  Pressable,
+  LayoutAnimation,
+  Platform,
+  UIManager,
+  Dimensions,
+  StyleSheet,
+} from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,8 +22,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { api } from '@shared/api/api';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCartStore } from '@/store/useCartStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
+import { BlurView } from 'expo-blur';
 
 const CATEGORIES = ["All", "Abendkleider", "Hochzeitskleider", "Add-Ons"];
 const PRICE_FILTERS = [
@@ -44,6 +59,9 @@ type Dress = {
   boutique_id: number;
   category?: string | null;
   categories?: string[] | null;
+  sizes?: string | null;
+  colors?: string | null;
+  is_ai_enabled?: boolean | null;
   created_at?: string | null;
 };
 
@@ -54,13 +72,22 @@ type Boutique = {
   is_visible_to_customers?: boolean;
   latitude?: number | null;
   longitude?: number | null;
+  header_image_url?: string | null;
+};
+
+type BoutiqueCard = {
+  boutiqueId: number;
+  boutiqueName: string;
+  boutiqueLocation: string;
+  coverImageUrl: string | null;
+  matchingDressCount: number;
 };
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const addItem = useCartStore((state) => state.addItem);
   const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
+  const showHomeFilters = false;
   const [activeCategory, setActiveCategory] = useState('All');
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<Dress[]>([]);
@@ -73,6 +100,28 @@ export default function DashboardScreen() {
   const [activeLocationFilter, setActiveLocationFilter] = useState<string>('All');
   const [activeDistanceFilter, setActiveDistanceFilter] = useState<DistanceFilterId>('any');
   const [sortId, setSortId] = useState<SortId>('featured');
+  const [activeSizeFilter, setActiveSizeFilter] = useState<string>('Any');
+  const [activeColorFilter, setActiveColorFilter] = useState<string>('Any');
+  const [activeAiOnly, setActiveAiOnly] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersAnchor, setFiltersAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const filtersButtonRef = useRef<View | null>(null);
+
+  const [draftPriceFilter, setDraftPriceFilter] = useState<(typeof PRICE_FILTERS)[number]['id']>('any');
+  const [draftLocationFilter, setDraftLocationFilter] = useState<string>('All');
+  const [draftDistanceFilter, setDraftDistanceFilter] = useState<DistanceFilterId>('any');
+  const [draftSortId, setDraftSortId] = useState<SortId>('featured');
+  const [draftSizeFilter, setDraftSizeFilter] = useState<string>('Any');
+  const [draftColorFilter, setDraftColorFilter] = useState<string>('Any');
+  const [draftAiOnly, setDraftAiOnly] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      // Enable LayoutAnimation on Android.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (UIManager as any).setLayoutAnimationEnabledExperimental?.(true);
+    }
+  }, []);
 
   const locationOptions = useMemo(() => {
     const raw = Object.values(boutiques)
@@ -81,6 +130,38 @@ export default function DashboardScreen() {
     const uniq = Array.from(new Set(raw));
     return ['All', ...uniq.slice(0, 6)];
   }, [boutiques]);
+
+  const sizeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of dresses) {
+      const raw = (d.sizes || '').trim();
+      if (!raw) continue;
+      raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((s) => set.add(s));
+    }
+    const list = Array.from(set);
+    list.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    return ['Any', ...list.slice(0, 12)];
+  }, [dresses]);
+
+  const colorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const d of dresses) {
+      const raw = (d.colors || '').trim();
+      if (!raw) continue;
+      raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((s) => set.add(s));
+    }
+    const list = Array.from(set);
+    list.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    return ['Any', ...list.slice(0, 12)];
+  }, [dresses]);
 
   const canUseDistanceFilter = useMemo(() => {
     if (!currentCoords) return false;
@@ -167,6 +248,21 @@ export default function DashboardScreen() {
         return false;
       }
 
+      if (activeAiOnly) {
+        if (dress.is_ai_enabled === false) return false;
+      }
+
+      if (activeSizeFilter !== 'Any') {
+        const sizes = (dress.sizes || '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (!sizes.includes(activeSizeFilter)) return false;
+      }
+
+      if (activeColorFilter !== 'Any') {
+        const colors = (dress.colors || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const hit = colors.some((c) => c.toLowerCase() === activeColorFilter.toLowerCase());
+        if (!hit) return false;
+      }
+
       if (!normalizedQuery) return true;
 
       const searchableText = [dress.name, boutique?.name, boutique?.location]
@@ -199,6 +295,9 @@ export default function DashboardScreen() {
     activeDistanceFilter,
     activeLocationFilter,
     activePriceFilter,
+    activeAiOnly,
+    activeSizeFilter,
+    activeColorFilter,
     boutiques,
     canUseDistanceFilter,
     currentCoords,
@@ -206,6 +305,72 @@ export default function DashboardScreen() {
     searchQuery,
     sortId,
   ]);
+
+  const boutiqueCards = useMemo(() => {
+    const grouped = new Map<number, { cover: string | null; count: number }>();
+    for (const d of visibleDresses) {
+      const id = d.boutique_id;
+      if (!id) continue;
+      const prev = grouped.get(id);
+      const nextCover = prev?.cover || d.image_url || null;
+      grouped.set(id, { cover: nextCover, count: (prev?.count || 0) + 1 });
+    }
+
+    const cards: BoutiqueCard[] = [];
+    for (const [boutiqueId, meta] of grouped.entries()) {
+      const b = boutiques[boutiqueId];
+      if (!b) continue;
+      const cover = (b.header_image_url || '').trim() || meta.cover || null;
+      cards.push({
+        boutiqueId,
+        boutiqueName: (b.name || '').trim() || 'Boutique',
+        boutiqueLocation: (b.location || '').trim() || 'Location unavailable',
+        coverImageUrl: cover,
+        matchingDressCount: meta.count,
+      });
+    }
+
+    cards.sort((a, b) => a.boutiqueName.localeCompare(b.boutiqueName));
+    return cards;
+  }, [boutiques, visibleDresses]);
+
+  const openFilters = () => {
+    setDraftPriceFilter(activePriceFilter);
+    setDraftLocationFilter(activeLocationFilter);
+    setDraftDistanceFilter(activeDistanceFilter);
+    setDraftSortId(sortId);
+    setDraftSizeFilter(activeSizeFilter);
+    setDraftColorFilter(activeColorFilter);
+    setDraftAiOnly(activeAiOnly);
+
+    const node = filtersButtonRef.current;
+    // Anchor the popover next to the filter icon.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handle = node ? (node as any) : null;
+    if (handle?.measureInWindow) {
+      handle.measureInWindow((x: number, y: number, w: number, h: number) => {
+        setFiltersAnchor({ x, y, w, h });
+        setFiltersOpen(true);
+      });
+    } else {
+      setFiltersAnchor(null);
+      setFiltersOpen(true);
+    }
+  };
+
+  const closeFilters = () => setFiltersOpen(false);
+
+  const applyFilters = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setActivePriceFilter(draftPriceFilter);
+    setActiveLocationFilter(draftLocationFilter);
+    setActiveDistanceFilter(draftDistanceFilter);
+    setSortId(draftSortId);
+    setActiveSizeFilter(draftSizeFilter);
+    setActiveColorFilter(draftColorFilter);
+    setActiveAiOnly(draftAiOnly);
+    setFiltersOpen(false);
+  };
 
   const handleFetchCurrentLocation = async () => {
     if (locationLoading) {
@@ -257,6 +422,47 @@ export default function DashboardScreen() {
     }
   };
 
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        try {
+          if (currentCoords) return;
+          const perm = await Location.getForegroundPermissionsAsync();
+          if (perm.status !== 'granted') return;
+          const position = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          if (cancelled) return;
+          setCurrentCoords({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+
+          let nextLabel = `${position.coords.latitude.toFixed(3)}, ${position.coords.longitude.toFixed(3)}`;
+          try {
+            const places = await Location.reverseGeocodeAsync({
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            });
+            const firstPlace = places[0];
+            if (firstPlace) {
+              nextLabel = [firstPlace.city || firstPlace.subregion, firstPlace.region, firstPlace.country]
+                .filter(Boolean)
+                .join(', ');
+            }
+          } catch {
+            // ignore
+          }
+          if (!cancelled) setCurrentLocationLabel(nextLabel || 'Current location loaded');
+        } catch {
+          // ignore
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [currentCoords])
+  );
+
   return (
     <View className="flex-1 bg-white">
       {/* Fixed Header */}
@@ -279,9 +485,10 @@ export default function DashboardScreen() {
           </Text>
 
           <TouchableOpacity
-            onPress={() => router.push({ pathname: '/notifications' } as any)}
+            onPress={() => router.push('/notifications' as any)}
             className="absolute right-0"
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ zIndex: 20 }}
           >
             <View className="relative">
               <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
@@ -351,105 +558,59 @@ export default function DashboardScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Categories Tab Bar */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          className="px-6 py-6 border-b border-[#F0F0F0]"
-          contentContainerStyle={{ paddingRight: 40 }}
-        >
-          {CATEGORIES.map((cat) => (
-            <TouchableOpacity 
-              key={cat} 
-              onPress={() => setActiveCategory(cat)}
-              className="mr-10 items-center"
+        <View className="border-b border-[#F0F0F0]">
+          <View className="relative">
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              className="px-6 py-6"
+              contentContainerStyle={{ paddingRight: showHomeFilters ? 64 : 0 }}
             >
-              <Text 
-                className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#1A1A1A50]'}
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontWeight: '400',
-                  fontSize: 14,
-                  lineHeight: 14,
-                  letterSpacing: 2
-                }}
-              >
-                {cat}
-              </Text>
-
-              {activeCategory === cat && <View className="w-1 h-1 rounded-full bg-black mt-1" />}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Filters + Sorting (premium browsing) */}
-        <View className="px-6 pt-5">
-          {canUseDistanceFilter ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 24 }}>
-              {DISTANCE_FILTERS.map((f) => {
-                const active = activeDistanceFilter === f.id;
-                return (
-                  <TouchableOpacity
-                    key={f.id}
-                    activeOpacity={0.85}
-                    onPress={() => setActiveDistanceFilter(f.id)}
-                    className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+              {CATEGORIES.map((cat) => (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    setActiveCategory(cat);
+                  }}
+                  className="mr-10 items-center"
+                >
+                  <Text
+                    className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#1A1A1A50]'}
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '400',
+                      fontSize: 14,
+                      lineHeight: 14,
+                      letterSpacing: 2,
+                    }}
                   >
-                    <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{f.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          ) : null}
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 24 }}>
-            {PRICE_FILTERS.map((f) => {
-              const active = activePriceFilter === f.id;
-              return (
-                <TouchableOpacity
-                  key={f.id}
-                  activeOpacity={0.85}
-                  onPress={() => setActivePriceFilter(f.id)}
-                  className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
-                >
-                  <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{f.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3" contentContainerStyle={{ paddingRight: 24 }}>
-            {locationOptions.map((loc) => {
-              const active = activeLocationFilter === loc;
-              return (
-                <TouchableOpacity
-                  key={loc}
-                  activeOpacity={0.85}
-                  onPress={() => setActiveLocationFilter(loc)}
-                  className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
-                >
-                  <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`} numberOfLines={1}>
-                    {loc}
+                    {cat}
                   </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3" contentContainerStyle={{ paddingRight: 24 }}>
-            {SORT_OPTIONS.map((opt) => {
-              const active = sortId === opt.id;
-              return (
-                <TouchableOpacity
-                  key={opt.id}
-                  activeOpacity={0.85}
-                  onPress={() => setSortId(opt.id)}
-                  className={`mr-3 px-4 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
-                >
-                  <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{opt.label}</Text>
+                  {activeCategory === cat && <View className="w-1 h-1 rounded-full bg-black mt-1" />}
                 </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+              ))}
+            </ScrollView>
+
+            {showHomeFilters ? (
+              <View
+                ref={(n) => {
+                  filtersButtonRef.current = n;
+                }}
+                className="absolute right-4 top-0 bottom-0 justify-center"
+                pointerEvents="box-none"
+              >
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={openFilters}
+                  className="w-10 h-10 items-center justify-center border border-[#E7E7E7] bg-white"
+                >
+                  <Ionicons name="options-outline" size={18} color="#1A1A1A" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
         </View>
 
         {/* Product Feed */}
@@ -458,98 +619,288 @@ export default function DashboardScreen() {
             <View className="py-20 items-center justify-center">
               <ActivityIndicator color="#1A1A1A" />
             </View>
-          ) : visibleDresses.length === 0 ? (
+          ) : boutiqueCards.length === 0 ? (
             <View className="py-20 items-center justify-center">
-              <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No visible dresses yet</Text>
+              <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No dresses available</Text>
               <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
-                Partner-uploaded dresses will appear here once a boutique enables customer visibility.
+                Try adjusting your search or browse another category to see more results.
               </Text>
             </View>
           ) : (
-            visibleDresses.map((dress) => {
-              const boutique = boutiques[dress.boutique_id];
+            boutiqueCards.map((b) => (
+              <View key={b.boutiqueId} className="mb-10">
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  className="mb-4"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/(tabs)/boutique-details',
+                      params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                    })
+                  }
+                >
+                  <Image
+                    source={
+                      b.coverImageUrl
+                        ? { uri: b.coverImageUrl }
+                        : require('@/assets/images/Dashboard image 1.png')
+                    }
+                    style={{ width: '100%', height: 200 }}
+                    contentFit="cover"
+                  />
+                </TouchableOpacity>
 
-              return (
-                <View key={dress.id} className="mb-10">
+                <View className="flex-row justify-between items-start">
                   <TouchableOpacity
-                    activeOpacity={0.9}
-                    className="mb-4"
                     onPress={() =>
                       router.push({
-                        pathname: '/(tabs)/product-details',
-                        params: { id: String(dress.id) },
+                        pathname: '/(tabs)/boutique-details',
+                        params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                      })
+                    }
+                    className="flex-1"
+                  >
+                    <Text
+                      className="text-[#1A1A1A] text-[14px] mb-1"
+                      style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
+                      numberOfLines={1}
+                    >
+                      {b.boutiqueName}
+                    </Text>
+                    <Text
+                      className="text-[#1A1A1A]/35 text-[12px]"
+                      style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}
+                      numberOfLines={1}
+                    >
+                      {b.boutiqueLocation}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="p-1 items-center justify-center w-8 h-8 rounded-full border border-black/10"
+                    activeOpacity={0.85}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/(tabs)/boutique-details',
+                        params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
                       })
                     }
                   >
-                    <Image
-                      source={
-                        dress.image_url
-                          ? { uri: dress.image_url }
-                          : require('@/assets/images/Dashboard image 1.png')
-                      }
-                      style={{ width: '100%', height: 200 }}
-                      contentFit="cover"
-                    />
+                    <Ionicons name="add" size={18} color="#1A1A1A" />
                   </TouchableOpacity>
-
-                  <View className="flex-row justify-between items-start">
-                    <TouchableOpacity
-                      onPress={() =>
-                        router.push({
-                          pathname: '/(tabs)/product-details',
-                          params: { id: String(dress.id) },
-                        })
-                      }
-                      className="flex-1"
-                    >
-                      <Text
-                        className="text-[#1A1A1A] text-[14px] mb-1"
-                        style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
-                      >
-                        {dress.name}
-                      </Text>
-                      <Text
-                        className="text-[#1A1A1A]/40 text-[13px] mb-1"
-                        style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}
-                      >
-                        {boutique?.name || 'Boutique Partner'}
-                      </Text>
-                      <Text
-                        className="text-[#1A1A1A]/35 text-[12px]"
-                        style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}
-                      >
-                        {boutique?.location || 'Location unavailable'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      className="p-1"
-                    onPress={() =>
-                      addItem({
-                        id: String(dress.id),
-                        name: dress.name,
-                        price:
-                          typeof dress.price === 'number'
-                            ? `${dress.price.toFixed(0)} EUR`
-                            : `${dress.price} EUR`,
-                        imageUrl: dress.image_url ?? null,
-                        selected: true,
-                      })
-                    }
-                    >
-                      <Ionicons
-                        name="add"
-                        size={20}
-                        color="#1A1A1A"
-                      />
-                    </TouchableOpacity>
-                  </View>
                 </View>
-              );
-            })
+              </View>
+            ))
           )}
         </View>
 
       </ScrollView>
+
+      {/* Filters Popover - hidden for now */}
+      {showHomeFilters ? (
+      <Modal visible={filtersOpen} transparent animationType="fade" onRequestClose={closeFilters}>
+        <Pressable className="flex-1" onPress={closeFilters}>
+          <BlurView intensity={22} tint="dark" style={{ ...StyleSheet.absoluteFillObject }} />
+          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.20)' }} />
+          {(() => {
+            const screen = Dimensions.get('window');
+            const popW = Math.min(320, screen.width - 24);
+            const maxH = screen.height - (insets.top + insets.bottom) - 80;
+            const popH = Math.max(420, Math.min(640, maxH));
+            const x = (screen.width - popW) / 2;
+            const y = Math.max(insets.top + 24, (screen.height - popH) / 2);
+
+            return (
+              <Pressable
+                onPress={(e) => e.stopPropagation()}
+                style={{
+                  position: 'absolute',
+                  left: x,
+                  top: y,
+                  width: popW,
+                  height: popH,
+                  backgroundColor: 'white',
+                  borderWidth: 1,
+                  borderColor: '#EFEFEF',
+                  shadowColor: '#000',
+                  shadowOpacity: 0.12,
+                  shadowRadius: 14,
+                  shadowOffset: { width: 0, height: 10 },
+                  elevation: 8,
+                }}
+              >
+                <View className="px-5 pt-5 pb-4 border-b border-[#F2F2F2]">
+                  <Text className="text-black text-[12px] font-bold tracking-[2px]">FILTERS</Text>
+                  <Text className="text-black/40 text-[11px] mt-2">Apply filters to refine your catalog.</Text>
+                </View>
+
+                <ScrollView
+                  style={{ flex: 1 }}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ padding: 16, paddingBottom: 14 }}
+                >
+                  {canUseDistanceFilter ? (
+                    <View className="mb-5">
+                      <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">DISTANCE</Text>
+                      <View className="flex-row flex-wrap">
+                        {DISTANCE_FILTERS.map((f) => {
+                          const active = draftDistanceFilter === f.id;
+                          return (
+                            <TouchableOpacity
+                              key={f.id}
+                              activeOpacity={0.85}
+                              onPress={() => setDraftDistanceFilter(f.id)}
+                              className={`mr-2 mb-2 px-3 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                            >
+                              <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{f.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  <View className="mb-5">
+                    <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">AI TRY-ON</Text>
+                    <View className="flex-row flex-wrap">
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => setDraftAiOnly((v) => !v)}
+                        className={`mr-2 mb-2 px-3 py-2 border ${draftAiOnly ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                      >
+                        <Text className={`text-[11px] ${draftAiOnly ? 'text-white' : 'text-black/70'}`}>AI Available</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View className="mb-5">
+                    <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">PRICE</Text>
+                    <View className="flex-row flex-wrap">
+                      {PRICE_FILTERS.map((f) => {
+                        const active = draftPriceFilter === f.id;
+                        return (
+                          <TouchableOpacity
+                            key={f.id}
+                            activeOpacity={0.85}
+                            onPress={() => setDraftPriceFilter(f.id)}
+                            className={`mr-2 mb-2 px-3 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                          >
+                            <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{f.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  {sizeOptions.length > 1 ? (
+                    <View className="mb-5">
+                      <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">SIZE</Text>
+                      <View className="flex-row flex-wrap">
+                        {sizeOptions.map((s) => {
+                          const active = draftSizeFilter === s;
+                          return (
+                            <TouchableOpacity
+                              key={s}
+                              activeOpacity={0.85}
+                              onPress={() => setDraftSizeFilter(s)}
+                              className={`mr-2 mb-2 px-3 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                            >
+                              <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{s}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {colorOptions.length > 1 ? (
+                    <View className="mb-5">
+                      <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">COLOR</Text>
+                      <View className="flex-row flex-wrap">
+                        {colorOptions.map((c) => {
+                          const active = draftColorFilter === c;
+                          return (
+                            <TouchableOpacity
+                              key={c}
+                              activeOpacity={0.85}
+                              onPress={() => setDraftColorFilter(c)}
+                              className={`mr-2 mb-2 px-3 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                            >
+                              <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{c}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  <View className="mb-5">
+                    <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">LOCATION</Text>
+                    <View className="flex-row flex-wrap">
+                      {locationOptions.map((loc) => {
+                        const active = draftLocationFilter === loc;
+                        return (
+                          <TouchableOpacity
+                            key={loc}
+                            activeOpacity={0.85}
+                            onPress={() => setDraftLocationFilter(loc)}
+                            className={`mr-2 mb-2 px-3 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                          >
+                            <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`} numberOfLines={1}>
+                              {loc}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  <View>
+                    <Text className="text-black/60 text-[10px] tracking-[1.5px] mb-2">SORT</Text>
+                    <View className="flex-row flex-wrap">
+                      {SORT_OPTIONS.map((opt) => {
+                        const active = draftSortId === opt.id;
+                        return (
+                          <TouchableOpacity
+                            key={opt.id}
+                            activeOpacity={0.85}
+                            onPress={() => setDraftSortId(opt.id)}
+                            className={`mr-2 mb-2 px-3 py-2 border ${active ? 'bg-black border-black' : 'border-[#D9D9D9]'}`}
+                          >
+                            <Text className={`text-[11px] ${active ? 'text-white' : 'text-black/70'}`}>{opt.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                </ScrollView>
+
+                <View className="flex-row px-4 pb-4 pt-3 border-t border-[#F2F2F2]">
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      setDraftPriceFilter('any');
+                      setDraftLocationFilter('All');
+                      setDraftDistanceFilter('any');
+                      setDraftSortId('featured');
+                      setDraftSizeFilter('Any');
+                      setDraftColorFilter('Any');
+                      setDraftAiOnly(false);
+                    }}
+                    className="flex-1 border border-black py-3 items-center mr-2"
+                  >
+                    <Text className="text-black text-[11px] font-bold tracking-[2px]">RESET</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity activeOpacity={0.9} onPress={applyFilters} className="flex-1 bg-black py-3 items-center ml-2">
+                    <Text className="text-white text-[11px] font-bold tracking-[2px]">APPLY</Text>
+                  </TouchableOpacity>
+                </View>
+              </Pressable>
+            );
+          })()}
+        </Pressable>
+      </Modal>
+      ) : null}
     </View>
   );
 }

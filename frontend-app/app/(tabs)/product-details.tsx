@@ -9,16 +9,24 @@ import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 
+type Boutique = {
+  id: number;
+  name?: string | null;
+  location?: string | null;
+  header_image_url?: string | null;
+};
+
 export default function ProductDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const insets = useSafeAreaInsets();
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const guestDressIds = useShortlistStore((state) => state.dressIds);
-  const toggleGuest = useShortlistStore((state) => state.toggle);
+  const isAuthenticated = useAuthStore((state: any) => state.isAuthenticated);
+  const guestDressIds = useShortlistStore((state: any) => state.dressIds);
+  const toggleGuest = useShortlistStore((state: any) => state.toggle);
   const [optionModalVisible, setOptionModalVisible] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [dress, setDress] = useState<any>(null);
+  const [boutique, setBoutique] = useState<Boutique | null>(null);
   const [isShortlisted, setIsShortlisted] = useState(false);
   const [shortlistLoading, setShortlistLoading] = useState(false);
 
@@ -27,6 +35,7 @@ export default function ProductDetailsScreen() {
   useEffect(() => {
     if (!id) {
       setDress(null);
+      setBoutique(null);
       setIsShortlisted(false);
       setLoading(false);
       return;
@@ -46,6 +55,16 @@ export default function ProductDetailsScreen() {
         }
 
         setDress(dressData);
+        setBoutique(null);
+        const boutiqueId = (dressData as any)?.boutique_id;
+        if (boutiqueId) {
+          try {
+            const b = await api.get(`/boutiques/${boutiqueId}`);
+            if (isActive) setBoutique(b as Boutique);
+          } catch {
+            if (isActive) setBoutique(null);
+          }
+        }
         if (isAuthenticated) {
           const shortlistData = await api.get('/shortlists/me');
           if (!isActive) return;
@@ -87,6 +106,11 @@ export default function ProductDetailsScreen() {
       selected: true,
     };
   }, [dress]);
+
+  const headerImageUrl = useMemo(() => {
+    const img = (dress?.image_url || '').trim();
+    return img || null;
+  }, [dress?.image_url]);
 
   const productInfo = [
     { label: 'Dress Price:', value: product.price },
@@ -146,18 +170,18 @@ export default function ProductDetailsScreen() {
         <>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Header Image Section */}
-        <View className="relative w-full aspect-[1/1.1]">
+        <View className="relative w-full aspect-[4/3] px-6" style={{ marginTop: 8 }}>
           <Image 
             key={product.id}
-            source={product.imageUrl ? { uri: product.imageUrl } : require('@/assets/images/Dashboard image 3.png')} 
+            source={headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 3.png')} 
             style={{ width: '100%', height: '100%' }}
             contentFit="cover"
           />
           
           {/* Top Buttons */}
           <View 
-            className="absolute left-6 right-6 flex-row justify-between"
-            style={{ top: insets.top + 10 }}
+            className="absolute left-10 right-10 flex-row justify-between"
+            style={{ top: insets.top + 14 }}
           >
             <TouchableOpacity 
               onPress={() => router.back()}
@@ -189,26 +213,45 @@ export default function ProductDetailsScreen() {
           </View>
 
           {/* AI Try On Button Overlay */}
-          <View className="absolute bottom-6 right-6">
-            <TouchableOpacity 
-              onPress={() => router.push('/(tabs)/ai-try-on')}
-              className="bg-white/80 px-4 py-2 rounded-lg flex-row items-center border border-black/10"
-              activeOpacity={0.8}
-            >
-
-              <Image 
-                source={require('@/assets/svg/AI try on logo.svg')}
-                style={{ width: 16, height: 16, marginRight: 4 }}
-                contentFit="contain"
-              />
-              <Text className="text-black text-xs font-medium uppercase tracking-[0.5px]">AI Try On</Text>
-
-            </TouchableOpacity>
-          </View>
+          {dress?.is_ai_enabled === false ? null : (
+            <View className="absolute bottom-6 right-10">
+              <TouchableOpacity 
+                onPress={() => router.push('/(tabs)/ai-try-on')}
+                className="bg-white/80 px-4 py-2 rounded-lg flex-row items-center border border-black/10"
+                activeOpacity={0.8}
+              >
+                <Image 
+                  source={require('@/assets/svg/AI try on logo.svg')}
+                  style={{ width: 16, height: 16, marginRight: 4 }}
+                  contentFit="contain"
+                />
+                <Text className="text-black text-xs font-medium uppercase tracking-[0.5px]">AI Try On</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Product Info Section */}
-        <View className="px-8 pt-8">
+        <View className="px-6 py-6">
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() =>
+              dress?.boutique_id
+                ? router.push({
+                    pathname: '/(tabs)/boutique-details',
+                    params: { boutiqueId: String(dress.boutique_id) },
+                  })
+                : null
+            }
+          >
+            <Text className="text-black text-2xl font-medium" style={{ fontFamily: 'Helvetica Neue' }}>
+              {(boutique?.name || '').trim() || 'Boutique'}
+            </Text>
+            <Text className="text-[#1A1A1A50] text-[14px] font-normal mt-1" style={{ fontFamily: 'Helvetica Neue' }}>
+              {(boutique?.location || '').trim() || 'Location unavailable'}
+            </Text>
+          </TouchableOpacity>
+
           <View className="flex-row justify-between items-start mb-1">
             <Text 
               className="text-black text-2xl font-medium"
@@ -248,6 +291,7 @@ export default function ProductDetailsScreen() {
               </View>
             ))}
           </View>
+
         </View>
       </ScrollView>
 

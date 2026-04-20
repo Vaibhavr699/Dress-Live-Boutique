@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const TIME_OPTIONS = [
@@ -26,6 +28,7 @@ type DaySchedule = {
 export default function StoreOpeningHoursEditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const user = useAuthStore((state) => state.user);
   const params = useLocalSearchParams<{ schedule?: string }>();
   const parsedSchedule = params.schedule
     ? (JSON.parse(params.schedule) as { day: string; value: string }[])
@@ -58,6 +61,7 @@ export default function StoreOpeningHoursEditorScreen() {
     ),
   });
   const [activePicker, setActivePicker] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const summaryItems = useMemo(
     () =>
@@ -70,6 +74,24 @@ export default function StoreOpeningHoursEditorScreen() {
       }),
     [daySchedules]
   );
+
+  const handleSave = async () => {
+    if (!user?.boutique_id) {
+      Alert.alert('Availability', 'Boutique profile not found.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/boutiques/${user.boutique_id}`, {
+        availability_schedule: JSON.stringify(summaryItems),
+      });
+      router.replace('/store-opening-hours');
+    } catch (error) {
+      Alert.alert('Availability', error instanceof Error ? error.message : 'Could not save availability.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -275,15 +297,15 @@ export default function StoreOpeningHoursEditorScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() =>
-            router.replace({
-              pathname: '/store-opening-hours',
-              params: { state: 'configured', schedule: JSON.stringify(summaryItems) },
-            })
-          }
+          onPress={handleSave}
+          disabled={saving}
           className="bg-black py-4 items-center justify-center mb-10"
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">Save</Text>
+          {saving ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-[11px] uppercase tracking-[1px] text-white">Save</Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>

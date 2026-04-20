@@ -33,18 +33,23 @@ export default function PartnerVideoCallSummaryScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => router.replace('/(tabs)/bookings')}
+          onPress={() =>
+            router.replace({
+              pathname: '/booking-details',
+              params: { bookingId: typeof params.bookingId === 'string' ? params.bookingId : '' },
+            } as any)
+          }
           className="w-full bg-black py-4 items-center justify-center mb-4"
         >
-          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Back to bookings</Text>
+          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">View booking</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => router.replace('/(tabs)')}
+          onPress={() => router.replace('/(tabs)/bookings')}
           className="w-full border border-black py-4 items-center justify-center"
         >
-          <Text className="text-black text-[12px] font-bold tracking-[2px] uppercase">Go to dashboard</Text>
+          <Text className="text-black text-[12px] font-bold tracking-[2px] uppercase">Back to bookings</Text>
         </TouchableOpacity>
       </View>
     </View>

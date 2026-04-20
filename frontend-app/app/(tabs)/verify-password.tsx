@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,9 +16,15 @@ export default function VerifyPasswordScreen() {
   const [fieldError, setFieldError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const normalizedCode = useMemo(() => (code || '').replace(/\D/g, '').trim(), [code]);
+
   const handleVerify = async () => {
-    if (!code.trim()) {
+    if (!normalizedCode) {
       setFieldError('This field is mandatory');
+      return;
+    }
+    if (normalizedCode.length !== 4) {
+      setFieldError('Enter the 4-digit code.');
       return;
     }
 
@@ -29,7 +35,7 @@ export default function VerifyPasswordScreen() {
 
     setLoading(true);
     try {
-      const updatedUser = await api.put('/users/me/password/otp', { code, new_password: newPassword });
+      const updatedUser = await api.put('/users/me/password/otp', { code: normalizedCode, new_password: newPassword });
       setUser(updatedUser);
       router.replace('/(tabs)/profile');
     } catch (error) {
@@ -73,7 +79,7 @@ export default function VerifyPasswordScreen() {
       <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
         <Text className="text-black text-xs font-bold uppercase mb-4 tracking-[1px] opacity-40">Confirm New Password</Text>
         <Text className="text-black/50 text-[12px] leading-5 mb-10">
-          Please enter the code sent to {typeof email === 'string' && email.length > 0 ? email : 'your email'}.
+          Please enter the 4-digit code sent to {typeof email === 'string' && email.length > 0 ? email : 'your email'}.
         </Text>
 
         <View className="mb-6">
@@ -84,7 +90,7 @@ export default function VerifyPasswordScreen() {
                 setCode(t);
                 setFieldError('');
             }}
-            placeholder="Enter verification code"
+            placeholder="Enter 4-digit code"
             className={`border-b border-[#F0F0F0] py-4 text-black text-sm ${fieldError ? 'border-red-500' : ''}`}
             keyboardType="number-pad"
           />

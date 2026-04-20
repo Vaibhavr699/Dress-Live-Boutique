@@ -7,13 +7,17 @@ import "../global.css";
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { useNotificationStore } from '@/store/useNotificationStore';
+import { usePartnerBookingNotificationsSync } from '@/hooks/usePartnerBookingNotificationsSync';
+import * as Location from 'expo-location';
+import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -23,6 +27,7 @@ export default function RootLayout() {
   const segments = useSegments();
   const { isAuthenticated, user, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
+  const permissionsRequestedRef = useRef(false);
 
   const [loaded, error] = useFonts({
     'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
@@ -44,6 +49,12 @@ export default function RootLayout() {
       const lk = require('@livekit/react-native');
       if (lk && typeof lk.registerGlobals === 'function') {
         lk.registerGlobals();
+      }
+      if (Platform.OS === 'android' && lk?.AudioSession?.configureAudio && lk?.AndroidAudioTypePresets?.communication) {
+        lk.AudioSession.configureAudio({
+          audioTypeOptions: lk.AndroidAudioTypePresets.communication,
+          preferredOutputList: ['speaker', 'earpiece', 'bluetooth', 'headset'],
+        });
       }
     } catch {
       // no-op
@@ -83,14 +94,84 @@ export default function RootLayout() {
     }
 
     if (!isAuthenticated && inProtectedTabs) {
+      useNotificationStore.getState().clear();
       // Keep protected pages behind login, but do not auto-skip the public landing flow.
       router.replace('/landing');
     }
   }, [isAuthenticated, user, segments, isReady, router, logout]);
 
+  useEffect(() => {
+    if (!isReady) return;
+    if (!isAuthenticated) {
+      permissionsRequestedRef.current = false;
+      return;
+    }
+    if (permissionsRequestedRef.current) return;
+    permissionsRequestedRef.current = true;
+
+    (async () => {
+      try {
+        if (Platform.OS !== 'web' && Constants.appOwnership !== 'expo') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+            const notifPerm = await Notifications.getPermissionsAsync();
+            if (notifPerm.status !== 'granted') {
+              await Notifications.requestPermissionsAsync();
+            }
+            try {
+              const token = await Notifications.getExpoPushTokenAsync();
+              console.log('Expo push token:', token.data);
+            } catch {
+              // ignore
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const locPerm = await Location.getForegroundPermissionsAsync();
+        if (locPerm.status !== 'granted') {
+          await Location.requestForegroundPermissionsAsync();
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, [isAuthenticated, isReady]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || Constants.appOwnership === 'expo') return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+        const data = response.notification.request.content.data as {
+          type?: string | null;
+        };
+        if (data?.type === 'booking') {
+          router.push('/notifications');
+        }
+      });
+      return () => sub.remove();
+    } catch {
+      return;
+    }
+  }, [router]);
+
+  const onPartnerVideoCallRoute = segments[0] === 'video-call';
   useIncomingVideoRingPoller(
-    (loaded || !!error) && isAuthenticated && user?.role === 'partner'
+    (loaded || !!error) && isAuthenticated && user?.role === 'partner' && !onPartnerVideoCallRoute
   );
+  usePartnerBookingNotificationsSync((loaded || !!error) && isAuthenticated && user?.role === 'partner');
 
   if (!loaded && !error) {
     return null;
@@ -127,6 +208,7 @@ export default function RootLayout() {
         <Stack.Screen name="withdraw-funds" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack>
       <IncomingVideoCallBar app="partner" />
       <StatusBar style="auto" />

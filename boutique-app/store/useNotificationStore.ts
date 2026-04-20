@@ -20,7 +20,7 @@ export type NotificationItem = {
   appointmentType?: 'video' | 'in_store' | null;
   scheduledFor?: string | null;
   location?: string | null;
-  boutiqueName?: string | null;
+  customerName?: string | null;
   status?: string | null;
   action?: { type: 'booking'; bookingId: number } | null;
 };
@@ -71,7 +71,7 @@ function buildNotification(item: Omit<NotificationItem, 'id' | 'createdAt' | 're
     appointmentType: item.appointmentType ?? null,
     scheduledFor: item.scheduledFor ?? null,
     location: item.location ?? null,
-    boutiqueName: item.boutiqueName ?? null,
+    customerName: item.customerName ?? null,
     status: item.status ?? null,
     action: item.action ?? null,
   };
@@ -105,7 +105,7 @@ export const useNotificationStore = create<NotificationState>()(
           current.scheduledFor !== next.scheduledFor ||
           current.status !== next.status ||
           current.location !== next.location ||
-          current.boutiqueName !== next.boutiqueName;
+          current.customerName !== next.customerName;
         const updated: NotificationItem = {
           ...current,
           ...next,
@@ -128,9 +128,8 @@ export const useNotificationStore = create<NotificationState>()(
       clear: () => set({ items: [] }),
     }),
     {
-      name: 'notification-storage',
+      name: 'partner-notification-storage',
       storage: createJSONStorage(() => storage),
     }
   )
 );
-

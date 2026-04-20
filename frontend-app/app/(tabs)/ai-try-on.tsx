@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, Dimensions, ScrollView } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, SafeAreaView, Dimensions, Alert, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { api } from '@shared/api/api';
 
 const { width } = Dimensions.get('window');
 
@@ -13,6 +15,13 @@ export default function AITryOnScreen() {
   const [step, setStep] = useState(1);
   const [countdown, setCountdown] = useState(5);
   const [showErrorModal, setShowErrorModal] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView | null>(null);
+  const [selfieUri, setSelfieUri] = useState<string | null>(null);
+  const [fullBodyUri, setFullBodyUri] = useState<string | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
+  const [validating, setValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const steps = [
     {
@@ -35,7 +44,6 @@ export default function AITryOnScreen() {
     {
       id: 4,
       type: 'confirmation',
-      image: require('@/assets/images/AI Test 3.jpg'),
       instructions: "FIRST IMAGE",
     },
     {
@@ -46,7 +54,6 @@ export default function AITryOnScreen() {
     {
       id: 6,
       type: 'countdown',
-      image: require('@/assets/images/AI Test 3.jpg'),
       instructions: "NOW TAKE A FULL-BODY PHOTO",
     },
     {
@@ -58,28 +65,127 @@ export default function AITryOnScreen() {
     {
       id: 8,
       type: 'result',
-      image: require('@/assets/images/AI Test 3.jpg'),
       instructions: "WE'RE CREATE YOUR LOOK, AND IT MIGHT TAKE UP TO 2 MINS, WE'LL LET YOU KNOW WHEN IT'S READY",
     }
   ];
 
   const currentStep = steps[step - 1];
 
+  const activePreviewUri = useMemo(() => {
+    if (currentStep.id === 4) return selfieUri;
+    if (currentStep.id === 7 || currentStep.id === 8) return fullBodyUri || selfieUri;
+    return null;
+  }, [currentStep.id, fullBodyUri, selfieUri]);
+
+  useEffect(() => {
+    // Ensure facing makes sense for each capture step
+    if (currentStep.id === 3) setCameraFacing('front');
+    if (currentStep.id === 5 || currentStep.id === 6) setCameraFacing('back');
+  }, [currentStep.id]);
+
+  useEffect(() => {
+    if (step !== 6) return;
+    // Countdown for the full-body photo, then capture automatically.
+    let cancelled = false;
+    let count = 5;
+    setCountdown(count);
+    const id = setInterval(async () => {
+      count -= 1;
+      if (cancelled) return;
+      setCountdown(count);
+      if (count === 0) {
+        clearInterval(id);
+        try {
+          const pic = await cameraRef.current?.takePictureAsync({
+            quality: 0.8,
+            mirror: false,
+          });
+          if (!cancelled && pic?.uri) {
+            setFullBodyUri(pic.uri);
+            setValidating(true);
+            setValidationError(null);
+            try {
+              const form = new FormData();
+              form.append(
+                'file',
+                {
+                  uri: pic.uri,
+                  name: `full-body-${Date.now()}.jpg`,
+                  type: 'image/jpeg',
+                } as any
+              );
+              const res = (await api.postMultipart('/ai/validate-full-body', form)) as { ok?: boolean; reason?: string };
+              if (!res?.ok) {
+                setValidationError(res?.reason || 'Please retake the photo with your full body in view.');
+                setStep(5);
+                return;
+              }
+              setStep(7);
+            } catch (e: any) {
+              setValidationError(e?.message || 'Could not validate the photo. Please try again.');
+              setStep(5);
+              return;
+            } finally {
+              setValidating(false);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [step]);
+
+  const ensureCameraPermission = async () => {
+    if (permission?.granted) return true;
+    const res = await requestPermission();
+    return !!res?.granted;
+  };
+
+  const handleCapture = async () => {
+    const ok = await ensureCameraPermission();
+    if (!ok) {
+      Alert.alert('Camera permission', 'Please allow camera access to continue.');
+      return;
+    }
+    try {
+      if (currentStep.id === 3) {
+        const pic = await cameraRef.current?.takePictureAsync({
+          quality: 0.85,
+          mirror: false,
+        });
+        if (!pic?.uri) return;
+        setSelfieUri(pic.uri);
+        setStep(4);
+        return;
+      }
+      if (currentStep.id === 5) {
+        // Start countdown capture (step 6 will take the photo)
+        setStep(6);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const handleNext = () => {
     if (step < steps.length) {
-      if (step === 5) {
-        setStep(step + 1);
-        let count = 5;
-        const interval = setInterval(() => {
-          count -= 1;
-          setCountdown(count);
-          if (count === 0) {
-            clearInterval(interval);
-            setStep(7); // Jump to analysis
-          }
-        }, 1000);
+      if (step === 4) {
+        // Only continue if selfie exists
+        if (!selfieUri) {
+          Alert.alert('Selfie missing', 'Please take a selfie to continue.');
+          setStep(3);
+          return;
+        }
+        setStep(5);
       } else if (step === 7) {
-        setShowErrorModal(true); // Demo the error case
+        // Move to final preview/result
+        setStep(8);
       } else {
         setStep(step + 1);
       }
@@ -114,16 +220,30 @@ export default function AITryOnScreen() {
         return (
           <View className="flex-1 px-8">
             <View className="items-center justify-center flex-1 mb-10 overflow-hidden">
-              <Image 
-                source={require('@/assets/images/AI Test 3.jpg')} 
-                style={{ width: '100%', height: '100%' }} 
-                contentFit="cover" 
+              <CameraView
+                ref={(r) => {
+                  cameraRef.current = r;
+                }}
+                facing={cameraFacing}
+                mirror={cameraFacing === 'front'}
+                style={{ width: '100%', height: '100%' }}
               />
               {currentStep.type === 'countdown' && (
                 <View className="absolute items-center justify-center">
                   <Text className="text-white text-[120px] font-bold opacity-80">{countdown}</Text>
                 </View>
               )}
+              {validating ? (
+                <View className="absolute inset-0 bg-black/35 items-center justify-center px-8">
+                  <View className="bg-white px-6 py-5 items-center border border-black/5">
+                    <ActivityIndicator color="#1A1A1A" />
+                    <Text className="text-black text-[11px] mt-3 uppercase tracking-[1px]">Validating photo…</Text>
+                    <Text className="text-black/45 text-[11px] mt-2 text-center leading-5">
+                      Please wait while we check that your full body is visible.
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
             </View>
             <View className="items-center mb-10">
               <Text className="text-[#1A1A1A] text-[10px] font-medium uppercase tracking-[1px] opacity-60">
@@ -134,19 +254,44 @@ export default function AITryOnScreen() {
             {currentStep.type === 'camera' && (
               <View className="flex-row justify-between items-center mb-10 px-8">
                 <TouchableOpacity className="w-10 h-10 rounded-lg overflow-hidden border border-black/10">
-                  <Image source={require('@/assets/images/Dashboard image 1.png')} style={{ width: '100%', height: '100%' }} />
+                  <Image
+                    source={
+                      activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/Dashboard image 1.png')
+                    }
+                    style={{ width: '100%', height: '100%' }}
+                    contentFit="cover"
+                  />
                 </TouchableOpacity>
                 <TouchableOpacity 
-                   onPress={handleNext}
+                   onPress={handleCapture}
                    className="w-16 h-16 rounded-full border-4 border-black items-center justify-center"
                 >
                   <View className="w-12 h-12 bg-black rounded-full" />
                 </TouchableOpacity>
-                <TouchableOpacity className="w-10 h-10 items-center justify-center">
+                <TouchableOpacity
+                  className="w-10 h-10 items-center justify-center"
+                  onPress={() => setCameraFacing((f) => (f === 'front' ? 'back' : 'front'))}
+                >
                   <Ionicons name="camera-reverse-outline" size={28} color="black" />
                 </TouchableOpacity>
               </View>
             )}
+
+            {currentStep.type === 'countdown' ? (
+              <View className="items-center mb-10">
+                <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">
+                  Hold still…
+                </Text>
+              </View>
+            ) : null}
+
+            {validationError ? (
+              <View className="items-center mb-6 px-6">
+                <Text className="text-[#C9491A] text-[11px] text-center leading-5">
+                  {validationError}
+                </Text>
+              </View>
+            ) : null}
           </View>
         );
 
@@ -155,7 +300,13 @@ export default function AITryOnScreen() {
         return (
           <View className="flex-1 px-8">
             <View className="items-center justify-center flex-1 mb-10 overflow-hidden">
-              <Image source={currentStep.image} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+              <Image
+                source={
+                  activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/AI Test 3.jpg')
+                }
+                style={{ width: '100%', height: '100%' }}
+                contentFit="cover"
+              />
               {showErrorModal && (
                 <View className="absolute inset-0 bg-white/20 items-center justify-center px-8">
                   <View className="bg-white p-6 items-center shadow-lg border border-black/5">
@@ -187,7 +338,13 @@ export default function AITryOnScreen() {
         return (
           <View className="flex-1 px-8">
             <View className="items-center justify-center flex-1 mb-10 overflow-hidden">
-              <Image source={currentStep.image} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+              <Image
+                source={
+                  activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/AI Test 3.jpg')
+                }
+                style={{ width: '100%', height: '100%' }}
+                contentFit="cover"
+              />
             </View>
             <View className="items-center mb-10">
               <Text className="text-[#1A1A1A] text-[12px] font-medium text-center leading-5 uppercase tracking-[0.5px]">

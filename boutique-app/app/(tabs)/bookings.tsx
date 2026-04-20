@@ -7,6 +7,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
 import { SvgXml } from 'react-native-svg';
 import { Image } from 'expo-image';
+import { useNotificationStore } from '@/store/useNotificationStore';
+import {
+  buildPartnerBookingNotificationDetails,
+  sendLocalPhoneNotification,
+  syncScheduledBookingReminder,
+} from '@/lib/partnerNotifications';
 
 const CALENDAR_EMPTY_SVG = `<svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M3.97375 26.2962C2.39558 25.4221 1.41667 23.7589 1.41667 21.9583V11.3333H28.3333V23.375C28.3333 23.766 28.6507 24.0833 29.0417 24.0833C29.4327 24.0833 29.75 23.766 29.75 23.375V9.20833C29.75 5.69358 26.8897 2.83333 23.375 2.83333H22.6667V0.708333C22.6667 0.317333 22.3493 0 21.9583 0C21.5673 0 21.25 0.317333 21.25 0.708333V2.83333H8.5V0.708333C8.5 0.317333 8.18267 0 7.79167 0C7.40067 0 7.08333 0.317333 7.08333 0.708333V2.83333H6.375C2.86025 2.83333 0 5.69358 0 9.20833V21.9583C0 24.2746 1.25942 26.4123 3.28667 27.5372C3.39575 27.5967 3.51333 27.625 3.6295 27.625C3.87883 27.625 4.11967 27.4932 4.25 27.2609C4.43983 26.9181 4.31517 26.486 3.97375 26.2962ZM6.375 4.25H23.375C26.1092 4.25 28.3333 6.47417 28.3333 9.20833V9.91667H1.41667V9.20833C1.41667 6.47417 3.64083 4.25 6.375 4.25ZM34 33.2917C34 33.6827 33.6827 34 33.2917 34C32.9007 34 32.5833 33.6827 32.5833 33.2917C32.5833 30.9726 31.1752 29.0048 28.9057 28.1534L21.709 25.4547C21.4328 25.3512 21.25 25.0863 21.25 24.7917V17.8599C21.25 16.7422 20.4921 15.776 19.4877 15.6131C18.8487 15.5082 18.2325 15.6768 17.7494 16.0891C17.2734 16.4942 17 17.085 17 17.7083V28.2257C17 28.8207 16.6671 29.3519 16.1302 29.6112C15.5947 29.869 14.9713 29.7996 14.5052 29.4298C14.5052 29.4298 12.0757 27.4918 12.07 27.4862C11.2115 26.69 9.86992 26.7367 9.07375 27.5896C8.27333 28.4452 8.31725 29.7953 9.16442 30.5901L11.4778 32.7873C11.9382 33.2251 11.6294 34 10.9933 34C10.8134 34 10.6406 33.932 10.5103 33.8088L8.18692 31.6157C6.77025 30.2883 6.70225 28.0486 8.03675 26.6234C9.35142 25.2152 11.5515 25.1302 12.9795 26.4109C12.9837 26.4152 15.385 28.322 15.385 28.322L15.5805 28.2271V17.7097C15.5805 16.6699 16.0352 15.6853 16.8286 15.011C17.6219 14.3367 18.6787 14.0505 19.7115 14.2148C21.3945 14.4897 22.6638 16.0565 22.6638 17.8599V24.3001L29.4015 26.826C32.2362 27.8899 33.9972 30.3677 33.9972 33.2902L34 33.2917Z" fill="black"/>
@@ -74,18 +80,32 @@ function DetailRow({
 export default function BookingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'new' | 'progress'>('new');
+  const [activeTab, setActiveTab] = useState<'new' | 'progress' | 'completed'>('new');
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBookingId, setSelectedBookingId] = useState<number | null>(null);
   const [updatingBookingId, setUpdatingBookingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [rescheduleSlots, setRescheduleSlots] = useState<Record<number, string>>({});
+  const [search, setSearch] = useState('');
+  const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
+  const upsertNotification = useNotificationStore((s) => s.upsert);
+  const addNotification = useNotificationStore((s) => s.add);
 
   const loadBookings = useCallback(async () => {
     try {
       const data = await api.get('/bookings/partner');
-      setBookings(Array.isArray(data) ? (data as Booking[]) : []);
+      const next = Array.isArray(data) ? (data as Booking[]) : [];
+      setBookings(next);
+      next.forEach((booking) => {
+        if (booking.status === 'requested') {
+          upsertNotification(buildPartnerBookingNotificationDetails(booking, 'booking_requested'));
+        }
+        if (['requested', 'accepted', 'rescheduled'].includes(booking.status)) {
+          upsertNotification(buildPartnerBookingNotificationDetails(booking, 'booking_upcoming'));
+          void syncScheduledBookingReminder(booking);
+        }
+      });
       setActionError(null);
     } catch (error) {
       console.error('Failed to load partner bookings:', error);
@@ -93,7 +113,7 @@ export default function BookingsScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [upsertNotification]);
 
   useFocusEffect(
     useCallback(() => {
@@ -109,6 +129,14 @@ export default function BookingsScreen() {
   const managedBookings = useMemo(
     () => bookings.filter((booking) => booking.status !== 'requested'),
     [bookings]
+  );
+  const completedBookings = useMemo(
+    () => bookings.filter((booking) => booking.status === 'completed'),
+    [bookings]
+  );
+  const inProgressBookings = useMemo(
+    () => managedBookings.filter((booking) => booking.status !== 'completed'),
+    [managedBookings]
   );
   const managedVideoBookings = useMemo(
     () => managedBookings.filter((booking) => booking.appointment_type === 'video'),
@@ -135,7 +163,8 @@ export default function BookingsScreen() {
     }
   }, [managedBookings, selectedBookingId]);
 
-  const activeList = activeTab === 'new' ? newRequests : managedBookings;
+  const activeList =
+    activeTab === 'new' ? newRequests : activeTab === 'completed' ? completedBookings : inProgressBookings;
 
   const updateBooking = async (
     bookingId: number,
@@ -146,9 +175,17 @@ export default function BookingsScreen() {
 
     try {
       const updated = await api.put(`/bookings/${bookingId}`, payload);
+      const updatedBooking = updated as Booking;
       setBookings((current) =>
-        current.map((booking) => (booking.id === bookingId ? (updated as Booking) : booking))
+        current.map((booking) => (booking.id === bookingId ? updatedBooking : booking))
       );
+      const notification = buildPartnerBookingNotificationDetails(
+        updatedBooking,
+        updatedBooking.status === 'rejected' ? 'booking_cancelled' : 'booking_updated'
+      );
+      addNotification(notification);
+      void sendLocalPhoneNotification(notification);
+      void syncScheduledBookingReminder(updatedBooking);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not update booking.';
       setActionError(message);
@@ -200,6 +237,22 @@ export default function BookingsScreen() {
   const customerName = (booking: Booking) =>
     booking.customer?.full_name || booking.customer?.email || 'Buyer';
 
+  const bookingLocationText = (booking: Booking) =>
+    booking.appointment_type === 'in_store'
+      ? booking.location || booking.boutique?.location || 'Boutique location pending'
+      : null;
+
+  const isBookingLocked = (booking: Booking) =>
+    booking.status === 'rejected' || booking.status === 'completed';
+
+  const matchesSearch = (booking: Booking) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const name = (booking.customer?.full_name || '').toLowerCase();
+    const email = (booking.customer?.email || '').toLowerCase();
+    return name.includes(q) || email.includes(q) || String(booking.id).includes(q);
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-white">
       <ScrollView
@@ -208,6 +261,20 @@ export default function BookingsScreen() {
       >
         <View className="border-b border-[#EFEFEF] px-6 pb-6 pt-3 items-center">
           <Text className="text-[15px] font-semibold tracking-[0.1px] text-black">Calendar</Text>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push('/notifications')}
+            className="absolute right-6 top-1 w-10 h-10 items-center justify-center"
+          >
+            <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
+            {unreadCount > 0 ? (
+              <View className="absolute top-0 right-0 min-w-[18px] h-[18px] rounded-full bg-black items-center justify-center px-1">
+                <Text className="text-white text-[9px] font-bold">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
         </View>
 
         <View className="px-6 pt-6 mb-8">
@@ -217,7 +284,7 @@ export default function BookingsScreen() {
               onPress={() => setActiveTab('new')}
               className="flex-1 items-center py-2"
             >
-              <Text className={`text-[13px] ${activeTab === 'new' ? 'text-black font-medium' : 'text-black/35 font-normal'}`}>
+              <Text className={`text-[13px] text-center ${activeTab === 'new' ? 'text-black font-medium' : 'text-black/35 font-normal'}`}>
                 New Requests
               </Text>
               {activeTab === 'new' ? <View className="mt-3 h-[1px] w-20 bg-black" /> : <View className="mt-3 h-[1px] w-20 bg-transparent" />}
@@ -228,32 +295,47 @@ export default function BookingsScreen() {
               onPress={() => setActiveTab('progress')}
               className="flex-1 items-center py-2"
             >
-              <Text className={`text-[13px] ${activeTab === 'progress' ? 'text-black font-medium' : 'text-black/35 font-normal'}`}>
+              <Text className={`text-[13px] text-center ${activeTab === 'progress' ? 'text-black font-medium' : 'text-black/35 font-normal'}`}>
                 In Progress Bookings
               </Text>
               {activeTab === 'progress' ? <View className="mt-3 h-[1px] w-28 bg-black" /> : <View className="mt-3 h-[1px] w-28 bg-transparent" />}
+            </TouchableOpacity>
+            <View className="h-10 w-px bg-[#ECECEC]" />
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('completed')}
+              className="flex-1 items-center py-2"
+            >
+              <Text className={`text-[13px] text-center ${activeTab === 'completed' ? 'text-black font-medium' : 'text-black/35 font-normal'}`}>
+                Completed
+              </Text>
+              {activeTab === 'completed' ? <View className="mt-3 h-[1px] w-20 bg-black" /> : <View className="mt-3 h-[1px] w-20 bg-transparent" />}
             </TouchableOpacity>
           </View>
         </View>
 
         <View className="px-6">
+          <View className="mb-5">
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search customer, email, or booking #"
+              placeholderTextColor="#999999"
+              className="border border-[#E5E5E5] px-4 py-3 text-[11px] text-black"
+            />
+          </View>
           {actionError ? (
             <View className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
               <Text className="text-[11px] text-red-600">{actionError}</Text>
             </View>
           ) : null}
 
-          <Text className="text-[12px] uppercase tracking-[0.5px] text-black/80 mb-5">
-            {activeTab === 'new'
-              ? `New Requests | ${newRequests.length} |`
-              : `In Progress Bookings | ${managedBookings.length} |`}
-          </Text>
-
+    
           {loading ? (
             <View className="items-center justify-center py-24">
               <ActivityIndicator color="#1A1A1A" />
             </View>
-          ) : activeList.length === 0 ? (
+          ) : activeList.filter(matchesSearch).length === 0 ? (
             <View className="items-center justify-center py-24">
               <View className="mb-4">
                 <SvgXml xml={CALENDAR_EMPTY_SVG} width={34} height={34} />
@@ -270,7 +352,7 @@ export default function BookingsScreen() {
             </View>
           ) : activeTab === 'new' ? (
             <View className="gap-4">
-              {newRequests.map((booking) => (
+              {newRequests.filter(matchesSearch).map((booking) => (
                 <View key={booking.id} className="border border-[#2B2B2B] bg-white px-5 py-5">
                   <View className="flex-row items-center mb-6">
                     <View className="w-[46px] h-[46px] rounded-full bg-[#F7F7F7] items-center justify-center">
@@ -288,7 +370,7 @@ export default function BookingsScreen() {
                     <DetailRow
                       label="Location"
                       icon="location-outline"
-                      text={booking.location || booking.boutique?.location || 'Boutique location pending'}
+                      text={bookingLocationText(booking) || 'Boutique location pending'}
                     />
                   ) : null}
                   <View className="mb-4">
@@ -351,7 +433,7 @@ export default function BookingsScreen() {
                   {`Video call booked | ${managedVideoBookings.length} |`}
                 </Text>
                 <View className="gap-4">
-                  {managedVideoBookings.map((booking) => {
+                  {managedVideoBookings.filter(matchesSearch).map((booking) => {
                     const isSelected = booking.id === selectedBookingId;
                     const primaryButtonLabel = 'START VIDEO CALL';
                     const customerImageUrl = booking.customer?.profile_image_url ?? null;
@@ -408,9 +490,15 @@ export default function BookingsScreen() {
 
                           <View className="mt-6 pt-4 border-t border-[#EFEFEF]">
                             <Text className="text-[11px] text-black/55 mb-2">More Details</Text>
-                            <Text className="text-[11px] text-black/75 leading-5">
-                              Location: {booking.location || booking.boutique?.location || 'Boutique location pending'}
-                            </Text>
+                            {bookingLocationText(booking) ? (
+                              <Text className="text-[11px] text-black/75 leading-5">
+                                Location: {bookingLocationText(booking)}
+                              </Text>
+                            ) : (
+                              <Text className="text-[11px] text-black/75 leading-5">
+                                Session type: Remote video consultation
+                              </Text>
+                            )}
                             <Text className="text-[11px] text-black/75 leading-5 mt-2">
                               Dresses: {dressSummary(booking)}
                             </Text>
@@ -438,6 +526,18 @@ export default function BookingsScreen() {
                             {primaryButtonLabel}
                           </Text>
                         </TouchableOpacity>
+                        <TouchableOpacity
+                          activeOpacity={0.85}
+                          className="border-t border-[#EFEFEF] py-4 items-center"
+                          onPress={() =>
+                            router.push({
+                              pathname: '/booking-details',
+                              params: { bookingId: String(booking.id) },
+                            } as any)
+                          }
+                        >
+                          <Text className="text-[11px] text-black/70 uppercase tracking-[1px]">View booking</Text>
+                        </TouchableOpacity>
                       </TouchableOpacity>
                     );
                   })}
@@ -449,7 +549,7 @@ export default function BookingsScreen() {
                   {`Customer store visit booked | ${managedInStoreBookings.length} |`}
                 </Text>
                 <View className="gap-4">
-                  {managedInStoreBookings.map((booking) => {
+                  {managedInStoreBookings.filter(matchesSearch).map((booking) => {
                     const isSelected = booking.id === selectedBookingId;
                     const primaryButtonLabel = 'IN STORE VISIT';
                     const customerImageUrl = booking.customer?.profile_image_url ?? null;
@@ -506,9 +606,11 @@ export default function BookingsScreen() {
 
                           <View className="mt-6 pt-4 border-t border-[#EFEFEF]">
                             <Text className="text-[11px] text-black/55 mb-2">More Details</Text>
-                            <Text className="text-[11px] text-black/75 leading-5">
-                              Location: {booking.location || booking.boutique?.location || 'Boutique location pending'}
-                            </Text>
+                            {bookingLocationText(booking) ? (
+                              <Text className="text-[11px] text-black/75 leading-5">
+                                Location: {bookingLocationText(booking)}
+                              </Text>
+                            ) : null}
                             <Text className="text-[11px] text-black/75 leading-5 mt-2">
                               Dresses: {dressSummary(booking)}
                             </Text>
@@ -574,11 +676,13 @@ export default function BookingsScreen() {
 
                     <DetailRow label="Date & Time" icon="calendar-outline" text={selectedBooking.scheduled_for} />
                     <DetailRow label="Languages" icon="globe-outline" text={selectedBooking.language} />
-                    <DetailRow
-                      label="Location"
-                      icon="location-outline"
-                      text={selectedBooking.location || selectedBooking.boutique?.location || 'Boutique location pending'}
-                    />
+                    {bookingLocationText(selectedBooking) ? (
+                      <DetailRow
+                        label="Location"
+                        icon="location-outline"
+                        text={bookingLocationText(selectedBooking) || 'Boutique location pending'}
+                      />
+                    ) : null}
 
                     <View className="mt-2 pt-4 border-t border-[#EFEFEF]">
                       <Text className="text-[11px] text-black/70 mb-2">
@@ -608,7 +712,7 @@ export default function BookingsScreen() {
                     <View className="mt-4 flex-row">
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        disabled={updatingBookingId === selectedBooking.id || selectedBooking.status === 'completed'}
+                        disabled={updatingBookingId === selectedBooking.id || isBookingLocked(selectedBooking)}
                         onPress={() => updateBooking(selectedBooking.id, { status: 'accepted' })}
                         className="flex-1 border border-[#1A1A1A] py-4 items-center justify-center mr-1"
                       >
@@ -616,7 +720,7 @@ export default function BookingsScreen() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        disabled={updatingBookingId === selectedBooking.id || selectedBooking.status === 'completed'}
+                        disabled={updatingBookingId === selectedBooking.id || isBookingLocked(selectedBooking)}
                         onPress={() => updateBooking(selectedBooking.id, { status: 'rejected' })}
                         className="flex-1 bg-[#C9491A] py-4 items-center justify-center ml-1"
                       >
@@ -627,6 +731,7 @@ export default function BookingsScreen() {
                     <View className="mt-3 flex-row items-center">
                       <TextInput
                         value={rescheduleSlots[selectedBooking.id] ?? selectedBooking.scheduled_for}
+                        editable={!isBookingLocked(selectedBooking)}
                         onChangeText={(value) =>
                           setRescheduleSlots((current) => ({
                             ...current,
@@ -639,7 +744,7 @@ export default function BookingsScreen() {
                       />
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        disabled={updatingBookingId === selectedBooking.id || selectedBooking.status === 'completed'}
+                        disabled={updatingBookingId === selectedBooking.id || isBookingLocked(selectedBooking)}
                         onPress={() => handleReschedule(selectedBooking)}
                         className="border border-[#1A1A1A] px-4 py-3"
                       >

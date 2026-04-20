@@ -8,6 +8,11 @@ import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
+import {
+  buildBookingNotificationDetails,
+  sendLocalPhoneNotification,
+  syncScheduledBookingReminder,
+} from '@/lib/buyerNotifications';
 
 type Booking = {
   id: number;
@@ -16,6 +21,7 @@ type Booking = {
   scheduled_for: string;
   language: string;
   location?: string | null;
+  boutique?: { name?: string | null; location?: string | null } | null;
 };
 
 export default function BookingScreen() {
@@ -26,6 +32,7 @@ export default function BookingScreen() {
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const setBookingHistoryFromApi = useBookingHistoryStore((state) => state.setFromApi);
   const addNotification = useNotificationStore((s) => s.add);
+  const upsertNotification = useNotificationStore((s) => s.upsert);
   const token = useAuthStore((s) => s.token);
   const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated());
 
@@ -46,6 +53,12 @@ export default function BookingScreen() {
       const next = Array.isArray(data) ? (data as Booking[]) : [];
       setBookings(next);
       setBookingHistoryFromApi(next as any);
+      next
+        .filter((booking) => ['requested', 'accepted', 'rescheduled'].includes(booking.status))
+        .forEach((booking) => {
+          upsertNotification(buildBookingNotificationDetails(booking, 'booking_upcoming'));
+          void syncScheduledBookingReminder(booking);
+        });
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (message.includes('Not authenticated') || message.toLowerCase().includes('unauthorized')) {
@@ -58,7 +71,7 @@ export default function BookingScreen() {
     } finally {
       setLoading(false);
     }
-  }, [setBookingHistoryFromApi]);
+  }, [setBookingHistoryFromApi, upsertNotification]);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,11 +86,9 @@ export default function BookingScreen() {
     try {
       const updated = await api.put(`/bookings/${id}`, { status: 'rejected' });
       setBookings((prev) => prev.map((booking) => (booking.id === id ? updated : booking)));
-      addNotification({
-        title: 'Booking cancelled',
-        body: 'Your booking was cancelled.',
-        action: { type: 'booking', bookingId: id },
-      });
+      const notification = buildBookingNotificationDetails(updated as Booking, 'booking_cancelled');
+      addNotification(notification);
+      void sendLocalPhoneNotification(notification);
     } catch (error) {
       Alert.alert('Bookings', error instanceof Error ? error.message : 'Could not cancel this booking.');
     } finally {

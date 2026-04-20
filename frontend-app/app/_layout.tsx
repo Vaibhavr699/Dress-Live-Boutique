@@ -16,6 +16,10 @@ import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
+import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
+import { useNotificationStore } from '@/store/useNotificationStore';
+import * as Location from 'expo-location';
+import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -26,6 +30,7 @@ export default function RootLayout() {
   const { isAuthenticated, user, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
   const prevAuthRef = useRef<boolean | null>(null);
+  const permissionsRequestedRef = useRef(false);
 
   const [loaded, error] = useFonts({
     'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
@@ -47,6 +52,12 @@ export default function RootLayout() {
       const lk = require('@livekit/react-native');
       if (lk && typeof lk.registerGlobals === 'function') {
         lk.registerGlobals();
+      }
+      if (Platform.OS === 'android' && lk?.AudioSession?.configureAudio && lk?.AndroidAudioTypePresets?.communication) {
+        lk.AudioSession.configureAudio({
+          audioTypeOptions: lk.AndroidAudioTypePresets.communication,
+          preferredOutputList: ['speaker', 'earpiece', 'bluetooth', 'headset'],
+        });
       }
     } catch {
       // no-op
@@ -75,6 +86,8 @@ export default function RootLayout() {
       try {
         useCartStore.getState().clearCart();
         useShortlistStore.getState().clear();
+        useBookingHistoryStore.getState().clear();
+        useNotificationStore.getState().clear();
       } catch (error) {
         console.warn('Failed to clear guest state on logout:', error);
       }
@@ -84,7 +97,11 @@ export default function RootLayout() {
     const inTabsGroup = segments[0] === '(tabs)';
     const activeTabOrScreen = typeof segments[1] === 'string' ? segments[1] : '';
     const inAllowedAuthenticatedStack =
-      typeof segments[0] === 'string' && segments[0].startsWith('profile-');
+      typeof segments[0] === 'string' &&
+      (
+        segments[0].startsWith('profile-') ||
+        ['booking-history', 'notifications', 'video-call-summary'].includes(segments[0])
+      );
     const hasRoleMismatch = isAuthenticated && !!user && user.role !== 'buyer';
 
     if (hasRoleMismatch) {
@@ -102,7 +119,14 @@ export default function RootLayout() {
           'order-summary',
           'ai-try-on',
         ].includes(activeTabOrScreen)) ||
-      (!inTabsGroup && typeof segments[0] === 'string' && segments[0].startsWith('profile-'));
+      (
+        !inTabsGroup &&
+        typeof segments[0] === 'string' &&
+        (
+          segments[0].startsWith('profile-') ||
+          ['booking-history', 'notifications', 'video-call-summary'].includes(segments[0])
+        )
+      );
 
     if (!isAuthenticated && isProtectedForGuests) {
       router.replace('/auth-choice');
@@ -115,8 +139,79 @@ export default function RootLayout() {
     }
   }, [isAuthenticated, user, segments, isReady, router, logout]);
 
+  useEffect(() => {
+    if (!isReady) return;
+    if (!isAuthenticated) {
+      permissionsRequestedRef.current = false;
+      return;
+    }
+    if (permissionsRequestedRef.current) return;
+    permissionsRequestedRef.current = true;
+
+    (async () => {
+      try {
+        // Notifications permission + token (only in dev build / standalone; Expo Go will throw).
+        if (Platform.OS !== 'web' && Constants.appOwnership !== 'expo') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+            const notifPerm = await Notifications.getPermissionsAsync();
+            if (notifPerm.status !== 'granted') {
+              await Notifications.requestPermissionsAsync();
+            }
+            try {
+              const token = await Notifications.getExpoPushTokenAsync();
+              console.log('Expo push token:', token.data);
+            } catch {
+              // ignore token errors (works only on physical device + correct project setup)
+            }
+          } catch {
+            // ignore notifications errors
+          }
+        }
+
+        // Location permission (Home will auto-fetch if granted).
+        const locPerm = await Location.getForegroundPermissionsAsync();
+        if (locPerm.status !== 'granted') {
+          await Location.requestForegroundPermissionsAsync();
+        }
+      } catch {
+        // non-blocking
+      }
+    })();
+  }, [isAuthenticated, isReady]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || Constants.appOwnership === 'expo') return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+        const data = response.notification.request.content.data as {
+          type?: string | null;
+          bookingId?: number | string | null;
+        };
+        if (data?.type === 'booking') {
+          router.push('/(tabs)/booking');
+        }
+      });
+      return () => sub.remove();
+    } catch {
+      return;
+    }
+  }, [router]);
+
+  const onBuyerVideoCallRoute = segments[0] === '(tabs)' && segments[1] === 'video-call';
   useIncomingVideoRingPoller(
-    (loaded || !!error) && isAuthenticated && user?.role === 'buyer'
+    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute
   );
 
   if (!loaded && !error) {

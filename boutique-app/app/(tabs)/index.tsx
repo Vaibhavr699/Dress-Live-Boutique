@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
+import { useNotificationStore } from '@/store/useNotificationStore';
 import { FigmaConfirmModal } from '../../components/FigmaConfirmModal';
 
 const { width } = Dimensions.get('window');
@@ -43,6 +44,7 @@ export default function BoutiqueDashboard() {
   const router = useRouter();
   const { user } = useAuthStore();
   const boutiqueId = user?.boutique_id ?? null;
+  const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
   
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<any[]>([]);
@@ -143,9 +145,25 @@ export default function BoutiqueDashboard() {
       >
         {/* Header */}
         <View style={{ paddingTop: insets.top + 14 }} className="px-6 pb-4 border-b border-[#F0F0F0]">
-          <Text className="text-[14px] text-black text-center" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
-            Shop Dashboard
-          </Text>
+          <View className="items-center justify-center">
+            <Text className="text-[14px] text-black text-center" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+              Shop Dashboard
+            </Text>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => router.push('/notifications')}
+              className="absolute right-0 top-0 w-10 h-10 items-center justify-center"
+            >
+              <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
+              {unreadCount > 0 ? (
+                <View className="absolute top-1 right-1 min-w-[18px] h-[18px] rounded-full bg-black items-center justify-center px-1">
+                  <Text className="text-white text-[9px] font-bold">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Greeting + Shop Status Card (Figma-style) */}
@@ -253,6 +271,7 @@ export default function BoutiqueDashboard() {
                   }
                   style={{ width: '100%', height: 160 }}
                   contentFit="cover"
+                  cachePolicy="none"
                 />
                 <View className="p-4 flex-row items-start justify-between">
                   <View className="flex-1 pr-4">

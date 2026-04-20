@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, StyleSheet } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
 
 export default function OTPVerifyScreen() {
   const insets = useSafeAreaInsets();
@@ -11,6 +12,9 @@ export default function OTPVerifyScreen() {
   
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const inputs = useRef<TextInput[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const fullCode = useMemo(() => code.join(''), [code]);
 
   const handleChange = (text: string, index: number) => {
     const newCode = [...code];
@@ -29,9 +33,34 @@ export default function OTPVerifyScreen() {
   };
 
   const handleVerify = () => {
-    const fullCode = code.join('');
-    if (fullCode.length === 6) {
-      router.push('/reset-password');
+    if (!email) {
+      Alert.alert('Error', 'Email missing. Please go back and request a new code.');
+      return;
+    }
+    if (fullCode.length !== 6) {
+      Alert.alert('Error', 'Please enter the 6-digit code.');
+      return;
+    }
+    router.push({
+      pathname: '/reset-password',
+      params: { email: String(email), code: fullCode },
+    });
+  };
+
+  const handleResend = async () => {
+    if (!email) {
+      Alert.alert('Error', 'Email missing. Please go back and request a new code.');
+      return;
+    }
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.post('/users/password-reset/otp', { email: String(email).trim().toLowerCase() });
+      Alert.alert('Sent', 'We sent a new code to your email.');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to resend code');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -103,14 +132,19 @@ export default function OTPVerifyScreen() {
             <TouchableOpacity 
               activeOpacity={0.9}
               onPress={handleVerify}
+              disabled={busy}
               className="bg-[#1A1A1A] py-5 items-center mt-8 mb-8"
             >
-              <Text 
-                className="text-white text-sm font-bold tracking-[2px] uppercase"
-                style={{ fontFamily: 'Helvetica Neue' }}
-              >
-                VERIFY CODE
-              </Text>
+              {busy ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text 
+                  className="text-white text-sm font-bold tracking-[2px] uppercase"
+                  style={{ fontFamily: 'Helvetica Neue' }}
+                >
+                  VERIFY CODE
+                </Text>
+              )}
             </TouchableOpacity>
 
             {/* Resend Link */}
@@ -118,7 +152,7 @@ export default function OTPVerifyScreen() {
               <Text className="text-[#1A1A1A]/40 text-[13px] font-light">
                 Haven&apos;t got the email yet?
               </Text>
-              <TouchableOpacity onPress={() => {}}>
+              <TouchableOpacity onPress={handleResend} disabled={busy}>
                 <Text className="text-[#1A1A1A] text-[13px] font-medium border-b border-[#1A1A1A]">
                   Resend email
                 </Text>

@@ -135,6 +135,7 @@ export default function CatalogScreen() {
                     }
                     style={{ width: '100%', height: 175 }}
                     contentFit="cover"
+                    cachePolicy="none"
                   />
 
                   <View className="pt-3">

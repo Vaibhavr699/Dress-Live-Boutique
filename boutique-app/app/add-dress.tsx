@@ -338,6 +338,23 @@ export default function AddDressScreen() {
     }
   };
 
+  const ensureRemoteImageUrl = async (uri: string | null) => {
+    if (!uri) return null;
+    const trimmed = uri.trim();
+    if (!trimmed) return null;
+    if (/^https?:\/\//.test(trimmed)) return trimmed;
+
+    const form = new FormData();
+    form.append('file', {
+      // @ts-expect-error React Native FormData file
+      uri: trimmed,
+      name: `dress-${Date.now()}.jpg`,
+      type: 'image/jpeg',
+    });
+    const res = (await api.postMultipart('/dresses/upload-image', form)) as { url?: string };
+    return typeof res?.url === 'string' ? res.url : null;
+  };
+
   const toggleSelection = (
     value: string,
     selected: string[],
@@ -397,6 +414,11 @@ export default function AddDressScreen() {
 
     setLoading(true);
     try {
+      const uploadedUrl = await ensureRemoteImageUrl(frontImage || backImage);
+      if (!uploadedUrl) {
+        Alert.alert('Image upload', 'Could not upload dress image. Please try again.');
+        return;
+      }
       await api.post('/dresses/', {
         name: name.trim(),
         description: payloadDescription,
@@ -408,7 +430,7 @@ export default function AddDressScreen() {
           .filter(Boolean)
           .join(', '),
         colors: selectedColor,
-        image_url: frontImage || backImage || '',
+        image_url: uploadedUrl,
         boutique_id: user.boutique_id,
         is_ai_enabled:
           selectedServices.includes('AI TRY ON') ||

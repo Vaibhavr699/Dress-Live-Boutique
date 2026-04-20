@@ -12,6 +12,13 @@ function formatType(type: BookingHistoryItem['appointment_type']) {
   return type === 'video' ? 'VIDEO CALL' : 'STORE VISIT';
 }
 
+function formatWhen(raw?: string | null) {
+  if (!raw) return '';
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleString();
+}
+
 export default function BookingHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -90,9 +97,21 @@ export default function BookingHistoryScreen() {
                     <Text className="text-black text-[12px] font-bold uppercase tracking-[1px]">
                       {formatType(b.appointment_type)} • #{b.id}
                     </Text>
-                    <Text className="text-black/50 text-[11px] mt-2">{b.scheduled_for}</Text>
+                    {b.boutique?.name ? (
+                      <Text className="text-black/60 text-[11px] mt-2">{b.boutique.name}</Text>
+                    ) : null}
+                    <Text className="text-black/50 text-[11px] mt-2">{formatWhen(b.scheduled_for)}</Text>
                     <Text className="text-black/40 text-[11px] mt-1">{b.language}</Text>
-                    {b.location ? <Text className="text-black/35 text-[11px] mt-1">{b.location}</Text> : null}
+                    {b.boutique?.location ? (
+                      <Text className="text-black/35 text-[11px] mt-1">{b.boutique.location}</Text>
+                    ) : b.location ? (
+                      <Text className="text-black/35 text-[11px] mt-1">{b.location}</Text>
+                    ) : null}
+                    {Array.isArray(b.dresses) && b.dresses.length > 0 ? (
+                      <Text className="text-black/35 text-[11px] mt-2" numberOfLines={2}>
+                        Dresses: {b.dresses.map((d) => d?.name).filter(Boolean).join(', ')}
+                      </Text>
+                    ) : null}
                   </View>
                   <View className="px-3 py-2 bg-black/5">
                     <Text className="text-black/60 text-[10px] font-bold uppercase tracking-[0.8px]">{b.status}</Text>

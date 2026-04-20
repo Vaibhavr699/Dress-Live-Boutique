@@ -10,6 +10,17 @@ export type BookingHistoryItem = {
   scheduled_for: string;
   language: string;
   location?: string | null;
+  boutique?: {
+    id: number;
+    name?: string | null;
+    location?: string | null;
+  } | null;
+  dresses?: Array<{
+    id: number;
+    name?: string | null;
+    price?: number | null;
+    image_url?: string | null;
+  }>;
 };
 
 type BookingHistoryState = {

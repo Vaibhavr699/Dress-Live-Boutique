@@ -8,6 +8,7 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
+import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -16,6 +17,7 @@ export default function ProfileScreen() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const clearCart = useCartStore((state) => state.clearCart);
   const clearShortlist = useShortlistStore((state) => state.clear);
+  const clearBookingHistory = useBookingHistoryStore((state) => state.clear);
 
   const menuItems = [
     { label: 'ADRESSES', route: '/profile-edit-address' },
@@ -34,6 +36,7 @@ export default function ProfileScreen() {
     setTimeout(() => {
       clearCart();
       clearShortlist();
+      clearBookingHistory();
       logout();
       router.replace('/landing');
     }, 220);

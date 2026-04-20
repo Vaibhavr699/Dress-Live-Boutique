@@ -1,14 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 export default function SecurityPasswordScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuthStore();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const passwordHint = useMemo(
     () =>
@@ -47,15 +51,37 @@ export default function SecurityPasswordScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() =>
-            router.push({
-              pathname: '/security-password-verify',
-              params: { email: 'example@gmail.com' },
-            })
-          }
+          disabled={loading}
+          onPress={async () => {
+            if (loading) return;
+            if (!password.trim() || password.trim().length < 8) {
+              Alert.alert('Password', 'Password must be at least 8 characters.');
+              return;
+            }
+            if (!user?.email) {
+              Alert.alert('Account', 'Email missing. Please log in again.');
+              return;
+            }
+            setLoading(true);
+            try {
+              await api.post('/users/me/password/otp', { email: user.email });
+              router.push({
+                pathname: '/security-password-verify',
+                params: { email: user.email, newPassword: password },
+              });
+            } catch (error: any) {
+              Alert.alert('OTP Failed', error?.message || 'Could not send verification code.');
+            } finally {
+              setLoading(false);
+            }
+          }}
           className="bg-black py-4 items-center justify-center mt-auto mb-10"
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">Continue</Text>
+          {loading ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-[11px] uppercase tracking-[1px] text-white">Continue</Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>

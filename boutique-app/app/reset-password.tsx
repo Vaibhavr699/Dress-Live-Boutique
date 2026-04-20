@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
 
 export default function ResetPasswordScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { email, code } = useLocalSearchParams<{ email?: string; code?: string }>();
   
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState<'bridge' | 'input' | 'success'>('bridge');
@@ -25,16 +27,22 @@ export default function ResetPasswordScreen() {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
+    if (!email || !code) {
+      Alert.alert('Error', 'Missing reset code. Please request a new code.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // API call to update password (TBD on backend)
-      setTimeout(() => {
-        setLoading(false);
-        setCurrentStep('success');
-      }, 1000);
+      await api.put('/users/password-reset/confirm', {
+        email: String(email).trim().toLowerCase(),
+        code: String(code),
+        new_password: password,
+      });
+      setCurrentStep('success');
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update password');
+    } finally {
       setLoading(false);
     }
   };

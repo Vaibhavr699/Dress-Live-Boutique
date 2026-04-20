@@ -46,7 +46,7 @@ export default function NotificationsScreen() {
           <View className="px-8 pt-20 items-center">
             <Text className="text-black text-[12px] font-bold uppercase tracking-[2px] mb-3 text-center">No notifications</Text>
             <Text className="text-black/40 text-[11px] text-center leading-5 px-6">
-              Booking updates and reminders will appear here.
+              New requests, booking reminders, and customer appointment updates will appear here.
             </Text>
           </View>
         ) : (
@@ -65,7 +65,7 @@ export default function NotificationsScreen() {
                   onPress={() => {
                     markRead(n.id);
                     if (n.action?.type === 'booking') {
-                      router.push('/(tabs)/booking');
+                      router.push('/(tabs)/bookings');
                     }
                   }}
                   className={`mb-3 border p-5 ${unread ? 'border-black' : 'border-[#F0F0F0]'}`}
@@ -88,16 +88,16 @@ export default function NotificationsScreen() {
                       </View>
                       <Text className="text-black text-[12px] font-bold uppercase tracking-[1px]">{n.title}</Text>
                       {n.body ? <Text className="text-black/55 text-[11px] mt-2 leading-5">{n.body}</Text> : null}
-                      {n.scheduledFor ? (
+                      {n.customerName ? (
                         <Text className="text-black text-[11px] mt-3">
-                          <Text className="font-bold">Time: </Text>
-                          {n.scheduledFor}
+                          <Text className="font-bold">Customer: </Text>
+                          {n.customerName}
                         </Text>
                       ) : null}
-                      {n.boutiqueName ? (
-                        <Text className="text-black/70 text-[11px] mt-1">
-                          <Text className="font-bold">Boutique: </Text>
-                          {n.boutiqueName}
+                      {n.scheduledFor ? (
+                        <Text className="text-black text-[11px] mt-1">
+                          <Text className="font-bold">Time: </Text>
+                          {n.scheduledFor}
                         </Text>
                       ) : null}
                       {n.location ? (
@@ -126,4 +126,3 @@ export default function NotificationsScreen() {
     </View>
   );
 }
-

@@ -8,6 +8,7 @@ class BoutiqueBase(BaseModel):
     location: Optional[str] = None
     logo_url: Optional[str] = None
     header_image_url: Optional[str] = None
+    availability_schedule: Optional[str] = None
     is_visible_to_customers: Optional[bool] = True
 
 # Properties to receive via API on creation

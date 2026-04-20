@@ -54,9 +54,13 @@ export default function ProfileScreen() {
   );
 
   const profileImageSource =
-    boutique?.logo_url || boutique?.header_image_url
-      ? { uri: boutique?.logo_url || boutique?.header_image_url || '' }
+    user?.profile_image_url || boutique?.logo_url
+      ? { uri: user?.profile_image_url || boutique?.logo_url || '' }
       : require('../../assets/images/avatar.png');
+  const coverImageSource =
+    boutique?.header_image_url
+      ? { uri: boutique.header_image_url }
+      : null;
 
   const ownerPhone = [user?.country_code, user?.phone].filter(Boolean).join(' ').trim();
   const ownerAddress = [
@@ -91,27 +95,40 @@ export default function ProfileScreen() {
               </View>
             ) : (
               <>
-                <View className="flex-row items-start justify-between mb-10">
-                  <View className="flex-row flex-1">
-                    <Image
-                      source={profileImageSource}
-                      style={{ width: 90, height: 90 }}
-                      contentFit="cover"
-                    />
-                    <View className="ml-4 justify-center">
-                      <Text className="text-[12px] text-black/50 mb-1">Shop Name:</Text>
-                      <Text className="text-[16px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
-                        {boutique?.name || 'Not available'}
-                      </Text>
-                      {boutique?.location ? (
-                        <Text className="text-[11px] text-black/45 mt-2">{boutique.location}</Text>
-                      ) : null}
+                <View className="mb-10">
+                  <View className="relative">
+                    <View className="h-[140px] border border-[#EDEDED] overflow-hidden bg-[#F6F6F6]">
+                      {coverImageSource ? (
+                        <Image source={coverImageSource} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                      ) : (
+                        <View className="flex-1 items-center justify-center">
+                          <Text className="text-[11px] text-black/30 uppercase tracking-[1px]">No cover image</Text>
+                        </View>
+                      )}
                     </View>
+
+                    <View className="absolute left-4 -bottom-10 border-4 border-white bg-white">
+                      <Image
+                        source={profileImageSource}
+                        style={{ width: 90, height: 90 }}
+                        contentFit="cover"
+                      />
+                    </View>
+
+                    <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="absolute top-3 right-3 bg-white/90 w-9 h-9 items-center justify-center">
+                      <Feather name="edit-2" size={18} color="#1A1A1A" />
+                    </TouchableOpacity>
                   </View>
 
-                  <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="mt-2">
-                    <Feather name="edit-2" size={18} color="#1A1A1A" />
-                  </TouchableOpacity>
+                  <View className="pt-14 px-1">
+                    <Text className="text-[12px] text-black/50 mb-1">Shop Name:</Text>
+                    <Text className="text-[16px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                      {boutique?.name || 'Not available'}
+                    </Text>
+                    {boutique?.location ? (
+                      <Text className="text-[11px] text-black/45 mt-2">{boutique.location}</Text>
+                    ) : null}
+                  </View>
                 </View>
 
                 <View className="mb-10">

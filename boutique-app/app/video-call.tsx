@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,133 @@ import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 type VideoCallStage = 'waiting' | 'analysis' | 'live';
 
 const STAGE_SEQUENCE: VideoCallStage[] = ['waiting', 'analysis', 'live'];
+
+type LiveKitDeps = {
+  LiveKitRoom: any;
+  useTracks: any;
+  VideoTrack: any;
+  isTrackReference: any;
+  useRoomContext: any;
+  useRemoteParticipants: any;
+  Track: any;
+  AudioSession: any;
+};
+
+function loadLiveKitDeps(): LiveKitDeps | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const livekitMod = require('@livekit/react-native');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const lkClient = require('livekit-client');
+    const Track = lkClient?.Track;
+    if (
+      !livekitMod ||
+      typeof livekitMod.LiveKitRoom !== 'function' ||
+      typeof livekitMod.useRoomContext !== 'function' ||
+      typeof livekitMod.useRemoteParticipants !== 'function' ||
+      !Track
+    ) {
+      return null;
+    }
+    const {
+      LiveKitRoom,
+      useTracks,
+      VideoTrack,
+      isTrackReference,
+      useRoomContext,
+      useRemoteParticipants,
+    } = livekitMod;
+    return {
+      LiveKitRoom,
+      useTracks,
+      VideoTrack,
+      isTrackReference,
+      useRoomContext,
+      useRemoteParticipants,
+      Track,
+      AudioSession: livekitMod?.AudioSession,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const PartnerRoomView = React.memo(function PartnerRoomView(props: {
+  deps: LiveKitDeps;
+  bookingDresses: VideoCallBookingDress[];
+  bookingId: number;
+}) {
+  const { deps, bookingDresses, bookingId } = props;
+  const room = deps.useRoomContext();
+  const remoteParticipants = deps.useRemoteParticipants();
+  const tracks = deps.useTracks([deps.Track.Source.Camera]);
+  const videoTracks = tracks.filter((t: any) => deps.isTrackReference(t));
+  const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
+  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+  const emptyMainMessage =
+    remoteParticipants.length > 0
+      ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
+      : 'Waiting for customer…';
+
+  return (
+    <View style={{ width: '100%', height: 320 }}>
+      {remote ? (
+        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: 320 }} />
+      ) : (
+        <View className="bg-black h-[320px] w-full items-center justify-center px-6">
+          <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
+        </View>
+      )}
+
+      {local ? (
+        <View
+          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
+          style={{ width: 110, height: 150, borderRadius: 16 }}
+        >
+          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
+        </View>
+      ) : null}
+
+      {/* Advisor: switch outfit (signals customer UI; Milestone B adds AI) */}
+      <View className="absolute left-2 right-2 bottom-3 max-h-20">
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {bookingDresses.length === 0 ? (
+            <View className="bg-black/70 px-3 py-2 rounded-md self-center">
+              <Text className="text-white/80 text-[10px]">No dresses on this booking</Text>
+            </View>
+          ) : (
+            <View className="flex-row items-center pr-2">
+              {bookingDresses.map((d) => (
+                <TouchableOpacity
+                  key={d.id}
+                  activeOpacity={0.9}
+                  onPress={() => {
+                    if (!room?.localParticipant) return;
+                    try {
+                      const payload = buildTryonSwitchPayload({
+                        bookingId,
+                        dressId: d.id,
+                        dressName: d.name,
+                      });
+                      room.localParticipant.publishData(payload, { reliable: true } as any);
+                    } catch {
+                      // no-op
+                    }
+                  }}
+                  className="bg-black px-3 py-2 mr-2 rounded-md max-w-[140px]"
+                >
+                  <Text className="text-white text-[10px] uppercase tracking-[0.5px]" numberOfLines={1}>
+                    {d.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </View>
+  );
+});
 
 function StatusChip({ label, tone = 'green' }: { label: string; tone?: 'green' | 'timer' }) {
   const toneClasses =
@@ -91,6 +218,7 @@ export default function BoutiqueVideoCallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
+  const livekitSupported = useMemo(() => Platform.OS !== 'web' && isLiveKitNativeSupported(), []);
   const [stageIndex, setStageIndex] = useState(0);
   const [internalNotes, setInternalNotes] = useState('');
   const [ending, setEnding] = useState(false);
@@ -100,6 +228,8 @@ export default function BoutiqueVideoCallScreen() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [bookingDresses, setBookingDresses] = useState<VideoCallBookingDress[]>([]);
   const [liveSeconds, setLiveSeconds] = useState(0);
+  const [speakerOn, setSpeakerOn] = useState(true);
+  const [lkConnected, setLkConnected] = useState(false);
 
   const bookingId = useMemo(() => {
     const raw = params.bookingId;
@@ -107,6 +237,34 @@ export default function BoutiqueVideoCallScreen() {
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
   }, [params.bookingId]);
+
+  const deps = useMemo(() => {
+    if (!livekitSupported) return null;
+    return loadLiveKitDeps();
+  }, [livekitSupported]);
+
+  const audioSessionRef = useRef<any>(null);
+  useEffect(() => {
+    audioSessionRef.current = deps?.AudioSession ?? null;
+  }, [deps]);
+
+  useEffect(() => {
+    if (!lkConnected) return;
+    const AudioSession = audioSessionRef.current;
+    if (!AudioSession) return;
+    (async () => {
+      try {
+        await AudioSession.startAudioSession();
+        if (Platform.OS === 'ios') {
+          await AudioSession.selectAudioOutput(speakerOn ? 'force_speaker' : 'default');
+        } else if (Platform.OS === 'android') {
+          await AudioSession.selectAudioOutput(speakerOn ? 'speaker' : 'earpiece');
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, [lkConnected, speakerOn]);
 
   useEffect(() => {
     if (stageIndex >= STAGE_SEQUENCE.length - 1) {
@@ -157,7 +315,7 @@ export default function BoutiqueVideoCallScreen() {
   }, [bookingId]);
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (!livekitSupported) return;
     if (!bookingId) return;
     let mounted = true;
     setTokenLoading(true);
@@ -185,7 +343,7 @@ export default function BoutiqueVideoCallScreen() {
   }, [bookingId]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || bookingId == null) return;
+    if (!livekitSupported || bookingId == null) return;
     let cancelled = false;
     (async () => {
       try {
@@ -278,17 +436,8 @@ export default function BoutiqueVideoCallScreen() {
               </View>
             ) : tokenData ? (
               (() => {
-                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                const livekitMod = require('@livekit/react-native');
-                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                const lkClient = require('livekit-client');
-                const Track = lkClient?.Track;
-                if (
-                  !livekitMod ||
-                  typeof livekitMod.LiveKitRoom !== 'function' ||
-                  typeof livekitMod.useRoomContext !== 'function' ||
-                  !Track
-                ) {
+                // Use memoized deps so the video tree stays stable.
+                if (!deps || bookingId == null) {
                   return (
                     <View className="bg-black h-[320px] w-full items-center justify-center px-8">
                       <Text className="text-white/70 text-[12px] text-center leading-5">
@@ -297,98 +446,21 @@ export default function BoutiqueVideoCallScreen() {
                     </View>
                   );
                 }
-                const {
-                  LiveKitRoom,
-                  useTracks,
-                  VideoTrack,
-                  isTrackReference,
-                  useRoomContext,
-                  useRemoteParticipants,
-                } = livekitMod;
-
-                const RoomView = () => {
-                  const room = useRoomContext();
-                  const remoteParticipants = useRemoteParticipants();
-                  const tracks = useTracks([Track.Source.Camera]);
-                  const videoTracks = tracks.filter((t: any) => isTrackReference(t));
-                  const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
-                  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
-                  const emptyMainMessage =
-                    remoteParticipants.length > 0
-                      ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
-                      : 'Waiting for customer…';
-
-                  return (
-                    <View style={{ width: '100%', height: 320 }}>
-                      {remote ? (
-                        <VideoTrack trackRef={remote} style={{ width: '100%', height: 320 }} />
-                      ) : (
-                        <View className="bg-black h-[320px] w-full items-center justify-center px-6">
-                          <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
-                        </View>
-                      )}
-
-                      {local ? (
-                        <View
-                          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
-                          style={{ width: 110, height: 150, borderRadius: 16 }}
-                        >
-                          <VideoTrack trackRef={local} style={{ width: '100%', height: '100%' }} />
-                        </View>
-                      ) : null}
-
-                      {/* Advisor: switch outfit (signals customer UI; Milestone B adds AI) */}
-                      <View className="absolute left-2 right-2 bottom-3 max-h-20">
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                          {bookingDresses.length === 0 ? (
-                            <View className="bg-black/70 px-3 py-2 rounded-md self-center">
-                              <Text className="text-white/80 text-[10px]">No dresses on this booking</Text>
-                            </View>
-                          ) : (
-                            <View className="flex-row items-center pr-2">
-                              {bookingDresses.map((d) => (
-                                <TouchableOpacity
-                                  key={d.id}
-                                  activeOpacity={0.9}
-                                  onPress={() => {
-                                    if (!bookingId || !room?.localParticipant) return;
-                                    try {
-                                      const payload = buildTryonSwitchPayload({
-                                        bookingId,
-                                        dressId: d.id,
-                                        dressName: d.name,
-                                      });
-                                      room.localParticipant.publishData(payload, { reliable: true } as any);
-                                    } catch {
-                                      // no-op
-                                    }
-                                  }}
-                                  className="bg-black px-3 py-2 mr-2 rounded-md max-w-[140px]"
-                                >
-                                  <Text className="text-white text-[10px] uppercase tracking-[0.5px]" numberOfLines={1}>
-                                    {d.name}
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          )}
-                        </ScrollView>
-                      </View>
-                    </View>
-                  );
-                };
 
                 return (
-                  <LiveKitRoom
+                  <deps.LiveKitRoom
                     serverUrl={tokenData.url}
                     token={tokenData.token}
                     connect={true}
                     audio={true}
                     video={true}
                     options={{ adaptiveStream: { pixelDensity: 'screen' } }}
+                    onConnected={() => {
+                      setLkConnected(true);
+                    }}
                   >
-                    <RoomView />
-                  </LiveKitRoom>
+                    <PartnerRoomView deps={deps} bookingDresses={bookingDresses} bookingId={bookingId} />
+                  </deps.LiveKitRoom>
                 );
               })()
             ) : (
@@ -406,6 +478,20 @@ export default function BoutiqueVideoCallScreen() {
 
         {stage === 'live' ? (
           <View className="px-5 pb-8">
+            <View className="flex-row justify-center mt-6">
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setSpeakerOn((v) => !v)}
+                disabled={!lkConnected}
+                className={`w-14 h-14 rounded-full items-center justify-center ${
+                  speakerOn ? 'bg-[#F9F9F9]' : 'bg-[#FF3B30]'
+                }`}
+                style={{ opacity: lkConnected ? 1 : 0.4, elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 }}
+              >
+                <Feather name={speakerOn ? 'volume-2' : 'volume-x'} size={22} color={speakerOn ? 'black' : 'white'} />
+              </TouchableOpacity>
+            </View>
+
             <View className="border-t border-[#EFEFEF] pt-6 mt-4">
               <Text
                 className="text-[12px] text-black mb-1"

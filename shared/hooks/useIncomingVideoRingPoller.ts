@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 
 import { api } from '../api/api';
 import { useAuthStore } from '../store/useAuthStore';
@@ -11,6 +12,7 @@ export function useIncomingVideoRingPoller(enabled: boolean) {
   const setIncoming = useIncomingVideoRingStore((s) => s.setIncoming);
   const token = useAuthStore((s) => s.token);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const appStateRef = useRef(AppState.currentState);
 
   useEffect(() => {
     if (!enabled || !isAuthenticated || !token) {
@@ -21,6 +23,7 @@ export function useIncomingVideoRingPoller(enabled: boolean) {
     let cancelled = false;
 
     const tick = async () => {
+      if (appStateRef.current !== 'active') return;
       try {
         const res = (await api.get('/video-calls/incoming-ring')) as {
           incoming?: {
@@ -47,10 +50,18 @@ export function useIncomingVideoRingPoller(enabled: boolean) {
       }
     };
 
+    const sub = AppState.addEventListener('change', (nextState) => {
+      appStateRef.current = nextState;
+      if (nextState === 'active') {
+        tick();
+      }
+    });
+
     tick();
-    const id = setInterval(tick, 4000);
+    const id = setInterval(tick, 12000);
     return () => {
       cancelled = true;
+      sub.remove();
       clearInterval(id);
     };
   }, [enabled, isAuthenticated, token, setIncoming]);
