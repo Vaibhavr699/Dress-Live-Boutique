@@ -1,87 +1,155 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, Dimensions, Alert, ActivityIndicator } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { api } from '@shared/api/api';
 
-const { width } = Dimensions.get('window');
+type Dress = {
+  id: number;
+  name?: string | null;
+  image_url?: string | null;
+  ai_model_url?: string | null;
+  is_ai_enabled?: boolean | null;
+  boutique_id?: number | null;
+};
+
+function toJpegDataUrl(base64: string) {
+  return `data:image/jpeg;base64,${base64}`;
+}
 
 export default function AITryOnScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ dressId?: string; source?: string }>();
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState(1);
   const [countdown, setCountdown] = useState(5);
-  const [showErrorModal, setShowErrorModal] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView | null>(null);
   const [selfieUri, setSelfieUri] = useState<string | null>(null);
   const [fullBodyUri, setFullBodyUri] = useState<string | null>(null);
+  const [selfieDataUrl, setSelfieDataUrl] = useState<string | null>(null);
   const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
   const [validating, setValidating] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [renderedUri, setRenderedUri] = useState<string | null>(null);
+  const [dress, setDress] = useState<Dress | null>(null);
+  const [dressLoading, setDressLoading] = useState(false);
+
+  const normalizedDressId = useMemo(() => {
+    const raw = typeof params.dressId === 'string' ? Number(params.dressId) : NaN;
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  }, [params.dressId]);
 
   const steps = [
     {
       id: 1,
       type: 'instruction',
       image: require('@/assets/images/AI Try 1.png'),
-      instructions: "MAKE NEED THE PHOTO: IS WELL LIT AND THAT YOUR'RE THE ONLY ONE IN IT, WITH ON GLASSES, HATS OR HEADPHONES",
+      instructions: 'We will create a dress preview using one selfie and one clear full-body photo.',
     },
     {
       id: 2,
       type: 'instruction',
       image: require('@/assets/images/AI try 2.png'),
-      instructions: "WE NEED TWO PHOTOS: A SELFIE AND A FULL BODY SHOT",
+      instructions: 'Use bright lighting and make sure only you are visible, with your full body inside the frame.',
     },
     {
       id: 3,
       type: 'camera',
-      instructions: "TAKE A SELFIE! YOU'LL NEED GOOD LIGHTING",
+      instructions: 'Take a clear selfie in good lighting.',
     },
     {
       id: 4,
       type: 'confirmation',
-      instructions: "FIRST IMAGE",
+      instructions: 'Selfie captured',
     },
     {
       id: 5,
       type: 'camera',
-      instructions: "NOW TAKE A FULL-BODY PHOTO",
+      instructions: 'Now take a full-body photo with your full silhouette visible.',
     },
     {
       id: 6,
       type: 'countdown',
-      instructions: "NOW TAKE A FULL-BODY PHOTO",
+      instructions: 'Hold still while we capture your full-body photo.',
     },
     {
       id: 7,
       type: 'analysis',
-      image: require('@/assets/images/AI Try 1.png'),
-      instructions: "ALL SET! WE'VE GOT ALL THE PHOTO",
+      instructions: 'Creating your AI dress preview',
     },
     {
       id: 8,
       type: 'result',
-      instructions: "WE'RE CREATE YOUR LOOK, AND IT MIGHT TAKE UP TO 2 MINS, WE'LL LET YOU KNOW WHEN IT'S READY",
-    }
+      instructions: 'Your AI preview is ready. Review the look before you continue to booking.',
+    },
   ];
 
   const currentStep = steps[step - 1];
 
   const activePreviewUri = useMemo(() => {
     if (currentStep.id === 4) return selfieUri;
-    if (currentStep.id === 7 || currentStep.id === 8) return fullBodyUri || selfieUri;
+    if (currentStep.id === 7) return renderedUri || fullBodyUri || selfieUri;
+    if (currentStep.id === 8) return renderedUri || fullBodyUri || selfieUri;
     return null;
-  }, [currentStep.id, fullBodyUri, selfieUri]);
+  }, [currentStep.id, fullBodyUri, renderedUri, selfieUri]);
+
+  useEffect(() => {
+    if (!normalizedDressId) {
+      setDress(null);
+      return;
+    }
+
+    let mounted = true;
+    setDressLoading(true);
+    api
+      .get(`/dresses/${normalizedDressId}`)
+      .then((res) => {
+        if (mounted) {
+          setDress(res as Dress);
+        }
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setDress(null);
+        Alert.alert('AI Try On', error instanceof Error ? error.message : 'Could not load the selected dress.');
+      })
+      .finally(() => {
+        if (mounted) setDressLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [normalizedDressId]);
 
   useEffect(() => {
     // Ensure facing makes sense for each capture step
     if (currentStep.id === 3) setCameraFacing('front');
     if (currentStep.id === 5 || currentStep.id === 6) setCameraFacing('back');
   }, [currentStep.id]);
+
+  const createTryOnPreview = useCallback(async (fullBodyImageDataUrl: string) => {
+    if (!normalizedDressId) {
+      throw new Error('Open AI Try On from a specific dress to generate a preview.');
+    }
+
+    const res = (await api.post('/ai/preview-tryon-base64', {
+      dress_id: normalizedDressId,
+      full_body_image_data_url: fullBodyImageDataUrl,
+      ...(selfieDataUrl ? { selfie_image_data_url: selfieDataUrl } : {}),
+    })) as {
+      image_data_url?: string | null;
+    };
+    if (!res?.image_data_url) {
+      throw new Error('The AI preview was created, but no image was returned.');
+    }
+    setRenderedUri(res.image_data_url);
+  }, [normalizedDressId, selfieDataUrl]);
 
   useEffect(() => {
     if (step !== 6) return;
@@ -99,34 +167,54 @@ export default function AITryOnScreen() {
           const pic = await cameraRef.current?.takePictureAsync({
             quality: 0.8,
             mirror: false,
+            base64: true,
           });
           if (!cancelled && pic?.uri) {
+            if (!pic.base64) {
+              throw new Error('Could not read the photo. Please try again.');
+            }
+            const fullBodyImageDataUrl = toJpegDataUrl(pic.base64);
             setFullBodyUri(pic.uri);
             setValidating(true);
+            setRendering(false);
+            setRenderedUri(null);
             setValidationError(null);
             try {
-              const form = new FormData();
-              form.append(
-                'file',
-                {
-                  uri: pic.uri,
-                  name: `full-body-${Date.now()}.jpg`,
-                  type: 'image/jpeg',
-                } as any
-              );
-              const res = (await api.postMultipart('/ai/validate-full-body', form)) as { ok?: boolean; reason?: string };
+              const res = (await api.post('/ai/validate-full-body-base64', {
+                image_data_url: fullBodyImageDataUrl,
+              })) as { ok?: boolean; reason?: string };
               if (!res?.ok) {
                 setValidationError(res?.reason || 'Please retake the photo with your full body in view.');
                 setStep(5);
                 return;
               }
+              setValidating(false);
+              setRendering(true);
               setStep(7);
+              try {
+                await createTryOnPreview(fullBodyImageDataUrl);
+                if (!cancelled) {
+                  setStep(8);
+                }
+              } catch (renderError: any) {
+                if (!cancelled) {
+                  setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
+                  setStep(5);
+                }
+                return;
+              } finally {
+                if (!cancelled) {
+                  setRendering(false);
+                }
+              }
             } catch (e: any) {
               setValidationError(e?.message || 'Could not validate the photo. Please try again.');
               setStep(5);
               return;
             } finally {
-              setValidating(false);
+              if (!cancelled) {
+                setValidating(false);
+              }
             }
           }
         } catch {
@@ -138,7 +226,7 @@ export default function AITryOnScreen() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [step]);
+  }, [createTryOnPreview, step]);
 
   const ensureCameraPermission = async () => {
     if (permission?.granted) return true;
@@ -157,9 +245,15 @@ export default function AITryOnScreen() {
         const pic = await cameraRef.current?.takePictureAsync({
           quality: 0.85,
           mirror: false,
+          base64: true,
         });
         if (!pic?.uri) return;
+        if (!pic.base64) {
+          Alert.alert('AI Try On', 'Could not capture the selfie. Please try again.');
+          return;
+        }
         setSelfieUri(pic.uri);
+        setSelfieDataUrl(toJpegDataUrl(pic.base64));
         setStep(4);
         return;
       }
@@ -184,13 +278,14 @@ export default function AITryOnScreen() {
         }
         setStep(5);
       } else if (step === 7) {
-        // Move to final preview/result
-        setStep(8);
+        return;
+      } else if (step === 8) {
+        router.back();
       } else {
         setStep(step + 1);
       }
     } else {
-      router.push('/(tabs)/video-call'); 
+      router.back();
     }
   };
 
@@ -199,8 +294,39 @@ export default function AITryOnScreen() {
       case 'instruction':
         return (
           <View className="flex-1 px-8">
+            <View className="items-center mt-4 mb-2">
+              {dressLoading ? (
+                <ActivityIndicator color="#1A1A1A" />
+              ) : dress ? (
+                <View className="w-full border border-black/10 px-4 py-3 flex-row items-center">
+                  <Image
+                    source={
+                      dress.image_url
+                        ? { uri: dress.image_url }
+                        : require('@/assets/images/Dashboard image 3.png')
+                    }
+                    style={{ width: 44, height: 56, borderRadius: 4 }}
+                    contentFit="cover"
+                  />
+                  <View className="ml-3 flex-1">
+                    <Text className="text-black text-[10px] font-bold uppercase tracking-[1px] opacity-55">
+                      Selected dress
+                    </Text>
+                    <Text className="text-black text-[13px] font-medium mt-1">
+                      {(dress.name || '').trim() || `Dress #${dress.id}`}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <View className="w-full border border-[#F0D7C8] bg-[#FFF8F3] px-4 py-3">
+                  <Text className="text-[#C9491A] text-[11px] leading-5 text-center">
+                    Open AI Try On from a dress page so we know which dress to preview on you.
+                  </Text>
+                </View>
+              )}
+            </View>
             <View className="flex-row justify-center gap-2 mt-4">
-              {steps.filter(s => s.type === 'instruction').map((s) => (
+              {steps.filter((s) => s.type === 'instruction').map((s) => (
                 <View key={s.id} className={`h-1 w-8 ${step === s.id ? 'bg-black' : 'bg-black/10'} rounded-full`} />
               ))}
             </View>
@@ -307,29 +433,27 @@ export default function AITryOnScreen() {
                 style={{ width: '100%', height: '100%' }}
                 contentFit="cover"
               />
-              {showErrorModal && (
-                <View className="absolute inset-0 bg-white/20 items-center justify-center px-8">
-                  <View className="bg-white p-6 items-center shadow-lg border border-black/5">
-                    <Text className="text-black text-[12px] text-center mb-6 leading-5 font-light">
-                      The body data is incomplete. Please provide a full and unobstructed view.
+              {currentStep.type === 'analysis' || rendering ? (
+                <View className="absolute inset-0 bg-white/35 items-center justify-center px-8">
+                  <View className="bg-white px-6 py-5 items-center border border-black/5">
+                    <ActivityIndicator color="#1A1A1A" />
+                    <Text className="text-black text-[11px] mt-3 uppercase tracking-[1px]">Creating preview…</Text>
+                    <Text className="text-black/45 text-[11px] mt-2 text-center leading-5">
+                      We are aligning the selected dress to your full-body photo.
                     </Text>
-                    <TouchableOpacity 
-                      onPress={() => {
-                        setShowErrorModal(false);
-                        setStep(8);
-                      }}
-                      className="w-full border border-black/20 py-3 items-center"
-                    >
-                      <Text className="text-black text-[10px] font-bold uppercase tracking-[1px]">Accept</Text>
-                    </TouchableOpacity>
                   </View>
                 </View>
-              )}
+              ) : null}
             </View>
             <View className="items-center mb-10">
-              <Text className="text-[#1A1A1A] text-[10px] font-bold uppercase tracking-[2px]">
+              <Text className="text-[#1A1A1A] text-[10px] font-bold uppercase tracking-[2px] text-center">
                 {currentStep.instructions}
               </Text>
+              {currentStep.type === 'analysis' ? (
+                <Text className="text-black/45 text-[11px] leading-5 mt-3 text-center px-6">
+                  This first version uses your selected dress image to create a quick preview before booking.
+                </Text>
+              ) : null}
             </View>
           </View>
         );
@@ -350,6 +474,11 @@ export default function AITryOnScreen() {
               <Text className="text-[#1A1A1A] text-[12px] font-medium text-center leading-5 uppercase tracking-[0.5px]">
                 {currentStep.instructions}
               </Text>
+              {dress ? (
+                <Text className="text-black/45 text-[11px] leading-5 mt-3 text-center px-6">
+                  Preview generated for {(dress.name || '').trim() || `Dress #${dress.id}`}. You can now continue to booking from the dress page.
+                </Text>
+              ) : null}
             </View>
           </View>
         );
@@ -377,7 +506,10 @@ export default function AITryOnScreen() {
       {renderContent()}
 
       {/* Footer Bottom Button */}
-      {(currentStep.type === 'instruction' || currentStep.type === 'confirmation' || currentStep.type === 'analysis' || currentStep.type === 'result') && !showErrorModal && (
+      {(currentStep.type === 'instruction' ||
+        currentStep.type === 'confirmation' ||
+        currentStep.type === 'analysis' ||
+        currentStep.type === 'result') && (
         <View 
           className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 pb-12"
           style={{ paddingBottom: insets.bottom + 20 }}
@@ -385,10 +517,12 @@ export default function AITryOnScreen() {
           <TouchableOpacity 
             activeOpacity={0.9}
             onPress={handleNext}
+            disabled={currentStep.type === 'analysis' || rendering}
             className="w-full bg-black py-5 items-center justify-center"
+            style={{ opacity: currentStep.type === 'analysis' || rendering ? 0.55 : 1 }}
           >
             <Text className="text-white text-[12px] font-bold tracking-[3px] uppercase">
-              {currentStep.type === 'result' ? 'Use AI to take measurement' : 'Continue'}
+              {currentStep.type === 'result' ? 'Done' : currentStep.type === 'analysis' ? 'Creating preview' : 'Continue'}
             </Text>
           </TouchableOpacity>
           {currentStep.type === 'confirmation' && (
@@ -399,6 +533,19 @@ export default function AITryOnScreen() {
               <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">Repeat</Text>
             </TouchableOpacity>
           )}
+          {currentStep.type === 'result' ? (
+            <TouchableOpacity
+              onPress={() => {
+                setRenderedUri(null);
+                setValidationError(null);
+                setFullBodyUri(null);
+                setStep(5);
+              }}
+              className="mt-4 items-center"
+            >
+              <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">Retake full-body photo</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       )}
     </SafeAreaView>

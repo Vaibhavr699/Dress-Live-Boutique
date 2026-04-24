@@ -8,5 +8,6 @@ class Boutique(Base):
     location = Column(String, index=True, nullable=True)
     logo_url = Column(String, nullable=True)
     header_image_url = Column(String, nullable=True)
+    interior_image_url = Column(String, nullable=True)
     availability_schedule = Column(Text, nullable=True)
     is_visible_to_customers = Column(Boolean, nullable=False, default=True)

@@ -14,8 +14,10 @@ import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPo
 import '@shared/polyfills/domExceptionNative';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { useIncomingVideoRingStore } from '@shared/store/useIncomingVideoRingStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import { usePartnerBookingNotificationsSync } from '@/hooks/usePartnerBookingNotificationsSync';
+import { sendLocalPhoneNotification } from '@/lib/partnerNotifications';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 
@@ -28,6 +30,9 @@ export default function RootLayout() {
   const { isAuthenticated, user, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
   const permissionsRequestedRef = useRef(false);
+  const lastIncomingRingKeyRef = useRef<string | null>(null);
+  const incomingRing = useIncomingVideoRingStore((s) => s.incoming);
+  const upsertNotification = useNotificationStore((s) => s.upsert);
 
   const [loaded, error] = useFonts({
     'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
@@ -156,7 +161,16 @@ export default function RootLayout() {
       const sub = Notifications.addNotificationResponseReceivedListener((response) => {
         const data = response.notification.request.content.data as {
           type?: string | null;
+          bookingId?: number | string | null;
+          notificationKind?: string | null;
         };
+        if (data?.notificationKind === 'video_waiting' && data?.bookingId != null) {
+          router.push({
+            pathname: '/video-call',
+            params: { bookingId: String(data.bookingId) },
+          } as never);
+          return;
+        }
         if (data?.type === 'booking') {
           router.push('/notifications');
         }
@@ -172,6 +186,36 @@ export default function RootLayout() {
     (loaded || !!error) && isAuthenticated && user?.role === 'partner' && !onPartnerVideoCallRoute
   );
   usePartnerBookingNotificationsSync((loaded || !!error) && isAuthenticated && user?.role === 'partner');
+
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== 'partner') {
+      lastIncomingRingKeyRef.current = null;
+      return;
+    }
+    if (!incomingRing?.bookingId) {
+      lastIncomingRingKeyRef.current = null;
+      return;
+    }
+
+    const key = `partner-video-waiting-${incomingRing.bookingId}-${incomingRing.scheduledFor ?? ''}`;
+    if (lastIncomingRingKeyRef.current === key) return;
+    lastIncomingRingKeyRef.current = key;
+
+    const notification = {
+      externalKey: key,
+      kind: 'video_waiting' as const,
+      title: 'Customer waiting on video call',
+      body: `${incomingRing.callerDisplayName} is waiting for you to join the Boutique Portal call.`,
+      appointmentType: 'video' as const,
+      scheduledFor: incomingRing.scheduledFor ?? null,
+      customerName: incomingRing.callerDisplayName,
+      status: 'waiting',
+      action: { type: 'booking' as const, bookingId: incomingRing.bookingId },
+    };
+
+    upsertNotification(notification);
+    void sendLocalPhoneNotification(notification);
+  }, [incomingRing, isAuthenticated, upsertNotification, user?.role]);
 
   if (!loaded && !error) {
     return null;

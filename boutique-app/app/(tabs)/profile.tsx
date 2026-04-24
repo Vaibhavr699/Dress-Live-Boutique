@@ -19,24 +19,38 @@ const MENU_ITEMS = [
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { logout, user } = useAuthStore();
+  const { logout, user, setUser } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [boutique, setBoutique] = useState<{
     name?: string | null;
     location?: string | null;
     logo_url?: string | null;
     header_image_url?: string | null;
+    interior_image_url?: string | null;
   } | null>(null);
 
   const loadProfile = useCallback(async () => {
-    if (!user?.boutique_id) {
+    const token = useAuthStore.getState().token;
+    let boutiqueId = user?.boutique_id ?? null;
+
+    if (token) {
+      try {
+        const fresh = await api.get('/users/me');
+        setUser(fresh as any);
+        boutiqueId = (fresh as { boutique_id?: number | null }).boutique_id ?? boutiqueId;
+      } catch (error) {
+        console.error('Failed to refresh user for profile:', error);
+      }
+    }
+
+    if (!boutiqueId) {
       setBoutique(null);
       setLoading(false);
       return;
     }
 
     try {
-      const data = await api.get(`/boutiques/${user.boutique_id}`);
+      const data = await api.get(`/boutiques/${boutiqueId}`);
       setBoutique(data);
     } catch (error) {
       console.error('Failed to load boutique profile:', error);
@@ -44,7 +58,7 @@ export default function ProfileScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user?.boutique_id]);
+  }, [user?.boutique_id, setUser]);
 
   useFocusEffect(
     useCallback(() => {
@@ -61,6 +75,9 @@ export default function ProfileScreen() {
     boutique?.header_image_url
       ? { uri: boutique.header_image_url }
       : null;
+  const interiorImageSource = boutique?.interior_image_url
+    ? { uri: boutique.interior_image_url }
+    : null;
 
   const ownerPhone = [user?.country_code, user?.phone].filter(Boolean).join(' ').trim();
   const ownerAddress = [
@@ -119,6 +136,24 @@ export default function ProfileScreen() {
                       <Feather name="edit-2" size={18} color="#1A1A1A" />
                     </TouchableOpacity>
                   </View>
+
+                  {interiorImageSource ? (
+                    <View className="mt-3">
+                      <Text
+                        className="text-[10px] text-black/40 uppercase tracking-[0.6px] mb-2"
+                        style={{ fontFamily: 'Helvetica Neue' }}
+                      >
+                        Store interior
+                      </Text>
+                      <View className="h-[100px] border border-[#EDEDED] overflow-hidden bg-[#F6F6F6]">
+                        <Image
+                          source={interiorImageSource}
+                          style={{ width: '100%', height: '100%' }}
+                          contentFit="cover"
+                        />
+                      </View>
+                    </View>
+                  ) : null}
 
                   <View className="pt-14 px-1">
                     <Text className="text-[12px] text-black/50 mb-1">Shop Name:</Text>

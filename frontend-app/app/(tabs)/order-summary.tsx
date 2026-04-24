@@ -111,6 +111,15 @@ export default function OrderSummaryScreen() {
           <View className="mb-20">
              <Text className="text-black text-[12px] font-bold uppercase mb-4 tracking-[0.5px]">Next Steps</Text>
              <TouchableOpacity 
+              onPress={() =>
+                router.push({
+                  pathname: '/(tabs)/ai-try-on',
+                  params: {
+                    source: 'order-summary',
+                    ...(firstItem?.id ? { dressId: String(firstItem.id) } : {}),
+                  },
+                })
+              }
               activeOpacity={0.9}
               className="w-full bg-black py-4 items-center justify-center mb-4"
             >

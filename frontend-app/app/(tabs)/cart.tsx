@@ -2,10 +2,32 @@ import React, { useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCartStore } from '@/store/useCartStore';
 import { useAuthStore } from '@shared/store/useAuthStore';
+
+const BASKET_EMPTY_SVG = require('@/assets/svg/basket.svg');
+
+const EMPTY_STATE_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textAlign: 'center' as const,
+  color: '#000000',
+};
+
+const EMPTY_STATE_SUBHEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0,
+  textAlign: 'center' as const,
+  color: '#000000',
+};
 
 export default function CartScreen() {
   const router = useRouter();
@@ -40,13 +62,17 @@ export default function CartScreen() {
 
       {isEmpty ? (
         <View className="flex-1 items-center justify-center px-10">
-          <View className="mb-8 opacity-20">
-            <Feather name="shopping-cart" size={64} color="black" />
+          <View className="mb-8 items-center justify-center">
+            <Image
+              source={BASKET_EMPTY_SVG}
+              style={{ width: 68, height: 68 }}
+              contentFit="contain"
+            />
           </View>
-          <Text className="text-black text-lg font-medium uppercase tracking-[2px] mb-2">
+          <Text className="mb-2" style={EMPTY_STATE_HEADING_STYLE}>
             Your basket is empty
           </Text>
-          <Text className="text-black/40 text-xs text-center font-light">
+          <Text style={EMPTY_STATE_SUBHEADING_STYLE}>
             The items you add will be shown here
           </Text>
           

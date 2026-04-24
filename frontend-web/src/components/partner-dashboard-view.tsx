@@ -33,7 +33,36 @@ type Booking = {
   dress_ids: number[];
 };
 
-export function PartnerDashboardView() {
+type PartnerDashboardPage = "home" | "catalog" | "bookings" | "boutique";
+
+type PartnerDashboardViewProps = {
+  page?: PartnerDashboardPage;
+};
+
+const PARTNER_PAGE_CONTENT: Record<PartnerDashboardPage, { title: string; subtitle: string }> = {
+  home: {
+    title: "Partner Dashboard",
+    subtitle:
+      "Manage the boutique workspace from desktop: visibility, catalog, bookings readiness, team operations and the core basics before AI live try-on.",
+  },
+  catalog: {
+    title: "Catalog",
+    subtitle:
+      "Review the dresses connected to your boutique and keep the visible collection ready for buyer discovery across the platform.",
+  },
+  bookings: {
+    title: "Bookings",
+    subtitle:
+      "Handle incoming appointment requests, accept or reject bookings and reschedule consultations from one focused booking view.",
+  },
+  boutique: {
+    title: "Boutique",
+    subtitle:
+      "Keep your partner identity, boutique setup and next system connections visible in one dedicated boutique management page.",
+  },
+};
+
+export function PartnerDashboardView({ page = "home" }: PartnerDashboardViewProps) {
   const router = useRouter();
   const session = useMemo(() => getStoredSession(), []);
   const user = session?.user?.role === "partner" ? session.user : null;
@@ -80,6 +109,7 @@ export function PartnerDashboardView() {
   }
 
   const boutiqueName = boutique?.name || "Partner Boutique";
+  const pageContent = PARTNER_PAGE_CONTENT[page];
 
   const updateBooking = async (
     bookingId: number,
@@ -109,8 +139,8 @@ export function PartnerDashboardView() {
     <DashboardShell
       user={user}
       role="partner"
-      title="Partner Dashboard"
-      subtitle="Manage the boutique workspace from desktop: visibility, catalog, bookings readiness, team operations and the core basics before AI live try-on."
+      title={pageContent.title}
+      subtitle={pageContent.subtitle}
     >
       <section className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <div className="rounded-[28px] border border-black/10 bg-[#efe7da] p-6">
@@ -162,7 +192,8 @@ export function PartnerDashboardView() {
         </div>
       </section>
 
-      <section id="catalog" className="mt-8 rounded-[30px] border border-black/10 bg-white/75 p-6">
+      {page === "home" || page === "catalog" ? (
+        <section id="catalog" className="mt-8 rounded-[30px] border border-black/10 bg-white/75 p-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="pill-label text-black/45">Catalog Snapshot</p>
@@ -197,10 +228,125 @@ export function PartnerDashboardView() {
             ))}
           </div>
         )}
-      </section>
+        </section>
+      ) : null}
 
-      <section id="boutique" className="mt-8 grid gap-4 lg:grid-cols-3">
-        <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
+      {page === "home" ? (
+        <section id="boutique" className="mt-8 grid gap-4 lg:grid-cols-3">
+          <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
+            <p className="pill-label text-black/45">Booking Inbox</p>
+            <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
+              Incoming requests
+            </h2>
+            {actionError ? (
+              <p className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {actionError}
+              </p>
+            ) : null}
+            <div className="mt-6 space-y-3">
+              {bookings.length === 0 ? (
+                <p className="text-sm leading-6 text-black/55">
+                  No bookings yet. Buyer-created appointment requests will appear here once the booking flow is used.
+                </p>
+              ) : (
+                bookings.slice(0, 4).map((booking) => (
+                  <div key={booking.id} className="rounded-[20px] border border-black/10 bg-[#fffaf3] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-black">
+                        {booking.appointment_type === "video" ? "Video Call" : "In Store Visit"}
+                      </p>
+                      <span className="rounded-full bg-black px-3 py-1 text-[11px] text-white">
+                        {booking.status}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-black/55">{booking.scheduled_for}</p>
+                    <p className="mt-1 text-xs text-black/45">
+                      {booking.language} • {booking.dress_ids.length} selected dress(es)
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={updatingBookingId === booking.id}
+                        onClick={() => updateBooking(booking.id, { status: "accepted" })}
+                        className="rounded-full bg-black px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:bg-black/35"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        disabled={updatingBookingId === booking.id}
+                        onClick={() => updateBooking(booking.id, { status: "rejected" })}
+                        className="rounded-full border border-black/15 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-black transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <input
+                        type="text"
+                        value={rescheduleSlots[booking.id] ?? booking.scheduled_for}
+                        onChange={(event) =>
+                          setRescheduleSlots((current) => ({
+                            ...current,
+                            [booking.id]: event.target.value,
+                          }))
+                        }
+                        className="h-11 flex-1 rounded-full border border-black/10 bg-white px-4 text-sm outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={updatingBookingId === booking.id}
+                        onClick={() =>
+                          updateBooking(booking.id, {
+                            status: "rescheduled",
+                            scheduled_for: rescheduleSlots[booking.id] ?? booking.scheduled_for,
+                          })
+                        }
+                        className="rounded-full border border-black/15 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-black transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Reschedule
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
+            <p className="pill-label text-black/45">Partner Identity</p>
+            <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
+              Logged in as {user.full_name || user.email}
+            </h2>
+            <div className="mt-6 grid gap-4 text-sm text-black/65">
+              <div className="rounded-[22px] bg-[#f7f1e8] p-4">
+                <p className="pill-label text-black/35">Role</p>
+                <p className="mt-2 text-base text-black">{user.role}</p>
+              </div>
+              <div className="rounded-[22px] bg-[#f7f1e8] p-4">
+                <p className="pill-label text-black/35">Boutique Id</p>
+                <p className="mt-2 text-base text-black">{user.boutique_id ?? "Not linked yet"}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
+            <p className="pill-label text-black/45">Current System Gap</p>
+            <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
+              What to connect after this
+            </h2>
+            <ul className="mt-6 space-y-3 text-sm leading-6 text-black/60">
+              <li>Persist team members and consultant schedules in backend APIs.</li>
+              <li>Drive buyer booking slots from partner availability.</li>
+              <li>Surface live booking requests in the partner dashboard.</li>
+              <li>Bridge appointment payment and order follow-up between both roles.</li>
+            </ul>
+          </div>
+        </section>
+      ) : null}
+
+      {page === "bookings" ? (
+        <section className="mt-8 rounded-[28px] border border-black/10 bg-white/75 p-6">
           <p className="pill-label text-black/45">Booking Inbox</p>
           <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
             Incoming requests
@@ -278,38 +424,42 @@ export function PartnerDashboardView() {
               ))
             )}
           </div>
-        </div>
+        </section>
+      ) : null}
 
-        <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
-          <p className="pill-label text-black/45">Partner Identity</p>
-          <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
-            Logged in as {user.full_name || user.email}
-          </h2>
-          <div className="mt-6 grid gap-4 text-sm text-black/65">
-            <div className="rounded-[22px] bg-[#f7f1e8] p-4">
-              <p className="pill-label text-black/35">Role</p>
-              <p className="mt-2 text-base text-black">{user.role}</p>
-            </div>
-            <div className="rounded-[22px] bg-[#f7f1e8] p-4">
-              <p className="pill-label text-black/35">Boutique Id</p>
-              <p className="mt-2 text-base text-black">{user.boutique_id ?? "Not linked yet"}</p>
+      {page === "boutique" ? (
+        <section className="mt-8 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
+            <p className="pill-label text-black/45">Partner Identity</p>
+            <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
+              Logged in as {user.full_name || user.email}
+            </h2>
+            <div className="mt-6 grid gap-4 text-sm text-black/65">
+              <div className="rounded-[22px] bg-[#f7f1e8] p-4">
+                <p className="pill-label text-black/35">Role</p>
+                <p className="mt-2 text-base text-black">{user.role}</p>
+              </div>
+              <div className="rounded-[22px] bg-[#f7f1e8] p-4">
+                <p className="pill-label text-black/35">Boutique Id</p>
+                <p className="mt-2 text-base text-black">{user.boutique_id ?? "Not linked yet"}</p>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
-          <p className="pill-label text-black/45">Current System Gap</p>
-          <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
-            What to connect after this
-          </h2>
-          <ul className="mt-6 space-y-3 text-sm leading-6 text-black/60">
-            <li>Persist team members and consultant schedules in backend APIs.</li>
-            <li>Drive buyer booking slots from partner availability.</li>
-            <li>Surface live booking requests in the partner dashboard.</li>
-            <li>Bridge appointment payment and order follow-up between both roles.</li>
-          </ul>
-        </div>
-      </section>
+          <div className="rounded-[28px] border border-black/10 bg-white/75 p-6">
+            <p className="pill-label text-black/45">Current System Gap</p>
+            <h2 className="font-serif-display mt-4 text-3xl tracking-[-0.04em] text-black">
+              What to connect after this
+            </h2>
+            <ul className="mt-6 space-y-3 text-sm leading-6 text-black/60">
+              <li>Persist team members and consultant schedules in backend APIs.</li>
+              <li>Drive buyer booking slots from partner availability.</li>
+              <li>Surface live booking requests in the partner dashboard.</li>
+              <li>Bridge appointment payment and order follow-up between both roles.</li>
+            </ul>
+          </div>
+        </section>
+      ) : null}
     </DashboardShell>
   );
 }

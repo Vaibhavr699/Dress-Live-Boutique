@@ -1,13 +1,35 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
+
+const WISHLIST_EMPTY_SVG = require('@/assets/svg/wishlist-heart 1.svg');
+
+const EMPTY_STATE_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textAlign: 'center' as const,
+  color: '#000000',
+};
+
+const EMPTY_STATE_SUBHEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0,
+  textAlign: 'center' as const,
+  color: '#000000',
+};
 
 type ShortlistItem = {
   id: number;
@@ -20,6 +42,64 @@ type Dress = {
   price: number;
   image_url?: string | null;
   boutique_id: number;
+};
+
+/** Thin-stroke plus (~1px) to match design; Ionicons "add" is too heavy. */
+function ThinPlusIcon({ size = 14, color = '#000000' }: { size?: number; color?: string }) {
+  const stroke = Math.max(StyleSheet.hairlineWidth, 1);
+  const half = size / 2;
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          width: size,
+          height: stroke,
+          backgroundColor: color,
+          top: half - stroke / 2,
+        }}
+      />
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          width: stroke,
+          height: size,
+          backgroundColor: color,
+          left: half - stroke / 2,
+        }}
+      />
+    </View>
+  );
+}
+
+const HEADER_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 2,
+  color: '#000000',
+  textTransform: 'uppercase' as const,
+};
+
+const ITEM_NAME_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 18,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const ITEM_PRICE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: 'rgba(0,0,0,0.4)',
 };
 
 export default function WishlistScreen() {
@@ -96,13 +176,13 @@ export default function WishlistScreen() {
 
   return (
     <View className="flex-1 bg-white">
-      {/* Header */}
-      <View 
-        className="px-6 items-center border-b border-[#F0F0F0] pb-4" 
+      {/* Header — centered, uppercase, count inline (e.g. WISHLIST 3) */}
+      <View
+        className="px-6 items-center border-b border-[#F0F0F0] pb-4"
         style={{ paddingTop: insets.top + 10 }}
       >
-        <Text className="text-black text-sm font-bold uppercase tracking-[2px]">
-          Wishlist {wishlistItems.length}
+        <Text style={HEADER_TITLE_STYLE}>
+          {!loading ? `Wishlist ${wishlistItems.length}` : 'Wishlist'}
         </Text>
       </View>
 
@@ -112,13 +192,17 @@ export default function WishlistScreen() {
         </View>
       ) : isEmpty ? (
         <View className="flex-1 items-center justify-center px-10">
-          <View className="mb-8 opacity-20">
-            <MaterialCommunityIcons name="cards-heart-outline" size={64} color="black" />
+          <View className="mb-8 items-center justify-center">
+            <Image
+              source={WISHLIST_EMPTY_SVG}
+              style={{ width: 68, height: 68 }}
+              contentFit="contain"
+            />
           </View>
-          <Text className="text-black text-sm font-medium uppercase tracking-[2px] mb-2 text-center">
+          <Text className="mb-2 px-2" style={EMPTY_STATE_HEADING_STYLE}>
             You do not have any wishlist items
           </Text>
-          <Text className="text-black/40 text-[10px] text-center font-light leading-4 px-6">
+          <Text className="px-6" style={EMPTY_STATE_SUBHEADING_STYLE}>
             Save your favorites and share them with anyone you like
           </Text>
           
@@ -130,69 +214,106 @@ export default function WishlistScreen() {
           </TouchableOpacity>
         </View>
       ) : (
-        <ScrollView 
-          showsVerticalScrollIndicator={false} 
+        <ScrollView
+          showsVerticalScrollIndicator={false}
           className="flex-1"
-          contentContainerStyle={{ paddingTop: 24, paddingBottom: 100 }}
+          contentContainerStyle={{ paddingTop: 28, paddingBottom: 100 }}
         >
-          {wishlistItems.map((item) => (
-            <View key={item.id} className="flex-row items-start px-8 mb-8">
-              {/* Product Image */}
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() =>
-                  router.push({
-                    pathname: '/(tabs)/product-details',
-                    params: { id: String(item.id) },
-                  })
-                }
-              >
-                <Image 
-                source={
-                  item.image_url
-                    ? { uri: item.image_url }
-                    : require('@/assets/images/Dashboard image 1.png')
-                } 
-                style={{ width: 80, height: 100, borderRadius: 2 }}
-                contentFit="cover"
-                />
-              </TouchableOpacity>
-              
-              {/* Info & Actions */}
-              <View className="flex-1 ml-6">
-                <View className="flex-row justify-between items-start mb-1">
-                  <Text className="text-black text-[12px] font-medium">{item.name}</Text>
-                </View>
-                <Text className="text-black/40 text-[10px] font-light mb-auto">
-                  {typeof item.price === 'number' ? `${item.price.toFixed(0)} EUR` : 'Price on request'}
-                </Text>
-                
-                {/* Divider Line */}
-                <View className="h-[1px] bg-[#F0F0F0] w-full mb-3 mt-6" />
-                
-                {/* Bottom Icons */}
-                <View className="flex-row justify-between items-center pr-2">
+          {wishlistItems.map((item) => {
+            const imageSource = item.image_url
+              ? { uri: item.image_url }
+              : require('@/assets/images/Dashboard image 1.png');
+            const priceLabel =
+              typeof item.price === 'number' ? `${item.price.toFixed(0)} EUR` : 'Price on request';
+
+            return (
+              <View key={item.id} className="flex-row items-start px-6 mb-10">
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/(tabs)/product-details',
+                      params: { id: String(item.id) },
+                    })
+                  }
+                >
+                  <Image
+                    source={imageSource}
+                    style={{ width: 100, height: 100, borderRadius: 0 }}
+                    contentFit="cover"
+                  />
+                </TouchableOpacity>
+
+                {/* Text + divider + actions: plus left-aligned with title; heart right */}
+                <View className="flex-1 ml-5" style={{ minHeight: 100 }}>
                   <TouchableOpacity
-                    activeOpacity={0.7}
+                    activeOpacity={0.85}
                     onPress={() =>
                       router.push({
-                        pathname: '/(tabs)/booking-calendar',
-                        params: {
-                          dressId: String(item.id),
-                          appointmentType: 'video',
-                        },
+                        pathname: '/(tabs)/product-details',
+                        params: { id: String(item.id) },
                       })
                     }
                   >
-                    <Ionicons name="add" size={20} color="black" />
+                    <Text style={ITEM_NAME_STYLE} numberOfLines={2}>
+                      {item.name}
+                    </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => removeFromWishlist(item.id)}>
-                    <Ionicons name="heart" size={18} color="black" />
-                  </TouchableOpacity>
+                  <Text style={[ITEM_PRICE_STYLE, { marginTop: 6 }]}>{priceLabel}</Text>
+
+                  <View
+                    style={{
+                      height: StyleSheet.hairlineWidth,
+                      backgroundColor: '#F0F0F0',
+                      marginTop: 18,
+                      marginBottom: 0,
+                      alignSelf: 'stretch',
+                    }}
+                  />
+
+                  <View
+                    className="flex-row items-center justify-between"
+                    style={{ marginTop: 14 }}
+                  >
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 14, bottom: 14, left: 8, right: 28 }}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/(tabs)/booking-calendar',
+                          params: {
+                            dressId: String(item.id),
+                            appointmentType: 'video',
+                          },
+                        })
+                      }
+                      style={{
+                        justifyContent: 'center',
+                        alignItems: 'flex-start',
+                        minHeight: 36,
+                        paddingVertical: 8,
+                      }}
+                    >
+                      <ThinPlusIcon size={14} color="#000000" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 14, bottom: 14, left: 28, right: 8 }}
+                      onPress={() => removeFromWishlist(item.id)}
+                      style={{
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        minHeight: 36,
+                        paddingVertical: 8,
+                      }}
+                    >
+                      <Ionicons name="heart" size={17} color="#000000" />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
       )}
     </View>

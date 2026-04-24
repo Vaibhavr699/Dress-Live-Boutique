@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.api import deps
+from app.core.config import settings
+from app.crud.crud_dress import crud_dress
 
 router = APIRouter()
 
@@ -13,6 +21,16 @@ class _PoseValidationResult:
     ok: bool
     reason: Optional[str] = None
     details: Optional[dict[str, Any]] = None
+
+
+class FullBodyValidationPayload(BaseModel):
+    image_data_url: str
+
+
+class TryOnPreviewPayload(BaseModel):
+    dress_id: int
+    full_body_image_data_url: str
+    selfie_image_data_url: Optional[str] = None
 
 
 def _decode_image_bytes(image_bytes: bytes):
@@ -30,6 +48,267 @@ def _decode_image_bytes(image_bytes: bytes):
     if img_bgr is None:
         raise HTTPException(status_code=400, detail="Could not decode image. Please upload a valid JPG/PNG.")
     return img_bgr
+
+
+def _decode_data_url_image_bytes(data_url: str) -> bytes:
+    raw = (data_url or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Image data is required.")
+
+    if raw.startswith("data:"):
+        if "," not in raw:
+            raise HTTPException(status_code=400, detail="Image data is invalid.")
+        raw = raw.split(",", 1)[1]
+
+    try:
+        return base64.b64decode(raw, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not decode image. Please try again.")
+
+
+def _encode_png_data_url(img_bgr) -> str:
+    try:
+        import cv2
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    ok, encoded = cv2.imencode(".png", img_bgr)
+    if not ok or encoded is None:
+        raise HTTPException(status_code=500, detail="Could not encode try-on preview.")
+    payload = base64.b64encode(encoded.tobytes()).decode("ascii")
+    return f"data:image/png;base64,{payload}"
+
+
+def _encode_image_bytes_data_url(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Image data is required.")
+    payload = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{payload}"
+
+
+def _download_image_bytes(url: str) -> bytes:
+    try:
+        response = httpx.get(url, timeout=20.0)
+        response.raise_for_status()
+        return response.content
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not load dress image for AI try-on: {e}")
+
+
+def _extract_runpod_image_data_url(payload: Any) -> Optional[str]:
+    if isinstance(payload, str):
+        candidate = payload.strip()
+        if candidate.startswith("data:image/"):
+            return candidate
+        return None
+
+    if isinstance(payload, dict):
+        for key in (
+            "image_data_url",
+            "result_image_data_url",
+            "output_image_data_url",
+            "image",
+            "result_image",
+            "data_url",
+        ):
+            candidate = payload.get(key)
+            if isinstance(candidate, str) and candidate.strip().startswith("data:image/"):
+                return candidate.strip()
+
+        for key in ("output", "result"):
+            nested = payload.get(key)
+            extracted = _extract_runpod_image_data_url(nested)
+            if extracted:
+                return extracted
+
+    if isinstance(payload, list):
+        for item in payload:
+            extracted = _extract_runpod_image_data_url(item)
+            if extracted:
+                return extracted
+
+    return None
+
+
+def _runpod_tryon_enabled() -> bool:
+    return bool((settings.RUNPOD_API_KEY or "").strip() and (settings.RUNPOD_TRYON_ENDPOINT_ID or "").strip())
+
+
+def _render_tryon_via_runpod(
+    *,
+    dress_id: int,
+    dress_name: str | None,
+    garment_url: str,
+    garment_image_bytes: bytes,
+    full_body_image_bytes: bytes,
+    selfie_image_bytes: bytes | None = None,
+) -> tuple[str, dict[str, Any]]:
+    endpoint_id = (settings.RUNPOD_TRYON_ENDPOINT_ID or "").strip()
+    api_key = (settings.RUNPOD_API_KEY or "").strip()
+    if not endpoint_id or not api_key:
+        raise HTTPException(status_code=500, detail="RunPod AI try-on is not configured.")
+
+    request_body = {
+        "input": {
+            "task": "virtual-tryon",
+            "dress_id": dress_id,
+            "dress_name": dress_name or "",
+            "garment_source_url": garment_url,
+            "garment_image_data_url": _encode_image_bytes_data_url(garment_image_bytes, "image/png"),
+            "full_body_image_data_url": _encode_image_bytes_data_url(full_body_image_bytes, "image/jpeg"),
+            "selfie_image_data_url": (
+                _encode_image_bytes_data_url(selfie_image_bytes, "image/jpeg") if selfie_image_bytes else None
+            ),
+            "return_format": "data_url",
+        }
+    }
+
+    try:
+        response = httpx.post(
+            f"https://api.runpod.ai/v2/{endpoint_id}/runsync",
+            json=request_body,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=float(settings.RUNPOD_TRYON_TIMEOUT_SECONDS or 90),
+        )
+        response.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"RunPod AI try-on is unavailable: {e}")
+
+    try:
+        payload = response.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="RunPod AI try-on returned an unreadable response.")
+
+    image_data_url = _extract_runpod_image_data_url(payload)
+    if not image_data_url:
+        raise HTTPException(status_code=502, detail="RunPod AI try-on did not return an image.")
+
+    return image_data_url, {
+        "renderer": "runpod",
+        "runpod_endpoint_id": endpoint_id,
+    }
+
+
+def _decode_image_with_alpha(image_bytes: bytes):
+    try:
+        import numpy as np
+        import cv2
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Could not decode dress image for AI try-on.")
+    return img
+
+
+def _detect_primary_person_bbox(img_bgr) -> Optional[tuple[int, int, int, int]]:
+    try:
+        import cv2
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    hog = cv2.HOGDescriptor()
+    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    boxes, weights = hog.detectMultiScale(
+        img_bgr,
+        winStride=(8, 8),
+        padding=(8, 8),
+        scale=1.05,
+    )
+    if len(boxes) == 0:
+        return None
+
+    ranked = sorted(
+        [
+            {
+                "box": (int(x), int(y), int(w), int(h)),
+                "weight": float(weights[i]) if len(weights) > i else 0.0,
+                "area": int(w) * int(h),
+            }
+            for i, (x, y, w, h) in enumerate(boxes)
+        ],
+        key=lambda item: (item["weight"], item["area"]),
+        reverse=True,
+    )
+    return ranked[0]["box"]
+
+
+def _extract_garment_rgba(garment_img):
+    try:
+        import cv2
+        import numpy as np
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    if garment_img.ndim == 2:
+        garment_bgr = cv2.cvtColor(garment_img, cv2.COLOR_GRAY2BGR)
+        alpha = np.full(garment_img.shape[:2], 255, dtype=np.uint8)
+    elif garment_img.shape[2] == 4:
+        garment_bgr = garment_img[:, :, :3]
+        alpha = garment_img[:, :, 3]
+    else:
+        garment_bgr = garment_img[:, :, :3]
+        gray = cv2.cvtColor(garment_bgr, cv2.COLOR_BGR2GRAY)
+        alpha = cv2.threshold(gray, 245, 255, cv2.THRESH_BINARY_INV)[1]
+        alpha = cv2.GaussianBlur(alpha, (7, 7), 0)
+        alpha = cv2.normalize(alpha, None, 0, 255, cv2.NORM_MINMAX)
+
+    return garment_bgr, alpha
+
+
+def _compose_tryon_preview(person_img_bgr, garment_img) -> tuple[Any, dict[str, Any]]:
+    try:
+        import cv2
+        import numpy as np
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    bbox = _detect_primary_person_bbox(person_img_bgr)
+    if not bbox:
+        raise HTTPException(status_code=400, detail="Could not locate the person well enough for try-on preview.")
+
+    x, y, w, h = bbox
+    garment_bgr, garment_alpha = _extract_garment_rgba(garment_img)
+    g_h, g_w = garment_bgr.shape[:2]
+    if g_h <= 0 or g_w <= 0:
+        raise HTTPException(status_code=400, detail="Selected dress image is not usable for AI try-on.")
+
+    target_width = max(120, int(w * 0.78))
+    target_height = int(target_width * (g_h / max(g_w, 1)))
+    min_height = int(h * 0.45)
+    max_height = int(h * 0.88)
+    target_height = max(min_height, min(target_height, max_height))
+    target_width = max(100, int(target_height * (g_w / max(g_h, 1))))
+
+    overlay_x = int(x + (w - target_width) / 2)
+    overlay_y = int(y + h * 0.16)
+    overlay_x = max(0, min(overlay_x, person_img_bgr.shape[1] - target_width))
+    overlay_y = max(0, min(overlay_y, person_img_bgr.shape[0] - target_height))
+
+    resized_garment = cv2.resize(garment_bgr, (target_width, target_height), interpolation=cv2.INTER_AREA)
+    resized_alpha = cv2.resize(garment_alpha, (target_width, target_height), interpolation=cv2.INTER_AREA)
+    alpha_mask = (resized_alpha.astype(np.float32) / 255.0)[..., None]
+
+    result = person_img_bgr.copy()
+    roi = result[overlay_y : overlay_y + target_height, overlay_x : overlay_x + target_width].astype(np.float32)
+    garment_f = resized_garment.astype(np.float32)
+
+    # Slightly dim the base ROI under the garment so the result looks more intentional.
+    roi = roi * (1.0 - alpha_mask * 0.18)
+    blended = garment_f * alpha_mask + roi * (1.0 - alpha_mask)
+    result[overlay_y : overlay_y + target_height, overlay_x : overlay_x + target_width] = blended.astype(np.uint8)
+
+    return result, {
+        "person_box": {"x": x, "y": y, "width": w, "height": h},
+        "overlay_box": {
+            "x": overlay_x,
+            "y": overlay_y,
+            "width": target_width,
+            "height": target_height,
+        },
+    }
 
 
 def _validate_full_body_hog(img_bgr) -> _PoseValidationResult:
@@ -221,6 +500,73 @@ def _validate_full_body_pose(img_bgr) -> _PoseValidationResult:
     return _PoseValidationResult(ok=True, details={"height_ratio": height_ratio, "visibility": vis_map})
 
 
+def _validate_image_bytes_response(image_bytes: bytes) -> dict[str, Any]:
+    img_bgr = _decode_image_bytes(image_bytes)
+    result = _validate_full_body_pose(img_bgr)
+    return {
+        "ok": bool(result.ok),
+        "reason": result.reason,
+        "details": result.details or {},
+    }
+
+
+def _build_tryon_preview_response(
+    *,
+    db: Session,
+    dress_id: int,
+    full_body_image_bytes: bytes,
+    selfie_image_bytes: bytes | None = None,
+) -> dict[str, Any]:
+    dress = crud_dress.get(db, id=dress_id)
+    if not dress:
+        raise HTTPException(status_code=404, detail="Dress not found.")
+    if dress.is_ai_enabled is False:
+        raise HTTPException(status_code=400, detail="This dress is not enabled for AI try-on.")
+
+    person_img_bgr = _decode_image_bytes(full_body_image_bytes)
+    validation = _validate_full_body_pose(person_img_bgr)
+    if not validation.ok:
+        raise HTTPException(status_code=400, detail=validation.reason or "Please upload a valid full-body image.")
+
+    # Selfie is accepted for forward compatibility even though the MVP renderer does not yet use it.
+    if selfie_image_bytes is not None:
+        _ = len(selfie_image_bytes)
+
+    garment_url = (dress.ai_model_url or dress.image_url or "").strip()
+    if not garment_url:
+        raise HTTPException(status_code=400, detail="This dress does not have an AI garment image yet.")
+
+    garment_bytes = _download_image_bytes(garment_url)
+    if _runpod_tryon_enabled():
+        image_data_url, preview_details = _render_tryon_via_runpod(
+            dress_id=dress.id,
+            dress_name=dress.name,
+            garment_url=garment_url,
+            garment_image_bytes=garment_bytes,
+            full_body_image_bytes=full_body_image_bytes,
+            selfie_image_bytes=selfie_image_bytes,
+        )
+    else:
+        garment_img = _decode_image_with_alpha(garment_bytes)
+        preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
+        image_data_url = _encode_png_data_url(preview_bgr)
+
+    return {
+        "ok": True,
+        "dress": {
+            "id": dress.id,
+            "name": dress.name,
+            "image_url": dress.image_url,
+            "ai_model_url": dress.ai_model_url,
+        },
+        "image_data_url": image_data_url,
+        "details": {
+            "validation": validation.details or {},
+            **preview_details,
+        },
+    }
+
+
 @router.post("/validate-full-body", response_model=dict)
 async def validate_full_body(file: UploadFile = File(...)) -> Any:
     """
@@ -230,12 +576,58 @@ async def validate_full_body(file: UploadFile = File(...)) -> Any:
         raise HTTPException(status_code=400, detail="Only image uploads are supported.")
 
     image_bytes = await file.read()
-    img_bgr = _decode_image_bytes(image_bytes)
-    result = _validate_full_body_pose(img_bgr)
+    return _validate_image_bytes_response(image_bytes)
 
-    return {
-        "ok": bool(result.ok),
-        "reason": result.reason,
-        "details": result.details or {},
-    }
+
+@router.post("/validate-full-body-base64", response_model=dict)
+async def validate_full_body_base64(payload: FullBodyValidationPayload) -> Any:
+    image_bytes = _decode_data_url_image_bytes(payload.image_data_url)
+    return _validate_image_bytes_response(image_bytes)
+
+
+@router.post("/preview-tryon", response_model=dict)
+async def preview_tryon(
+    *,
+    db: Session = Depends(deps.get_db),
+    dress_id: int = Form(...),
+    full_body_file: UploadFile = File(...),
+    selfie_file: UploadFile | None = File(None),
+) -> Any:
+    """
+    MVP pre-booking AI try-on preview.
+
+    Uses the selected dress image and overlays it onto the customer's validated full-body image.
+    This is a practical first milestone before introducing a dedicated GPU virtual try-on pipeline.
+    """
+    if not full_body_file.content_type or not full_body_file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+
+    image_bytes = await full_body_file.read()
+    selfie_image_bytes = await selfie_file.read() if selfie_file is not None else None
+    return _build_tryon_preview_response(
+        db=db,
+        dress_id=dress_id,
+        full_body_image_bytes=image_bytes,
+        selfie_image_bytes=selfie_image_bytes,
+    )
+
+
+@router.post("/preview-tryon-base64", response_model=dict)
+async def preview_tryon_base64(
+    *,
+    payload: TryOnPreviewPayload,
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    full_body_image_bytes = _decode_data_url_image_bytes(payload.full_body_image_data_url)
+    selfie_image_bytes = (
+        _decode_data_url_image_bytes(payload.selfie_image_data_url)
+        if payload.selfie_image_data_url
+        else None
+    )
+    return _build_tryon_preview_response(
+        db=db,
+        dress_id=payload.dress_id,
+        full_body_image_bytes=full_body_image_bytes,
+        selfie_image_bytes=selfie_image_bytes,
+    )
 

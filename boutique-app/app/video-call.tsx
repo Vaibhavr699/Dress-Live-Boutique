@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -77,8 +78,9 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   deps: LiveKitDeps;
   bookingDresses: VideoCallBookingDress[];
   bookingId: number;
+  frameHeight: number;
 }) {
-  const { deps, bookingDresses, bookingId } = props;
+  const { deps, bookingDresses, bookingId, frameHeight } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
   const tracks = deps.useTracks([deps.Track.Source.Camera]);
@@ -91,11 +93,11 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
       : 'Waiting for customer…';
 
   return (
-    <View style={{ width: '100%', height: 320 }}>
+    <View style={{ width: '100%', height: frameHeight }}>
       {remote ? (
-        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: 320 }} />
+        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} />
       ) : (
-        <View className="bg-black h-[320px] w-full items-center justify-center px-6">
+        <View className="bg-black w-full items-center justify-center px-6" style={{ height: frameHeight }}>
           <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
         </View>
       )}
@@ -103,7 +105,7 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
       {local ? (
         <View
           className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
-          style={{ width: 110, height: 150, borderRadius: 16 }}
+          style={{ width: 112, height: 152, borderRadius: 18 }}
         >
           <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
         </View>
@@ -218,6 +220,7 @@ export default function BoutiqueVideoCallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
+  const { height: screenHeight } = useWindowDimensions();
   const livekitSupported = useMemo(() => Platform.OS !== 'web' && isLiveKitNativeSupported(), []);
   const [stageIndex, setStageIndex] = useState(0);
   const [internalNotes, setInternalNotes] = useState('');
@@ -242,6 +245,8 @@ export default function BoutiqueVideoCallScreen() {
     if (!livekitSupported) return null;
     return loadLiveKitDeps();
   }, [livekitSupported]);
+
+  const videoFrameHeight = useMemo(() => Math.max(360, Math.min(500, Math.round(screenHeight * 0.52))), [screenHeight]);
 
   const audioSessionRef = useRef<any>(null);
   useEffect(() => {
@@ -372,7 +377,11 @@ export default function BoutiqueVideoCallScreen() {
       setEnding(false);
       router.replace({
         pathname: '/video-call-summary',
-        params: { bookingId: bookingId ? String(bookingId) : '', notes: internalNotes || '' },
+        params: {
+          bookingId: bookingId ? String(bookingId) : '',
+          notes: internalNotes || '',
+          durationSeconds: String(liveSeconds),
+        },
       } as any);
     }
   };
@@ -411,26 +420,26 @@ export default function BoutiqueVideoCallScreen() {
         <View className="flex-1 px-4 pt-4">
           {stage === 'live' ? (
             Platform.OS === 'web' ? (
-              <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+              <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                 <Text className="text-white/70 text-[12px] text-center">
                   Live video calls are not available in web preview. Test on iOS/Android.
                 </Text>
               </View>
             ) : !bookingId ? (
-              <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+              <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                 <Text className="text-white/70 text-[12px] text-center">
                   This video call must be started from a booking.
                 </Text>
               </View>
             ) : !isLiveKitNativeSupported() ? (
-              <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+              <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                 <Text className="text-white/70 text-[12px] text-center leading-5">
                   Video calls need a development build with WebRTC (Expo Go does not include LiveKit).{'\n\n'}
                   Run: npx expo run:android
                 </Text>
               </View>
             ) : tokenLoading ? (
-              <View className="bg-black h-[320px] w-full items-center justify-center">
+              <View className="bg-black w-full items-center justify-center rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                 <ActivityIndicator color="white" />
                 <Text className="text-white/50 text-[11px] mt-4">Connecting…</Text>
               </View>
@@ -439,7 +448,7 @@ export default function BoutiqueVideoCallScreen() {
                 // Use memoized deps so the video tree stays stable.
                 if (!deps || bookingId == null) {
                   return (
-                    <View className="bg-black h-[320px] w-full items-center justify-center px-8">
+                    <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                       <Text className="text-white/70 text-[12px] text-center leading-5">
                         LiveKit failed to load. Stop Metro and run: npx expo start --clear, then rebuild the dev client.
                       </Text>
@@ -459,12 +468,19 @@ export default function BoutiqueVideoCallScreen() {
                       setLkConnected(true);
                     }}
                   >
-                    <PartnerRoomView deps={deps} bookingDresses={bookingDresses} bookingId={bookingId} />
+                    <View className="rounded-[28px] overflow-hidden border border-black/5">
+                      <PartnerRoomView
+                        deps={deps}
+                        bookingDresses={bookingDresses}
+                        bookingId={bookingId}
+                        frameHeight={videoFrameHeight}
+                      />
+                    </View>
                   </deps.LiveKitRoom>
                 );
               })()
             ) : (
-              <View className="bg-black h-[320px] w-full items-center justify-center">
+              <View className="bg-black w-full items-center justify-center rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                 <Text className="text-white/50 text-[11px]">Not connected</Text>
               </View>
             )

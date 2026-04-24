@@ -34,6 +34,14 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.05,
 };
 
+const SECTION_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 16,
+  lineHeight: 24,
+  letterSpacing: 0,
+};
+
 function LabeledInput({
   label,
   value,
@@ -153,16 +161,17 @@ export default function BusinessProfileEditScreen() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const canUseNativeMaps = Platform.OS !== 'web';
+  const canUseLocationTools = Platform.OS !== 'web';
+  const canUseEmbeddedMap = Platform.OS === 'ios';
   const Maps = useMemo(() => {
-    if (!canUseNativeMaps) return null;
+    if (!canUseEmbeddedMap) return null;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       return require('react-native-maps') as any;
     } catch {
       return null;
     }
-  }, [canUseNativeMaps]);
+  }, [canUseEmbeddedMap]);
   const MapViewComponent = (Maps?.default ?? Maps?.MapView) as any;
   const MarkerComponent = (Maps?.Marker ?? Maps?.MapMarker) as any;
 
@@ -203,7 +212,7 @@ export default function BusinessProfileEditScreen() {
   );
 
   const useCurrentLocation = useCallback(async () => {
-    if (!canUseNativeMaps) return;
+    if (!canUseLocationTools) return;
     setLocationLoading(true);
     setLocationError(null);
     try {
@@ -219,7 +228,7 @@ export default function BusinessProfileEditScreen() {
     } finally {
       setLocationLoading(false);
     }
-  }, [canUseNativeMaps, setFromCoords]);
+  }, [canUseLocationTools, setFromCoords]);
 
   useEffect(() => {
     let alive = true;
@@ -346,8 +355,8 @@ export default function BusinessProfileEditScreen() {
 
           <View className="border-t border-[#ECECEC] pt-5 mb-8">
             <Text
-              className="text-[12px] uppercase tracking-[0.8px] text-black mb-4"
-              style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
+              className="text-black mb-4"
+              style={SECTION_HEADING_STYLE}
             >
               Shop Information
             </Text>
@@ -394,8 +403,8 @@ export default function BusinessProfileEditScreen() {
             </Text>
 
             <Text
-              className="text-[12px] uppercase tracking-[0.8px] text-black mb-4"
-              style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
+              className="text-black mb-4"
+              style={SECTION_HEADING_STYLE}
             >
               Owner Personal Information
             </Text>
@@ -438,7 +447,7 @@ export default function BusinessProfileEditScreen() {
             </Text>
 
             <View className="h-[220px] border border-[#D8D8D8] bg-[#F3F3F3] overflow-hidden">
-              {canUseNativeMaps && MapViewComponent && MarkerComponent ? (
+              {canUseEmbeddedMap && MapViewComponent && MarkerComponent ? (
                 <MapViewComponent
                   style={{ width: '100%', height: '100%' }}
                   region={region}
@@ -457,7 +466,7 @@ export default function BusinessProfileEditScreen() {
               ) : (
                 <View className="flex-1 items-center justify-center px-6">
                   <Text className="text-[11px] text-black/60 text-center">
-                    Map is not available on web preview. Test on iOS/Android for full map + pin support.
+                    Drag map preview is unavailable in this build. You can still update the address and use current location safely.
                   </Text>
                 </View>
               )}
@@ -471,8 +480,8 @@ export default function BusinessProfileEditScreen() {
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={useCurrentLocation}
-              disabled={locationLoading || !canUseNativeMaps}
-              className={`py-4 items-center justify-center mt-5 ${locationLoading || !canUseNativeMaps ? 'bg-black/30' : 'bg-black'}`}
+              disabled={locationLoading || !canUseLocationTools}
+              className={`py-4 items-center justify-center mt-5 ${locationLoading || !canUseLocationTools ? 'bg-black/30' : 'bg-black'}`}
             >
               {locationLoading ? (
                 <ActivityIndicator color="white" />

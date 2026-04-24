@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert, GestureResponderEvent } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -9,13 +9,6 @@ import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 
-type Boutique = {
-  id: number;
-  name?: string | null;
-  location?: string | null;
-  header_image_url?: string | null;
-};
-
 export default function ProductDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -24,18 +17,23 @@ export default function ProductDetailsScreen() {
   const guestDressIds = useShortlistStore((state: any) => state.dressIds);
   const toggleGuest = useShortlistStore((state: any) => state.toggle);
   const [optionModalVisible, setOptionModalVisible] = useState(false);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [dress, setDress] = useState<any>(null);
-  const [boutique, setBoutique] = useState<Boutique | null>(null);
   const [isShortlisted, setIsShortlisted] = useState(false);
   const [shortlistLoading, setShortlistLoading] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerZoom, setViewerZoom] = useState(1);
+  const [viewerOffset, setViewerOffset] = useState({ x: 0, y: 0 });
+  const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number } | null>(null);
+  const panStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const lastTapAtRef = useRef(0);
 
   const { addItem } = useCartStore();
 
   useEffect(() => {
     if (!id) {
       setDress(null);
-      setBoutique(null);
       setIsShortlisted(false);
       setLoading(false);
       return;
@@ -55,16 +53,6 @@ export default function ProductDetailsScreen() {
         }
 
         setDress(dressData);
-        setBoutique(null);
-        const boutiqueId = (dressData as any)?.boutique_id;
-        if (boutiqueId) {
-          try {
-            const b = await api.get(`/boutiques/${boutiqueId}`);
-            if (isActive) setBoutique(b as Boutique);
-          } catch {
-            if (isActive) setBoutique(null);
-          }
-        }
         if (isAuthenticated) {
           const shortlistData = await api.get('/shortlists/me');
           if (!isActive) return;
@@ -111,6 +99,16 @@ export default function ProductDetailsScreen() {
     const img = (dress?.image_url || '').trim();
     return img || null;
   }, [dress?.image_url]);
+
+  const galleryImages = useMemo(
+    () => [
+      {
+        key: 'primary',
+        source: headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 3.png'),
+      },
+    ],
+    [headerImageUrl]
+  );
 
   const productInfo = [
     { label: 'Dress Price:', value: product.price },
@@ -160,6 +158,108 @@ export default function ProductDetailsScreen() {
     );
   };
 
+  const openImageViewer = (index = 0) => {
+    setViewerIndex(index);
+    setViewerZoom(1);
+    setImageViewerVisible(true);
+  };
+
+  const closeImageViewer = () => {
+    setImageViewerVisible(false);
+    setViewerZoom(1);
+    setViewerOffset({ x: 0, y: 0 });
+    setViewerIndex(0);
+  };
+
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+  const getTouchDistance = (touches: readonly { pageX: number; pageY: number }[]) => {
+    if (touches.length < 2) return 0;
+    const [first, second] = touches;
+    const dx = second.pageX - first.pageX;
+    const dy = second.pageY - first.pageY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const resetViewerTransform = () => {
+    setViewerZoom(1);
+    setViewerOffset({ x: 0, y: 0 });
+    pinchStateRef.current = null;
+    panStateRef.current = null;
+  };
+
+  const handleViewerTouchStart = (event: GestureResponderEvent) => {
+    const touches = event.nativeEvent.touches;
+
+    if (touches.length === 2) {
+      pinchStateRef.current = {
+        initialDistance: getTouchDistance(touches),
+        initialZoom: viewerZoom,
+      };
+      panStateRef.current = null;
+      return;
+    }
+
+    if (touches.length !== 1) return;
+
+    const now = Date.now();
+    if (now - lastTapAtRef.current < 260) {
+      if (viewerZoom > 1.05) {
+        resetViewerTransform();
+      } else {
+        setViewerZoom(2);
+        setViewerOffset({ x: 0, y: 0 });
+      }
+      lastTapAtRef.current = 0;
+      return;
+    }
+
+    lastTapAtRef.current = now;
+
+    if (viewerZoom > 1.05) {
+      panStateRef.current = {
+        startX: touches[0].pageX,
+        startY: touches[0].pageY,
+        originX: viewerOffset.x,
+        originY: viewerOffset.y,
+      };
+    }
+  };
+
+  const handleViewerTouchMove = (event: GestureResponderEvent) => {
+    const touches = event.nativeEvent.touches;
+
+    if (touches.length === 2 && pinchStateRef.current) {
+      const distance = getTouchDistance(touches);
+      const baseDistance = pinchStateRef.current.initialDistance || distance || 1;
+      const nextZoom = clamp((distance / baseDistance) * pinchStateRef.current.initialZoom, 1, 3);
+      setViewerZoom(nextZoom);
+      if (nextZoom <= 1.05) {
+        setViewerOffset({ x: 0, y: 0 });
+      }
+      return;
+    }
+
+    if (touches.length === 1 && viewerZoom > 1.05 && panStateRef.current) {
+      const dx = touches[0].pageX - panStateRef.current.startX;
+      const dy = touches[0].pageY - panStateRef.current.startY;
+      const maxOffset = (viewerZoom - 1) * 140;
+      setViewerOffset({
+        x: clamp(panStateRef.current.originX + dx, -maxOffset, maxOffset),
+        y: clamp(panStateRef.current.originY + dy, -maxOffset, maxOffset),
+      });
+    }
+  };
+
+  const handleViewerTouchEnd = () => {
+    pinchStateRef.current = null;
+    panStateRef.current = null;
+    if (viewerZoom <= 1.05) {
+      setViewerZoom(1);
+      setViewerOffset({ x: 0, y: 0 });
+    }
+  };
+
   return (
     <View className="flex-1 bg-white">
       {loading ? (
@@ -171,12 +271,14 @@ export default function ProductDetailsScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Header Image Section */}
         <View className="relative w-full aspect-[4/3] px-6" style={{ marginTop: 8 }}>
-          <Image 
-            key={product.id}
-            source={headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 3.png')} 
-            style={{ width: '100%', height: '100%' }}
-            contentFit="cover"
-          />
+          <TouchableOpacity activeOpacity={0.92} onPress={() => openImageViewer(0)}>
+            <Image 
+              key={product.id}
+              source={headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 3.png')} 
+              style={{ width: '100%', height: '100%' }}
+              contentFit="cover"
+            />
+          </TouchableOpacity>
           
           {/* Top Buttons */}
           <View 
@@ -216,7 +318,15 @@ export default function ProductDetailsScreen() {
           {dress?.is_ai_enabled === false ? null : (
             <View className="absolute bottom-6 right-10">
               <TouchableOpacity 
-                onPress={() => router.push('/(tabs)/ai-try-on')}
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/ai-try-on',
+                    params: {
+                      dressId: String(product.id),
+                      source: 'product-details',
+                    },
+                  })
+                }
                 className="bg-white/80 px-4 py-2 rounded-lg flex-row items-center border border-black/10"
                 activeOpacity={0.8}
               >
@@ -233,25 +343,6 @@ export default function ProductDetailsScreen() {
 
         {/* Product Info Section */}
         <View className="px-6 py-6">
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() =>
-              dress?.boutique_id
-                ? router.push({
-                    pathname: '/(tabs)/boutique-details',
-                    params: { boutiqueId: String(dress.boutique_id) },
-                  })
-                : null
-            }
-          >
-            <Text className="text-black text-2xl font-medium" style={{ fontFamily: 'Helvetica Neue' }}>
-              {(boutique?.name || '').trim() || 'Boutique'}
-            </Text>
-            <Text className="text-[#1A1A1A50] text-[14px] font-normal mt-1" style={{ fontFamily: 'Helvetica Neue' }}>
-              {(boutique?.location || '').trim() || 'Location unavailable'}
-            </Text>
-          </TouchableOpacity>
-
           <View className="flex-row justify-between items-start mb-1">
             <Text 
               className="text-black text-2xl font-medium"
@@ -373,6 +464,71 @@ export default function ProductDetailsScreen() {
 
           </Pressable>
         </Pressable>
+      </Modal>
+
+      {/* Full-screen image viewer */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={imageViewerVisible}
+        onRequestClose={closeImageViewer}
+      >
+        <View className="flex-1 bg-black">
+          <View
+            className="absolute left-0 right-0 z-20 flex-row items-center justify-between px-6"
+            style={{ top: insets.top + 12 }}
+          >
+            <View className="bg-white/15 px-3 py-2 rounded-full">
+              <Text className="text-white text-[12px]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                {viewerIndex + 1} / {galleryImages.length}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={closeImageViewer}
+              activeOpacity={0.8}
+              className="w-10 h-10 rounded-full bg-white/15 items-center justify-center"
+            >
+              <Ionicons name="close" size={24} color="white" />
+            </TouchableOpacity>
+          </View>
+
+          <View className="flex-1 items-center justify-center px-4">
+            <View
+              className="w-full items-center justify-center"
+              onTouchStart={handleViewerTouchStart}
+              onTouchMove={handleViewerTouchMove}
+              onTouchEnd={handleViewerTouchEnd}
+              onTouchCancel={handleViewerTouchEnd}
+            >
+              <Image
+                source={galleryImages[viewerIndex]?.source}
+                style={{
+                  width: '100%',
+                  height: '78%',
+                  transform: [
+                    { translateX: viewerOffset.x },
+                    { translateY: viewerOffset.y },
+                    { scale: viewerZoom },
+                  ],
+                }}
+                contentFit="contain"
+              />
+            </View>
+          </View>
+
+          <View className="absolute bottom-0 left-0 right-0 px-6" style={{ paddingBottom: insets.bottom + 24 }}>
+            <View className="items-center mb-4">
+              <Text className="text-white/80 text-[11px]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}>
+                Pinch or double-tap to zoom. Drag to move the image.
+              </Text>
+            </View>
+            <View className="items-center">
+              <Text className="text-white text-[12px]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                {`${viewerZoom.toFixed(1)}x`}
+              </Text>
+            </View>
+          </View>
+        </View>
       </Modal>
         </>
       )}

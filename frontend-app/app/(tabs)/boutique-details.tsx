@@ -1,14 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCartStore } from '@/store/useCartStore';
-import { useWishlistStore } from '@/store/useWishlistStore';
+import { useShortlistStore } from '@/store/useShortlistStore';
+import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
 
-const { width } = Dimensions.get('window');
 const CATEGORIES = ['All', 'Abendkleider', 'Hochzeitskleider', 'Add-Ons'];
 
 type Boutique = {
@@ -32,7 +33,9 @@ export default function BoutiqueDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { addItem } = useCartStore();
-  const { toggleItem, isInWishlist } = useWishlistStore();
+  const isAuthenticated = useAuthStore((state: { isAuthenticated: boolean }) => state.isAuthenticated);
+  const guestDressIds = useShortlistStore((s) => s.dressIds);
+  const toggleGuestShortlist = useShortlistStore((s) => s.toggle);
 
   const params = useLocalSearchParams<{ boutiqueId?: string; coverImageUrl?: string }>();
   const boutiqueId = params.boutiqueId ? Number(params.boutiqueId) : NaN;
@@ -42,6 +45,62 @@ export default function BoutiqueDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [boutique, setBoutique] = useState<Boutique | null>(null);
   const [dresses, setDresses] = useState<Dress[]>([]);
+  const [authShortlistIds, setAuthShortlistIds] = useState<number[]>([]);
+  const [shortlistBusyId, setShortlistBusyId] = useState<number | null>(null);
+
+  const loadAuthShortlist = useCallback(async () => {
+    if (!isAuthenticated) {
+      setAuthShortlistIds([]);
+      return;
+    }
+    try {
+      const data = await api.get('/shortlists/me');
+      const ids = Array.isArray(data)
+        ? (data as { dress_id: number }[]).map((i) => Number(i.dress_id))
+        : [];
+      setAuthShortlistIds(ids.filter((n) => Number.isFinite(n)));
+    } catch {
+      setAuthShortlistIds([]);
+    }
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    void loadAuthShortlist();
+  }, [loadAuthShortlist, boutiqueId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadAuthShortlist();
+    }, [loadAuthShortlist])
+  );
+
+  const isDressShortlisted = (dressId: number) =>
+    isAuthenticated ? authShortlistIds.includes(dressId) : guestDressIds.includes(dressId);
+
+  const handleToggleShortlist = async (dress: Dress) => {
+    if (!isAuthenticated) {
+      const r = toggleGuestShortlist(dress.id);
+      if (!r.ok) {
+        Alert.alert('Wishlist', 'You can select a maximum of 4 dresses.');
+      }
+      return;
+    }
+    const on = authShortlistIds.includes(dress.id);
+    setShortlistBusyId(dress.id);
+    try {
+      if (on) {
+        await api.delete(`/shortlists/me/${dress.id}`);
+        setAuthShortlistIds((prev) => prev.filter((id) => id !== dress.id));
+      } else {
+        await api.post('/shortlists/me', { dress_id: dress.id });
+        setAuthShortlistIds((prev) => (prev.includes(dress.id) ? prev : [...prev, dress.id]));
+      }
+    } catch (error) {
+      Alert.alert('Wishlist', error instanceof Error ? error.message : 'Could not update wishlist.');
+    } finally {
+      setShortlistBusyId(null);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -193,20 +252,14 @@ export default function BoutiqueDetailsScreen() {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        onPress={() =>
-                          toggleItem({
-                            id: String(dress.id),
-                            name: dress.name,
-                            price: priceLabel,
-                            image: imageSource,
-                          })
-                        }
+                        onPress={() => void handleToggleShortlist(dress)}
+                        disabled={shortlistBusyId === dress.id}
                         className="absolute top-2 right-2 w-8 h-8 items-center justify-center bg-white/60 rounded-full"
                       >
                         <Ionicons
-                          name={isInWishlist(String(dress.id)) ? 'heart' : 'heart-outline'}
+                          name={isDressShortlisted(dress.id) ? 'heart' : 'heart-outline'}
                           size={18}
-                          color={isInWishlist(String(dress.id)) ? '#FF3B30' : 'black'}
+                          color={isDressShortlisted(dress.id) ? '#FF3B30' : 'black'}
                         />
                       </TouchableOpacity>
                     </View>

@@ -1,8 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useMemo, useState } from "react";
+
+import boutiqueExperienceImage from "../../../assets/images/boutique-experience.png";
+import dashboardHeroImage from "../../../assets/images/Dashboard image 1.png";
+
 import { loginWithCredentials } from "@/lib/auth";
 import type { UserRole } from "@/types/auth";
 
@@ -45,10 +50,21 @@ function LoginPageContent() {
   };
 
   return (
-    <div className="page-shell min-h-screen px-4 py-4 lg:px-8 lg:py-8">
-      <div className="card-surface mx-auto grid min-h-[calc(100vh-2rem)] w-full max-w-[1320px] rounded-[36px] lg:grid-cols-[0.95fr_1.05fr]">
-        <div className="flex flex-col justify-between bg-[#111111] px-6 py-8 text-white lg:px-10 lg:py-10">
-          <div>
+    <div className="page-shell min-h-screen px-4 py-6 lg:px-8 lg:py-8">
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full items-center justify-center">
+        <div className="card-surface grid min-h-[70vh] w-full max-w-[1120px] overflow-hidden rounded-[32px] lg:grid-cols-[0.95fr_1.05fr]">
+        <div className="relative flex min-h-[320px] flex-col justify-between bg-[#111111] px-6 py-8 text-white lg:px-10 lg:py-10">
+          <Image
+            src={role === "partner" ? boutiqueExperienceImage : dashboardHeroImage}
+            alt={role === "partner" ? "Boutique workspace" : "Bridal editorial"}
+            fill
+            sizes="(max-width: 1024px) 100vw, 45vw"
+            className="object-cover opacity-30"
+            priority
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-black/30" />
+
+          <div className="relative z-10">
             <Link href="/" className="font-serif-display text-[30px] tracking-[-0.04em]">
               Dress Live
             </Link>
@@ -60,20 +76,22 @@ function LoginPageContent() {
                 ? "Welcome back to your boutique workspace."
                 : "Welcome back to your fitting journey."}
             </h1>
-            <p className="mt-5 max-w-xl text-sm leading-7 text-white/70">
-              Enter your credentials and we will automatically route you to the correct dashboard based on your role in the system.
+            <p className="mt-5 max-w-xl text-sm leading-7 text-white/72">
+              Sign in to continue your bridal journey, manage appointments, and access the same connected experience across web and mobile.
             </p>
           </div>
 
-          <div className="rounded-[26px] border border-white/12 bg-white/6 p-5">
-            <p className="pill-label text-white/55">Role Aware Access</p>
-            <p className="mt-3 text-sm leading-6 text-white/75">
-              The role you choose here sets the visual context, but your actual dashboard is determined by the role stored in the database after login.
+          <div className="relative z-10 rounded-[26px] border border-white/12 bg-white/8 p-5 backdrop-blur-sm">
+            <p className="pill-label text-white/55">{role === "partner" ? "Boutique Mode" : "Client Access"}</p>
+            <p className="mt-3 text-sm leading-6 text-white/78">
+              {role === "partner"
+                ? "Open bookings, manage boutique workflow and continue operating from your desktop workspace."
+                : "Pick up where you left off with saved dresses, bookings and boutique conversations."}
             </p>
           </div>
         </div>
 
-        <div className="grid-lines flex items-center px-6 py-8 lg:px-12">
+        <div className="grid-lines flex items-center px-6 py-8 lg:px-12 lg:py-10">
           <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[520px]">
             <p className="pill-label text-black/45">{role === "partner" ? "Partner Login" : "Buyer Login"}</p>
             <h2 className="font-serif-display mt-4 text-4xl tracking-[-0.04em] text-black">Add your log in info</h2>
@@ -131,6 +149,7 @@ function LoginPageContent() {
             </div>
           </form>
         </div>
+      </div>
       </div>
     </div>
   );

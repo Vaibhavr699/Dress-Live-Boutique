@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Access token TTL for video rooms (minutes). Fittings often run 30–60+ minutes.
     LIVEKIT_TOKEN_TTL_MINUTES: int = 90
 
+    RUNPOD_API_KEY: Optional[str] = None
+    RUNPOD_TRYON_ENDPOINT_ID: Optional[str] = None
+    RUNPOD_TRYON_TIMEOUT_SECONDS: int = 90
+
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         # Some deployments accidentally set SUPABASE_URL to a Postgres connection string.

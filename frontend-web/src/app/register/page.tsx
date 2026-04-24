@@ -1,8 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useMemo, useState } from "react";
+
+import loginImage from "../../../assets/images/Log In Image.jpg";
+
 import { registerUser } from "@/lib/auth";
 import type { UserRole } from "@/types/auth";
 
@@ -73,53 +77,36 @@ function RegisterPageContent() {
   };
 
   return (
-    <div className="page-shell min-h-screen px-4 py-4 lg:px-8 lg:py-8">
-      <div className="card-surface mx-auto grid min-h-[calc(100vh-2rem)] w-full max-w-[1360px] rounded-[36px] lg:grid-cols-[0.9fr_1.1fr]">
-        <div className="px-6 py-8 lg:px-10 lg:py-10">
-          <Link href="/" className="font-serif-display text-[30px] tracking-[-0.04em] text-black">
-            Dress Live
-          </Link>
-          <p className="pill-label mt-8 text-black/45">{role === "partner" ? "Partner Registration" : "Buyer Registration"}</p>
-          <h1 className="font-serif-display mt-5 text-4xl tracking-[-0.04em] text-black lg:text-5xl">
-            {role === "partner" ? "Open your boutique portal." : "Create your buyer account."}
-          </h1>
-          <p className="mt-5 max-w-xl text-sm leading-7 text-black/55">
-            We use one web app and one auth system. Your selected role is stored in the database and determines the dashboard you enter after registration.
-          </p>
+    <div className="page-shell min-h-screen px-4 py-6 lg:px-8 lg:py-8">
+      <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full items-center justify-center">
+        <div className="card-surface grid min-h-[72vh] w-full max-w-[1040px] overflow-hidden rounded-[32px] lg:grid-cols-[0.92fr_1.08fr]">
+        <div className="relative flex min-h-[320px] flex-col justify-between px-6 py-8 lg:px-10 lg:py-10">
+          <Image
+            src={loginImage}
+            alt="Dress Live bridal styling"
+            fill
+            sizes="(max-width: 1024px) 100vw, 42vw"
+            className="object-cover opacity-80"
+            priority
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,253,248,0.22)_0%,rgba(255,253,248,0.54)_100%)]" />
 
-          <div className="mt-10 grid gap-4">
-            <div className="rounded-[26px] bg-black px-6 py-6 text-white">
-              <p className="pill-label text-white/55">What This Unlocks</p>
-              <ul className="mt-4 space-y-3 text-sm leading-6 text-white/75">
-                {role === "partner" ? (
-                  <>
-                    <li>Manage boutique profile and catalog from a desktop-first workspace.</li>
-                    <li>Receive bookings and prepare the fitting journey.</li>
-                    <li>Create a partner identity tied to your boutique data.</li>
-                  </>
-                ) : (
-                  <>
-                    <li>Browse boutiques and discover visible dresses freely.</li>
-                    <li>Save your profile for shortlist, bookings and payments.</li>
-                    <li>Continue your fitting journey across mobile and web.</li>
-                  </>
-                )}
-              </ul>
-            </div>
-
-            <div className="rounded-[26px] border border-black/10 bg-white/70 px-6 py-6">
-              <p className="pill-label text-black/45">Role Summary</p>
-              <p className="mt-4 text-sm leading-6 text-black/60">
-                {role === "partner"
-                  ? "Partner registration creates a user with the partner role and a boutique record in the database."
-                  : "Buyer registration creates a user with the buyer role and routes you to the customer workspace."}
-              </p>
-            </div>
+          <div className="relative z-10 mt-auto rounded-[26px] border border-white/30 bg-[rgba(255,253,248,0.52)] p-5 backdrop-blur-sm">
+            <Link href="/" className="font-serif-display text-[30px] tracking-[-0.04em] text-black">
+              Dress Live
+            </Link>
+            <p className="pill-label mt-4 text-black/45">{role === "partner" ? "Partner Registration" : "Buyer Registration"}</p>
+            <h1 className="font-serif-display mt-3 text-4xl tracking-[-0.04em] text-black lg:text-5xl">
+              {role === "partner" ? "Open your boutique portal." : "Create your buyer account."}
+            </h1>
+            <p className="mt-5 max-w-xl text-sm leading-7 text-black/55">
+              Join Dress Live to begin a more connected bridal journey, whether you are discovering dresses or building a boutique presence online.
+            </p>
           </div>
         </div>
 
-        <div className="grid-lines border-t border-black/8 px-6 py-8 lg:border-l lg:border-t-0 lg:px-12">
-          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[620px]">
+        <div className="grid-lines border-t border-black/8 px-6 py-8 lg:border-l lg:border-t-0 lg:px-10 lg:py-10">
+          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[560px]">
             <div className="grid gap-6 md:grid-cols-2">
               <label className="block md:col-span-2">
                 <span className="pill-label text-black/45">Full Name</span>
@@ -231,6 +218,7 @@ function RegisterPageContent() {
             </div>
           </form>
         </div>
+      </div>
       </div>
     </div>
   );

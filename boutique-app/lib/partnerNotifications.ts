@@ -143,6 +143,7 @@ export async function sendLocalPhoneNotification(
         data: {
           bookingId: notification.action?.bookingId ?? null,
           type: notification.action?.type ?? null,
+          notificationKind: notification.kind ?? null,
           scheduledFor: notification.scheduledFor ?? null,
           status: notification.status ?? null,
         },

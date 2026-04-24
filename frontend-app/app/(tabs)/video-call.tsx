@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +17,7 @@ type LiveKitDeps = {
   VideoTrack: any;
   isTrackReference: any;
   useRoomContext: any;
+  useRemoteParticipants: any;
   Track: any;
   AudioSession: any;
 };
@@ -32,25 +33,35 @@ function loadLiveKitDeps(): LiveKitDeps | null {
       !livekitMod ||
       typeof livekitMod.LiveKitRoom !== 'function' ||
       typeof livekitMod.useRoomContext !== 'function' ||
+      typeof livekitMod.useRemoteParticipants !== 'function' ||
       !Track
     ) {
       return null;
     }
-    const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext } = livekitMod;
+    const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, useRemoteParticipants } = livekitMod;
     const AudioSession = livekitMod?.AudioSession;
-    return { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, Track, AudioSession };
+    return { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, useRemoteParticipants, Track, AudioSession };
   } catch {
     return null;
   }
 }
 
-const BuyerRoomView = React.memo(function BuyerRoomView(props: { deps: LiveKitDeps; bookingId: number }) {
-  const { deps, bookingId } = props;
+const BuyerRoomView = React.memo(function BuyerRoomView(props: {
+  deps: LiveKitDeps;
+  bookingId: number;
+  frameHeight: number;
+}) {
+  const { deps, bookingId, frameHeight } = props;
   const room = deps.useRoomContext();
+  const remoteParticipants = deps.useRemoteParticipants();
   const tracks = deps.useTracks([deps.Track.Source.Camera]);
   const videoTracks = tracks.filter((t: any) => deps.isTrackReference(t));
   const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
   const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+  const emptyMainMessage =
+    remoteParticipants.length > 0
+      ? 'Advisor joined without video. They may need to enable their camera.'
+      : 'Waiting for advisor…';
 
   const [activeDressLabel, setActiveDressLabel] = React.useState<string>('Advisor can switch dresses');
 
@@ -75,19 +86,19 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: { deps: LiveKitDe
   }, [room, bookingId]);
 
   return (
-    <View style={{ width: '100%', height: '100%' }}>
+    <View style={{ width: '100%', height: frameHeight }}>
       {remote ? (
-        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: '100%' }} />
+        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} />
       ) : (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-white/50 text-[11px]">Waiting for advisor…</Text>
+        <View className="flex-1 items-center justify-center px-8">
+          <Text className="text-white/60 text-[12px] text-center leading-5">{emptyMainMessage}</Text>
         </View>
       )}
 
       {local ? (
         <View
           className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
-          style={{ width: 110, height: 150, borderRadius: 16 }}
+          style={{ width: 112, height: 152, borderRadius: 18 }}
         >
           <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
         </View>
@@ -104,6 +115,7 @@ export default function VideoCallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
+  const { height: screenHeight } = useWindowDimensions();
   const livekitSupported = useMemo(() => Platform.OS !== 'web' && isLiveKitNativeSupported(), []);
   const [callState, setCallState] = useState<CallState>('waiting');
   const [seconds, setSeconds] = useState(0);
@@ -128,6 +140,8 @@ export default function VideoCallScreen() {
     if (!livekitSupported) return null;
     return loadLiveKitDeps();
   }, [livekitSupported]);
+
+  const videoFrameHeight = useMemo(() => Math.max(360, Math.min(500, Math.round(screenHeight * 0.52))), [screenHeight]);
 
   const audioSessionRef = useRef<any>(null);
   useEffect(() => {
@@ -283,7 +297,7 @@ export default function VideoCallScreen() {
       >
         <View className="flex-1">
           <Text className="text-black text-sm font-medium">
-            {callState === 'waiting' ? 'Waiting For Advisor To Join' : 'Live Video Fitting'}
+            {callState === 'waiting' ? 'Boutique Portal Team Joining Soon' : 'Live Video Fitting'}
           </Text>
         </View>
         
@@ -308,9 +322,10 @@ export default function VideoCallScreen() {
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
         {/* Video Area */}
         <View className="px-6 mb-8 mt-4">
-          <View 
-            className={`w-full aspect-[3/4] rounded-3xl overflow-hidden relative ${cameraOn ? 'bg-transparent' : 'bg-black'}`}
+          <View
+            className={`w-full rounded-[28px] overflow-hidden relative border border-black/5 ${cameraOn ? 'bg-transparent' : 'bg-black'}`}
             style={{ 
+              height: videoFrameHeight,
               elevation: 5, 
               shadowColor: '#000', 
               shadowOffset: { width: 0, height: 4 }, 
@@ -368,7 +383,7 @@ export default function VideoCallScreen() {
                       setLkConnected(true);
                     }}
                   >
-                    <BuyerRoomView deps={deps} bookingId={bookingId} />
+                    <BuyerRoomView deps={deps} bookingId={bookingId} frameHeight={videoFrameHeight} />
                   </deps.LiveKitRoom>
                 );
               })()
@@ -418,11 +433,11 @@ export default function VideoCallScreen() {
         {/* Info Text */}
         <View className="px-8 items-center mb-10">
           <Text className="text-black text-lg font-medium text-center mb-2">
-            {callState === 'waiting' ? 'Waiting For Advisor To Join' : 'Advisory Support Live'}
+            {callState === 'waiting' ? 'Please Wait' : 'Advisory Support Live'}
           </Text>
           <Text className="text-black/50 text-[13px] text-center px-6 leading-5">
             {callState === 'waiting' 
-              ? 'Your session will begin automatically as soon as boutique advisor joins.'
+              ? 'The team from Boutique Portal will join soon. Please wait while we notify your boutique owner that you are ready for the call.'
               : 'Advisor can control Try-On and switch dresses for you.'}
           </Text>
           {bookingDresses.length > 0 ? (

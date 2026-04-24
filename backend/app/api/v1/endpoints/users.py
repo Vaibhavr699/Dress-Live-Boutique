@@ -117,6 +117,25 @@ async def create_user(
                     detail="Partner registrations require boutique_info with a name.",
                 )
 
+        # Partner signup from boutique-app sends phone/address inside boutique_info only.
+        # UserCreate reads top-level phone/address, so copy them before validation.
+        boutique_info_raw = body.get("boutique_info")
+        if isinstance(boutique_info_raw, dict):
+
+            def _strip_str(value: Any) -> str:
+                if value is None:
+                    return ""
+                return str(value).strip()
+
+            if not _strip_str(body.get("phone")) and _strip_str(boutique_info_raw.get("phone")):
+                body["phone"] = _strip_str(boutique_info_raw.get("phone"))
+            if not _strip_str(body.get("address")) and _strip_str(boutique_info_raw.get("address")):
+                body["address"] = _strip_str(boutique_info_raw.get("address"))
+            if not _strip_str(boutique_info_raw.get("location")) and _strip_str(
+                boutique_info_raw.get("address")
+            ):
+                boutique_info_raw["location"] = _strip_str(boutique_info_raw.get("address"))
+
         print(f"DEBUG: Parsed JSON: {body}")
         user_in = UserCreate(**body)
     except Exception as e:
@@ -278,6 +297,17 @@ async def update_user_me(
     body.pop("is_active", None)
     body.pop("is_superuser", None)
     body.pop("password", None)
+    next_email = body.get("email")
+    if isinstance(next_email, str):
+        normalized_email = next_email.strip().lower()
+        body["email"] = normalized_email
+        if normalized_email and normalized_email != (current_user.email or "").strip().lower():
+            existing = crud_user.get_by_email(db, email=normalized_email)
+            if existing and existing.id != current_user.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The user with this email already exists in the system.",
+                )
     user_in = UserUpdate(**body)
     user = crud_user.update(db, db_obj=current_user, obj_in=user_in)
     return user

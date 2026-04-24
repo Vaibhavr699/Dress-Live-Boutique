@@ -13,6 +13,8 @@ type Dress = {
   name: string;
   price: number;
   image_url?: string | null;
+  ai_model_url?: string | null;
+  is_ai_enabled?: boolean | null;
 };
 
 export default function CatalogScreen() {
@@ -139,12 +141,37 @@ export default function CatalogScreen() {
                   />
 
                   <View className="pt-3">
-                    <Text className="text-[13px] text-black mb-1" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
-                      {dress.name}
-                    </Text>
+                    <View className="flex-row items-center justify-between mb-1">
+                      <Text className="text-[13px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                        {dress.name}
+                      </Text>
+                      {dress.is_ai_enabled ? (
+                        <View
+                          className="px-2.5 py-1 border"
+                          style={{
+                            borderColor: dress.ai_model_url ? '#D6E7D8' : '#F3E1BE',
+                            backgroundColor: dress.ai_model_url ? '#ECF8F1' : '#FFF6E8',
+                          }}
+                        >
+                          <Text
+                            className="text-[8px] uppercase tracking-[1px]"
+                            style={{ color: dress.ai_model_url ? '#2F8F5B' : '#B76A00' }}
+                          >
+                            {dress.ai_model_url ? 'AI Ready' : 'AI Fallback'}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
                     <Text className="text-[11px] text-black/45">
                       Dress Price: ${typeof dress.price === 'number' ? dress.price.toFixed(0) : dress.price}
                     </Text>
+                    {dress.is_ai_enabled ? (
+                      <Text className="text-[10px] text-black/35 mt-1 leading-4">
+                        {dress.ai_model_url
+                          ? 'Separate garment asset uploaded for stronger try-on previews.'
+                          : 'Using the catalog image as the current AI try-on asset.'}
+                      </Text>
+                    ) : null}
                   </View>
 
                   <View className="flex-row mt-4">

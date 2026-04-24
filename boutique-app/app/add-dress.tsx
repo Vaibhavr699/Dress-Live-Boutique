@@ -39,6 +39,7 @@ type AddDressDraft = {
   internalNotes: string;
   frontImage: string | null;
   backImage: string | null;
+  aiGarmentImage: string | null;
   videoAsset: string | null;
 };
 
@@ -215,6 +216,7 @@ export default function AddDressScreen() {
 
   const [frontImage, setFrontImage] = useState<string | null>(null);
   const [backImage, setBackImage] = useState<string | null>(null);
+  const [aiGarmentImage, setAiGarmentImage] = useState<string | null>(null);
   const [videoAsset, setVideoAsset] = useState<string | null>(null);
 
   const draftKey = useMemo(() => {
@@ -239,6 +241,7 @@ export default function AddDressScreen() {
       internalNotes,
       frontImage,
       backImage,
+      aiGarmentImage,
       videoAsset,
     }),
     [
@@ -256,6 +259,7 @@ export default function AddDressScreen() {
       internalNotes,
       frontImage,
       backImage,
+      aiGarmentImage,
       videoAsset,
     ]
   );
@@ -286,6 +290,7 @@ export default function AddDressScreen() {
         if (typeof parsed.internalNotes === 'string') setInternalNotes(parsed.internalNotes);
         if (typeof parsed.frontImage === 'string' || parsed.frontImage === null) setFrontImage(parsed.frontImage ?? null);
         if (typeof parsed.backImage === 'string' || parsed.backImage === null) setBackImage(parsed.backImage ?? null);
+        if (typeof parsed.aiGarmentImage === 'string' || parsed.aiGarmentImage === null) setAiGarmentImage(parsed.aiGarmentImage ?? null);
         if (typeof parsed.videoAsset === 'string' || parsed.videoAsset === null) setVideoAsset(parsed.videoAsset ?? null);
       } catch {
         // ignore draft restore errors
@@ -338,20 +343,25 @@ export default function AddDressScreen() {
     }
   };
 
-  const ensureRemoteImageUrl = async (uri: string | null) => {
+  const ensureRemoteImageUrl = async (
+    uri: string | null,
+    endpoint: '/dresses/upload-image' | '/dresses/upload-ai-image' = '/dresses/upload-image'
+  ) => {
     if (!uri) return null;
     const trimmed = uri.trim();
     if (!trimmed) return null;
     if (/^https?:\/\//.test(trimmed)) return trimmed;
 
     const form = new FormData();
-    form.append('file', {
-      // @ts-expect-error React Native FormData file
-      uri: trimmed,
-      name: `dress-${Date.now()}.jpg`,
-      type: 'image/jpeg',
-    });
-    const res = (await api.postMultipart('/dresses/upload-image', form)) as { url?: string };
+    form.append(
+      'file',
+      {
+        uri: trimmed,
+        name: `dress-${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      } as any
+    );
+    const res = (await api.postMultipart(endpoint, form)) as { url?: string };
     return typeof res?.url === 'string' ? res.url : null;
   };
 
@@ -414,11 +424,20 @@ export default function AddDressScreen() {
 
     setLoading(true);
     try {
+      const aiRequested =
+        selectedServices.includes('AI TRY ON') ||
+        selectedServices.includes('LIVE TRY-ON');
+
       const uploadedUrl = await ensureRemoteImageUrl(frontImage || backImage);
       if (!uploadedUrl) {
         Alert.alert('Image upload', 'Could not upload dress image. Please try again.');
         return;
       }
+
+      const uploadedAiGarmentUrl = aiRequested
+        ? await ensureRemoteImageUrl(aiGarmentImage, '/dresses/upload-ai-image')
+        : null;
+
       await api.post('/dresses/', {
         name: name.trim(),
         description: payloadDescription,
@@ -431,10 +450,9 @@ export default function AddDressScreen() {
           .join(', '),
         colors: selectedColor,
         image_url: uploadedUrl,
+        ai_model_url: aiRequested ? uploadedAiGarmentUrl || uploadedUrl : null,
         boutique_id: user.boutique_id,
-        is_ai_enabled:
-          selectedServices.includes('AI TRY ON') ||
-          selectedServices.includes('LIVE TRY-ON'),
+        is_ai_enabled: aiRequested,
       });
 
       await clearDraft();
@@ -725,6 +743,15 @@ export default function AddDressScreen() {
               onPress={() => pickAsset(setBackImage)}
             />
             <UploadRow
+              label="Upload AI Garment Image"
+              hasFile={!!aiGarmentImage}
+              previewUri={aiGarmentImage}
+              onPress={() => pickAsset(setAiGarmentImage)}
+            />
+            <Text className="text-[10px] text-black/45 leading-5 mb-4">
+              Optional but recommended for better AI results. Use a clean front-facing dress photo with minimal background and the full dress visible.
+            </Text>
+            <UploadRow
               label="Upload AI Video Try For AI 3D Photo *"
               hasFile={!!videoAsset}
               previewUri={videoAsset}
@@ -733,7 +760,7 @@ export default function AddDressScreen() {
 
             <SectionHeader
               title="3D / AI Overlay Ready"
-              subtitle="Upload a main photo to enable AI Try-On 3D asset & options for MVP."
+              subtitle="If no separate AI garment image is uploaded, the main dress photo will be used as the fallback try-on asset."
             />
 
             <View className="border-t border-[#EFEFEF] pt-5 mt-2 mb-6">

@@ -1,9 +1,10 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions, Switch, ActivityIndicator, Platform, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
+import { SvgXml } from 'react-native-svg';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
 import { useNotificationStore } from '@/store/useNotificationStore';
@@ -11,62 +12,180 @@ import { FigmaConfirmModal } from '../../components/FigmaConfirmModal';
 
 const { width } = Dimensions.get('window');
 
-const RECENT_ORDERS = [
-    { id: '1', name: 'Emily Johnson', type: 'Bridal Party Dresses (3 Dreress)', date: 'Dec 12', price: '$1,250', status: 'New', statusColor: '#F2994A' },
-    { id: '2', name: 'Sarah Khan', type: 'Custom Wedding Gown - Size 4', date: 'Dec 10', price: '$3,400', status: 'In Production', statusColor: '#2F80ED' },
-    { id: '3', name: 'Maria Garcia', type: 'Bridal Party Dresses (2 Dreress)', date: 'Dec 08', price: '$1,050', status: 'Ready for Fitting', statusColor: '#27AE60' },
-    { id: '4', name: 'James Wilson', type: 'Groom’s Velvet Suite - Size 42', date: 'Dec 05', price: '$900', status: 'Alterations Pending', statusColor: '#EB5757' }
-];
+const DRESS_SVG = `<svg width="32" height="34" viewBox="0 0 32 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M29.4255 20.7868C31.2232 21.9683 31.6836 24.3851 30.4922 26.1772C27.2707 31.0222 21.5446 34.1119 15.5691 34.0893C9.59357 34.1119 3.88157 30.7629 0.660067 25.9179C-0.53135 24.1258 -0.0709332 21.7104 1.72682 20.5289L9.9024 15.5848H21.2357L29.4255 20.7868ZM9.9024 12.75H21.2357L22.2812 9.61633C22.5277 8.5085 22.6524 7.37092 22.6524 6.23617V1.41667C22.6524 0.634667 22.0177 0 21.2357 0C20.4537 0 19.8191 0.634667 19.8191 1.41667V2.975C17.9349 3.32492 16.4856 4.29958 15.5691 5.11558C14.6525 4.29958 13.2032 3.32492 11.3191 2.975V1.41667C11.3191 0.634667 10.6844 0 9.9024 0C9.1204 0 8.48573 0.634667 8.48573 1.41667V6.23617C8.48573 7.37092 8.6104 8.5085 8.8569 9.61633L9.9024 12.75Z" fill="black"/>
+</svg>`;
 
-const CUSTOM_REQUESTS = [
-    { 
-        id: '1', 
-        name: 'Sophia Martinez', 
-        type: 'Custom Bridesmaid Dress',
-        tags: ['Color: Dusty Pink', 'Fabric: Satin', 'Classic Off Shoulder']
-    },
-    { 
-        id: '2', 
-        name: 'Isabella Rodriguez', 
-        type: 'Custom Bridal Gown',
-        tags: ['Color: Ivory', 'Fabric: Silk', 'Modern V-Neck']
-    }
-];
+const EMPTY_CATALOG_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 16,
+  lineHeight: 16,
+  letterSpacing: 0,
+  textAlign: 'center' as const,
+  color: '#000000',
+};
 
-const UPCOMING_FITTINGS = [
-    { id: '1', name: 'Emma Wilson', type: 'Dress Fitting', time: '2:40 PM' },
-    { id: '2', name: 'Liam Smith', type: 'Consultation', time: '4:00 PM' },
-    { id: '3', name: 'Olivia Johnson', type: 'Final Fitting', time: '5:15 PM' }
-];
+const EMPTY_CATALOG_SUBTITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 24,
+  letterSpacing: 0,
+  textAlign: 'center' as const,
+  color: '#000000',
+};
+
+type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed';
+
+type Booking = {
+  id: number;
+  appointment_type: 'video' | 'in_store';
+  status: BookingStatus;
+  scheduled_for: string;
+  language: string;
+  location?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  dress_ids: number[];
+  customer?: {
+    id: number;
+    full_name?: string | null;
+    email: string;
+    profile_image_url?: string | null;
+  } | null;
+  dresses?: Array<{
+    id: number;
+    name: string;
+    price: number;
+    colors?: string | null;
+    sizes?: string | null;
+    image_url?: string | null;
+  }> | null;
+  boutique?: {
+    id: number;
+    name?: string | null;
+    location?: string | null;
+  } | null;
+};
+
+function parseScheduledFor(value?: string | null) {
+  if (!value || !value.trim()) return null;
+  const match = value.match(/^[A-Za-z]+,\s*(\d{1,2})\s+([A-Za-z]{3})\s*-\s*(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const monthShort = match[2].toLowerCase();
+  const hour12 = Number(match[3]);
+  const minute = Number(match[4]);
+  const suffix = match[5].toUpperCase();
+  const monthIndex = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(monthShort);
+  if (monthIndex < 0) return null;
+  let hour24 = hour12 % 12;
+  if (suffix === 'PM') hour24 += 12;
+  const now = new Date();
+  let year = now.getFullYear();
+  let date = new Date(year, monthIndex, day, hour24, minute, 0, 0);
+  if (date.getTime() < now.getTime() - 1000 * 60 * 60 * 24 * 30) {
+    year += 1;
+    date = new Date(year, monthIndex, day, hour24, minute, 0, 0);
+  }
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function customerName(booking: Booking) {
+  return booking.customer?.full_name || booking.customer?.email || 'Customer';
+}
+
+function bookingDressSummary(booking: Booking) {
+  return booking.dresses?.length
+    ? booking.dresses.map((dress) => dress.name).join(', ')
+    : `${booking.dress_ids.length} selected dress(es)`;
+}
+
+function bookingTotalLabel(booking: Booking) {
+  const total = booking.dresses?.reduce((sum, dress) => sum + (Number(dress.price) || 0), 0) ?? 0;
+  if (total > 0) return `$${total.toLocaleString()}`;
+  return `${booking.dress_ids.length} item${booking.dress_ids.length === 1 ? '' : 's'}`;
+}
+
+function getTimeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 17) return 'Good afternoon';
+  if (hour >= 17 && hour < 22) return 'Good evening';
+  return 'Good evening';
+}
+
+function bookingStatusLabel(status: BookingStatus) {
+  switch (status) {
+    case 'requested':
+      return 'New';
+    case 'accepted':
+      return 'Accepted';
+    case 'rescheduled':
+      return 'Rescheduled';
+    case 'completed':
+      return 'Completed';
+    case 'rejected':
+      return 'Rejected';
+    default:
+      return status;
+  }
+}
 
 export default function BoutiqueDashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, setUser } = useAuthStore();
   const boutiqueId = user?.boutique_id ?? null;
   const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
   
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<any[]>([]);
-  const [isOnline, setIsOnline] = useState(true);
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [isStoreVisible, setIsStoreVisible] = useState(true);
   const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
-  const [boutique, setBoutique] = useState<{ name?: string | null; location?: string | null } | null>(null);
+  const [boutique, setBoutique] = useState<{
+    name?: string | null;
+    location?: string | null;
+    logo_url?: string | null;
+  } | null>(null);
+  const [timeGreeting, setTimeGreeting] = useState(getTimeGreeting);
+
+  useEffect(() => {
+    setTimeGreeting(getTimeGreeting());
+    const id = setInterval(() => setTimeGreeting(getTimeGreeting()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const avatarUri = useMemo(() => {
+    const fromUrl = user?.profile_image_url?.trim();
+    if (fromUrl) return fromUrl;
+    const fromLocal = user?.profile_image_uri?.trim();
+    if (fromLocal) return fromLocal;
+    const fromBoutique = boutique?.logo_url?.trim();
+    return fromBoutique || null;
+  }, [user?.profile_image_url, user?.profile_image_uri, boutique?.logo_url]);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const fetchDresses = useCallback(async () => {
+  const fetchDashboardData = useCallback(async () => {
     if (!boutiqueId) {
       setDresses([]);
+      setBookings([]);
       setLoading(false);
       return;
     }
 
     try {
-      const data = await api.get(`/dresses/?boutique_id=${boutiqueId}`);
-      setDresses(data);
+      const [dressData, bookingData] = await Promise.all([
+        api.get(`/dresses/?boutique_id=${boutiqueId}`),
+        api.get('/bookings/partner'),
+      ]);
+      setDresses(Array.isArray(dressData) ? dressData : []);
+      setBookings(Array.isArray(bookingData) ? (bookingData as Booking[]) : []);
     } catch (error) {
-      console.error('Failed to fetch dresses:', error);
+      console.error('Failed to fetch boutique dashboard data:', error);
     } finally {
       setLoading(false);
     }
@@ -87,6 +206,17 @@ export default function BoutiqueDashboard() {
       console.error('Failed to fetch boutique visibility:', error);
     }
   }, [boutiqueId]);
+
+  const refreshCurrentUser = useCallback(async () => {
+    const token = useAuthStore.getState().token;
+    if (!token) return;
+    try {
+      const fresh = await api.get('/users/me');
+      setUser(fresh as any);
+    } catch (error) {
+      console.error('Failed to refresh current user:', error);
+    }
+  }, [setUser]);
 
   const handleStoreVisibilityChange = useCallback(
     async (value: boolean) => {
@@ -115,9 +245,10 @@ export default function BoutiqueDashboard() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchDresses();
+      void refreshCurrentUser();
+      fetchDashboardData();
       fetchBoutiqueVisibility();
-    }, [fetchDresses, fetchBoutiqueVisibility])
+    }, [refreshCurrentUser, fetchDashboardData, fetchBoutiqueVisibility])
   );
 
   const selectedDressForDelete = dresses[0] ?? null;
@@ -129,13 +260,43 @@ export default function BoutiqueDashboard() {
       await api.delete(`/dresses/${selectedDressForDelete.id}`);
       setDeleteModalOpen(false);
       setLoading(true);
-      await fetchDresses();
+      await fetchDashboardData();
     } catch (error: any) {
       Alert.alert('Delete Failed', error?.message || 'Could not delete this dress listing.');
     } finally {
       setIsDeleting(false);
     }
-  }, [fetchDresses, selectedDressForDelete?.id]);
+  }, [fetchDashboardData, selectedDressForDelete?.id]);
+
+  const sortedBookings = useMemo(() => {
+    return [...bookings].sort((a, b) => {
+      const aDate =
+        parseScheduledFor(a.scheduled_for)?.getTime() ||
+        Date.parse(a.updated_at || a.created_at || '') ||
+        0;
+      const bDate =
+        parseScheduledFor(b.scheduled_for)?.getTime() ||
+        Date.parse(b.updated_at || b.created_at || '') ||
+        0;
+      return bDate - aDate;
+    });
+  }, [bookings]);
+
+  const recentOrders = useMemo(() => sortedBookings.slice(0, 4), [sortedBookings]);
+  const customRequests = useMemo(
+    () => sortedBookings.filter((booking) => booking.status === 'requested').slice(0, 3),
+    [sortedBookings]
+  );
+  const upcomingFittings = useMemo(() => {
+    return sortedBookings
+      .filter((booking) => ['accepted', 'rescheduled'].includes(booking.status))
+      .sort((a, b) => {
+        const aTime = parseScheduledFor(a.scheduled_for)?.getTime() || Number.MAX_SAFE_INTEGER;
+        const bTime = parseScheduledFor(b.scheduled_for)?.getTime() || Number.MAX_SAFE_INTEGER;
+        return aTime - bTime;
+      })
+      .slice(0, 4);
+  }, [sortedBookings]);
 
   return (
     <View className="flex-1 bg-white">
@@ -146,7 +307,16 @@ export default function BoutiqueDashboard() {
         {/* Header */}
         <View style={{ paddingTop: insets.top + 14 }} className="px-6 pb-4 border-b border-[#F0F0F0]">
           <View className="items-center justify-center">
-            <Text className="text-[14px] text-black text-center" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+            <Text
+              className="text-black text-center"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '500',
+                fontSize: 18,
+                lineHeight: 18,
+                letterSpacing: 0,
+              }}
+            >
               Shop Dashboard
             </Text>
             <TouchableOpacity
@@ -172,18 +342,22 @@ export default function BoutiqueDashboard() {
             <View className="p-4 flex-row items-center justify-between">
               <View className="flex-row items-center">
                 <View className="w-10 h-10 rounded-sm bg-gray-100 overflow-hidden mr-3">
-                  <Image source={require('../../assets/images/avatar.png')} style={{ width: '100%', height: '100%' }} />
+                  {avatarUri ? (
+                    <Image source={{ uri: avatarUri }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                  ) : (
+                    <Image source={require('../../assets/images/avatar.png')} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                  )}
                 </View>
                 <View>
-                  <Text className="text-[11px] text-black/50">Good morning</Text>
+                  <Text className="text-[11px] text-black/50">{timeGreeting}</Text>
                   <Text className="text-[13px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
-                    {user?.full_name || 'Elife Terzi'}
+                    {user?.full_name?.trim() || user?.email || 'Partner'}
                   </Text>
                 </View>
               </View>
               <View className="flex-row items-center">
-                <View className={`w-2 h-2 rounded-full mr-2 ${isOnline ? 'bg-green-500' : 'bg-black'}`} />
-                <Text className="text-[11px] text-black">{isOnline ? 'Online' : 'Offline'}</Text>
+                <View className={`w-2 h-2 rounded-full mr-2 ${isStoreVisible ? 'bg-green-500' : 'bg-black/40'}`} />
+                <Text className="text-[11px] text-black">{isStoreVisible ? 'Online' : 'Offline'}</Text>
               </View>
             </View>
 
@@ -212,8 +386,15 @@ export default function BoutiqueDashboard() {
                     value={isStoreVisible}
                     onValueChange={handleStoreVisibilityChange}
                     disabled={isUpdatingVisibility}
-                    trackColor={{ false: '#D9D9D9', true: '#D9D9D9' }}
-                    thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : '#FFFFFF'}
+                    trackColor={{ false: '#D1D5DB', true: '#86EFAC' }}
+                    thumbColor={
+                      Platform.OS === 'android'
+                        ? isStoreVisible
+                          ? '#FFFFFF'
+                          : '#F3F4F6'
+                        : '#FFFFFF'
+                    }
+                    ios_backgroundColor="#D1D5DB"
                   />
                 </View>
               </View>
@@ -235,12 +416,12 @@ export default function BoutiqueDashboard() {
         ) : dresses.length === 0 ? (
           <View className="flex-1 items-center justify-center px-10" style={{ paddingTop: 28, paddingBottom: 80 }}>
             <View className="w-16 h-16 items-center justify-center mb-5">
-              <MaterialCommunityIcons name="hanger" size={48} color="black" />
+              <SvgXml xml={DRESS_SVG} width={48} height={51} />
             </View>
-            <Text className="text-[16px] text-black mb-2 text-center" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+            <Text className="mb-2" style={EMPTY_CATALOG_TITLE_STYLE}>
               Add Your First Catalog Dress
             </Text>
-            <Text className="text-[12px] text-black/50 text-center mb-8 leading-5">
+            <Text className="mb-8" style={EMPTY_CATALOG_SUBTITLE_STYLE}>
               Customers can see your catalog dresses and shop address.
             </Text>
             <TouchableOpacity 
@@ -300,31 +481,39 @@ export default function BoutiqueDashboard() {
             <View className="px-6 mb-10">
                 <View className="flex-row justify-between items-center mb-6">
                     <Text className="text-sm font-bold">Recent Orders</Text>
-                    <TouchableOpacity className="border border-black px-3 py-1 rounded-sm">
+                    <TouchableOpacity className="border border-black px-3 py-1 rounded-sm" onPress={() => router.push('/(tabs)/bookings')}>
                         <Text className="text-[10px] font-bold uppercase">View All</Text>
                     </TouchableOpacity>
                 </View>
                 <View className="gap-6">
-                    {RECENT_ORDERS.map((order) => (
+                    {recentOrders.length === 0 ? (
+                        <View className="border border-[#EAEAEA] px-4 py-5">
+                          <Text className="text-[11px] text-black/45">No recent booking activity yet.</Text>
+                        </View>
+                    ) : recentOrders.map((order) => (
                         <View key={order.id} className="flex-row items-center justify-between border border-[#EAEAEA] px-4 py-3">
                             <View className="flex-row items-center flex-1">
                                 <View className="w-12 h-12 rounded-full overflow-hidden mr-4">
                                     <Image 
-                                        source={require('../../assets/images/Dashboard image 2.png')}
+                                        source={
+                                          order.customer?.profile_image_url
+                                            ? { uri: order.customer.profile_image_url }
+                                            : require('../../assets/images/Dashboard image 2.png')
+                                        }
                                         style={{ width: '100%', height: '100%' }}
                                     />
                                 </View>
                                 <View className="flex-1">
                                     <View className="flex-row items-center mb-1">
-                                        <Text className="text-xs font-bold mr-2">{order.name}</Text>
+                                        <Text className="text-xs font-bold mr-2">{customerName(order)}</Text>
                                     </View>
-                                    <Text className="text-[10px] text-black/40 mb-1">{order.type} - {order.date}</Text>
-                                    <Text className="text-xs font-bold">{order.price}</Text>
+                                    <Text className="text-[10px] text-black/40 mb-1">{bookingDressSummary(order)} - {order.scheduled_for}</Text>
+                                    <Text className="text-xs font-bold">{bookingTotalLabel(order)}</Text>
                                 </View>
                             </View>
                             <View className="items-end">
                                 <View className="border border-black px-2 py-1">
-                                  <Text className="text-[9px] font-bold">{order.status}</Text>
+                                  <Text className="text-[9px] font-bold">{bookingStatusLabel(order.status)}</Text>
                                 </View>
                             </View>
                         </View>
@@ -335,13 +524,23 @@ export default function BoutiqueDashboard() {
             <View className="px-6 mb-10">
                 <Text className="text-sm font-bold mb-6">New Custom Requests</Text>
                 <View className="gap-4">
-                    {CUSTOM_REQUESTS.map((request) => (
+                    {customRequests.length === 0 ? (
+                      <View className="border border-[#EAEAEA] rounded-2xl p-4 bg-white">
+                        <Text className="text-[11px] text-black/45">No new custom requests right now.</Text>
+                      </View>
+                    ) : customRequests.map((request) => (
                         <View key={request.id} className="border border-[#EAEAEA] rounded-2xl p-4 bg-white">
-                            <Text className="text-xs font-bold mb-1">{request.name}</Text>
-                            <Text className="text-[10px] text-black/35 mb-3">{request.type}</Text>
+                            <Text className="text-xs font-bold mb-1">{customerName(request)}</Text>
+                            <Text className="text-[10px] text-black/35 mb-3">
+                              {request.appointment_type === 'video' ? 'Video consultation request' : 'In-store consultation request'}
+                            </Text>
 
                             <View className="flex-row flex-wrap gap-2 mb-4">
-                                {request.tags.map((tag) => (
+                                {[
+                                  request.scheduled_for ? `Time: ${request.scheduled_for}` : null,
+                                  request.language ? `Language: ${request.language}` : null,
+                                  request.dresses?.[0]?.name ? `Dress: ${request.dresses[0].name}` : `${request.dress_ids.length} dress(es)`,
+                                ].filter(Boolean).map((tag) => (
                                     <View key={tag} className="border border-[#D9D9D9] rounded-full px-2.5 py-1">
                                         <Text className="text-[8px] text-black/60">{tag}</Text>
                                     </View>
@@ -351,6 +550,7 @@ export default function BoutiqueDashboard() {
                             <View className="flex-row gap-3">
                                 <TouchableOpacity
                                     activeOpacity={0.8}
+                                    onPress={() => router.push('/(tabs)/bookings')}
                                     className="flex-1 bg-black rounded-full py-3 items-center justify-center"
                                 >
                                     <Text className="text-[9px] font-bold uppercase tracking-[1.2px] text-white">
@@ -359,6 +559,7 @@ export default function BoutiqueDashboard() {
                                 </TouchableOpacity>
                                 <TouchableOpacity
                                     activeOpacity={0.8}
+                                    onPress={() => router.push('/notifications')}
                                     className="flex-1 border border-[#D9D9D9] rounded-full py-3 items-center justify-center"
                                 >
                                     <Text className="text-[9px] font-bold uppercase tracking-[1.2px] text-black/70">
@@ -374,25 +575,35 @@ export default function BoutiqueDashboard() {
             <View className="px-6 mb-12">
                 <View className="flex-row justify-between items-center mb-6">
                     <Text className="text-sm font-bold">Upcoming Fittings</Text>
-                    <TouchableOpacity className="border border-black px-3 py-1 rounded-sm">
+                    <TouchableOpacity className="border border-black px-3 py-1 rounded-sm" onPress={() => router.push('/(tabs)/bookings')}>
                         <Text className="text-[10px] font-bold uppercase">View Calendar</Text>
                     </TouchableOpacity>
                 </View>
 
                 <View className="gap-5">
-                    {UPCOMING_FITTINGS.map((fitting) => (
+                    {upcomingFittings.length === 0 ? (
+                      <View className="border border-[#EAEAEA] px-4 py-5">
+                        <Text className="text-[11px] text-black/45">No upcoming fittings scheduled yet.</Text>
+                      </View>
+                    ) : upcomingFittings.map((fitting) => (
                         <View key={fitting.id} className="flex-row items-center justify-between">
                             <View className="flex-row items-center flex-1">
-                                <View className="w-12 h-12 rounded-2xl bg-[#F7F7F7] mr-4" />
+                                <View className="w-12 h-12 rounded-2xl bg-[#F7F7F7] mr-4 overflow-hidden">
+                                  {fitting.customer?.profile_image_url ? (
+                                    <Image source={{ uri: fitting.customer.profile_image_url }} style={{ width: '100%', height: '100%' }} />
+                                  ) : null}
+                                </View>
                                 <View className="flex-1">
-                                    <Text className="text-xs font-bold mb-1">{fitting.name}</Text>
-                                    <Text className="text-[10px] text-black/40">{fitting.type}</Text>
+                                    <Text className="text-xs font-bold mb-1">{customerName(fitting)}</Text>
+                                    <Text className="text-[10px] text-black/40">
+                                      {fitting.appointment_type === 'video' ? 'Video fitting' : 'Store fitting'}
+                                    </Text>
                                 </View>
                             </View>
 
                             <View className="flex-row items-center">
                                 <Ionicons name="time-outline" size={12} color="#EB5757" />
-                                <Text className="text-[9px] font-bold text-[#EB5757] ml-1.5">{fitting.time}</Text>
+                                <Text className="text-[9px] font-bold text-[#EB5757] ml-1.5">{fitting.scheduled_for}</Text>
                             </View>
                         </View>
                     ))}

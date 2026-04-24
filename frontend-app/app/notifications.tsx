@@ -14,6 +14,40 @@ function formatTime(iso: string) {
   }
 }
 
+function parseTimestamp(value: string) {
+  const next = Date.parse(value);
+  return Number.isFinite(next) ? next : 0;
+}
+
+function dedupeAndSort<T extends { id: string; externalKey?: string | null; createdAt: string; title: string; body?: string | null }>(
+  items: T[]
+) {
+  const sorted = [...items].sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
+  const seen = new Set<string>();
+  return sorted.filter((item) => {
+    const key = (item.externalKey || '').trim() || `${item.title}|${item.body || ''}|${item.createdAt}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function toneForNotification(kind?: string | null) {
+  switch (kind) {
+    case 'booking_requested':
+      return { badgeBg: '#EEF5FF', badgeText: '#2E5BFF', pillBg: '#EEF5FF', pillText: '#2E5BFF', border: '#D9E4FF' };
+    case 'booking_updated':
+      return { badgeBg: '#FFF6E8', badgeText: '#B76A00', pillBg: '#FFF6E8', pillText: '#B76A00', border: '#F3E1BE' };
+    case 'booking_cancelled':
+      return { badgeBg: '#FDECEC', badgeText: '#C9491A', pillBg: '#FDECEC', pillText: '#C9491A', border: '#F5D0C4' };
+    case 'booking_upcoming':
+    case 'booking_reminder':
+      return { badgeBg: '#ECF8F1', badgeText: '#2F8F5B', pillBg: '#ECF8F1', pillText: '#2F8F5B', border: '#CFEAD9' };
+    default:
+      return { badgeBg: '#F4F4F4', badgeText: '#555555', pillBg: '#F4F4F4', pillText: '#555555', border: '#E9E9E9' };
+  }
+}
+
 export default function NotificationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -21,7 +55,8 @@ export default function NotificationsScreen() {
   const markRead = useNotificationStore((s) => s.markRead);
   const markAllRead = useNotificationStore((s) => s.markAllRead);
 
-  const unreadCount = useMemo(() => items.filter((n) => !n.readAt).length, [items]);
+  const visibleItems = useMemo(() => dedupeAndSort(items), [items]);
+  const unreadCount = useMemo(() => visibleItems.filter((n) => !n.readAt).length, [visibleItems]);
 
   return (
     <View className="flex-1 bg-white">
@@ -34,15 +69,15 @@ export default function NotificationsScreen() {
           onPress={markAllRead}
           className="py-2 pl-4"
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          style={{ opacity: items.length === 0 ? 0.35 : 1 }}
-          disabled={items.length === 0}
+          style={{ opacity: visibleItems.length === 0 ? 0.35 : 1 }}
+          disabled={visibleItems.length === 0}
         >
           <Text className="text-black text-[10px] font-bold uppercase tracking-[1px]">Mark all</Text>
         </TouchableOpacity>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 90 }}>
-        {items.length === 0 ? (
+        {visibleItems.length === 0 ? (
           <View className="px-8 pt-20 items-center">
             <Text className="text-black text-[12px] font-bold uppercase tracking-[2px] mb-3 text-center">No notifications</Text>
             <Text className="text-black/40 text-[11px] text-center leading-5 px-6">
@@ -53,11 +88,12 @@ export default function NotificationsScreen() {
           <View className="px-6 pt-6">
             <Text className="text-black/35 text-[10px] font-bold uppercase tracking-[1px] mb-4">
               {unreadCount > 0 ? `${unreadCount} unread • ` : ''}
-              {items.length} total
+              {visibleItems.length} total
             </Text>
 
-            {items.map((n) => {
+            {visibleItems.map((n) => {
               const unread = !n.readAt;
+              const tone = toneForNotification(n.kind);
               return (
                 <TouchableOpacity
                   key={n.id}
@@ -68,17 +104,20 @@ export default function NotificationsScreen() {
                       router.push('/(tabs)/booking');
                     }
                   }}
-                  className={`mb-3 border p-5 ${unread ? 'border-black' : 'border-[#F0F0F0]'}`}
+                  className="mb-3 border p-5"
+                  style={{ borderColor: unread ? tone.border : '#F0F0F0', backgroundColor: unread ? '#FFFEFC' : '#FFFFFF' }}
                 >
                   <View className="flex-row items-start justify-between">
                     <View className="flex-1 pr-4">
                       <View className="flex-row items-center mb-2">
-                        <Ionicons
-                          name={n.appointmentType === 'video' ? 'videocam-outline' : 'calendar-outline'}
-                          size={16}
-                          color="#1A1A1A"
-                        />
-                        <Text className="text-black/35 text-[10px] font-bold uppercase tracking-[1px] ml-2">
+                        <View className="w-8 h-8 rounded-full items-center justify-center" style={{ backgroundColor: tone.badgeBg }}>
+                          <Ionicons
+                            name={n.appointmentType === 'video' ? 'videocam-outline' : 'calendar-outline'}
+                            size={16}
+                            color={tone.badgeText}
+                          />
+                        </View>
+                        <Text className="text-[10px] font-bold uppercase tracking-[1px] ml-2" style={{ color: tone.badgeText }}>
                           {n.appointmentType === 'video'
                             ? 'Video call'
                             : n.appointmentType === 'in_store'
@@ -107,8 +146,8 @@ export default function NotificationsScreen() {
                         </Text>
                       ) : null}
                       {n.status ? (
-                        <View className="self-start rounded-full bg-black/5 px-3 py-2 mt-3">
-                          <Text className="text-[10px] font-bold uppercase tracking-[0.8px] text-black/60">
+                        <View className="self-start rounded-full px-3 py-2 mt-3" style={{ backgroundColor: tone.pillBg }}>
+                          <Text className="text-[10px] font-bold uppercase tracking-[0.8px]" style={{ color: tone.pillText }}>
                             Status: {n.status}
                           </Text>
                         </View>

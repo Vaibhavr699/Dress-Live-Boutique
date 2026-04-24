@@ -77,25 +77,60 @@ function buildNotification(item: Omit<NotificationItem, 'id' | 'createdAt' | 're
   };
 }
 
+function parseTimestamp(value: string | null | undefined) {
+  const next = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(next) ? next : 0;
+}
+
+function notificationKey(item: NotificationItem) {
+  const externalKey = (item.externalKey || '').trim();
+  if (externalKey) return `external:${externalKey}`;
+  return [
+    item.kind || '',
+    item.appointmentType || '',
+    item.title.trim(),
+    (item.body || '').trim(),
+    item.scheduledFor || '',
+    item.location || '',
+    item.boutiqueName || '',
+    item.status || '',
+    item.action?.type || '',
+    item.action?.bookingId ?? '',
+  ].join('|');
+}
+
+function normalizeItems(items: NotificationItem[]) {
+  const sorted = [...items].sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
+  const seen = new Set<string>();
+  const deduped: NotificationItem[] = [];
+  for (const item of sorted) {
+    const key = notificationKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped.slice(0, 50);
+}
+
 export const useNotificationStore = create<NotificationState>()(
   persist(
     (set, get) => ({
       items: [],
       add: (item) => {
         const next = buildNotification(item);
-        set({ items: [next, ...get().items].slice(0, 50) });
+        set({ items: normalizeItems([next, ...get().items]) });
       },
       upsert: (item) => {
         const next = buildNotification(item);
         const key = next.externalKey?.trim();
         if (!key) {
-          set({ items: [next, ...get().items].slice(0, 50) });
+          set({ items: normalizeItems([next, ...get().items]) });
           return;
         }
         const existing = get().items;
         const index = existing.findIndex((n) => (n.externalKey || '').trim() === key);
         if (index === -1) {
-          set({ items: [next, ...existing].slice(0, 50) });
+          set({ items: normalizeItems([next, ...existing]) });
           return;
         }
         const current = existing[index];
@@ -115,7 +150,7 @@ export const useNotificationStore = create<NotificationState>()(
         };
         const merged = [...existing];
         merged.splice(index, 1);
-        set({ items: [updated, ...merged].slice(0, 50) });
+        set({ items: normalizeItems([updated, ...merged]) });
       },
       markRead: (id) =>
         set({

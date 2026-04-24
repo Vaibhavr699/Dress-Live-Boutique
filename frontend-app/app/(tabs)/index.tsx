@@ -676,7 +676,7 @@ export default function DashboardScreen() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    className="p-1 items-center justify-center w-8 h-8 rounded-full border border-black/10"
+                    className="p-1 items-center justify-center w-8 h-8"
                     activeOpacity={0.85}
                     onPress={() =>
                       router.push({

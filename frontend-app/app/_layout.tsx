@@ -8,7 +8,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
@@ -22,6 +22,46 @@ import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
+
+function BootScreen() {
+  return (
+    <View style={{ flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <Text
+        style={{
+          color: '#111111',
+          fontSize: 18,
+          fontWeight: '700',
+          letterSpacing: 4,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Boutique Portal
+      </Text>
+      <View
+        style={{
+          width: 84,
+          height: 2,
+          backgroundColor: '#111111',
+          opacity: 0.14,
+          marginTop: 20,
+          marginBottom: 18,
+        }}
+      />
+      <Text
+        style={{
+          color: '#666666',
+          fontSize: 12,
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Loading experience
+      </Text>
+    </View>
+  );
+}
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -38,11 +78,14 @@ export default function RootLayout() {
     'PlayfairDisplay-Regular': PlayfairDisplay_400Regular,
   });
 
+  const fontsReady = loaded || !!error;
+  const appReady = fontsReady && isReady;
+
   useEffect(() => {
-    if (loaded || error) {
+    if (fontsReady) {
       SplashScreen.hideAsync();
     }
-  }, [loaded, error]);
+  }, [fontsReady]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -214,8 +257,8 @@ export default function RootLayout() {
     (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute
   );
 
-  if (!loaded && !error) {
-    return null;
+  if (!appReady) {
+    return <BootScreen />;
   }
 
   return (

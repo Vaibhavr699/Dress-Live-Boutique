@@ -8,6 +8,7 @@ class BoutiqueBase(BaseModel):
     location: Optional[str] = None
     logo_url: Optional[str] = None
     header_image_url: Optional[str] = None
+    interior_image_url: Optional[str] = None
     availability_schedule: Optional[str] = None
     is_visible_to_customers: Optional[bool] = True
 
