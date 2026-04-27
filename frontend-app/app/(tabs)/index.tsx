@@ -22,9 +22,10 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { api } from '@shared/api/api';
 import { useFocusEffect } from '@react-navigation/native';
-import { useNotificationStore } from '@/store/useNotificationStore';
 import { BlurView } from 'expo-blur';
 
+const MARKER_ICON = require('@/assets/svg/marker.svg');
+const PLUS_ICON = require('@/assets/svg/plus.svg');
 const CATEGORIES = ["All", "Abendkleider", "Hochzeitskleider", "Add-Ons"];
 const PRICE_FILTERS = [
   { id: 'any', label: 'Any', test: (_price: number) => true },
@@ -83,16 +84,40 @@ type BoutiqueCard = {
   matchingDressCount: number;
 };
 
+function formatBoutiqueCardLocation(location?: string | null): string {
+  const raw = (location || '').trim();
+  if (!raw) return 'Location unavailable';
+
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const country = parts[parts.length - 1];
+    const cityCandidate = [...parts.slice(0, -1)]
+      .reverse()
+      .find((part) => !/\d/.test(part));
+
+    if (cityCandidate) {
+      return `${cityCandidate}, ${country}`;
+    }
+
+    return `${parts[parts.length - 2]}, ${country}`;
+  }
+
+  return raw;
+}
+
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
   const showHomeFilters = false;
   const [activeCategory, setActiveCategory] = useState('All');
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<Dress[]>([]);
   const [boutiques, setBoutiques] = useState<Record<number, Boutique>>({});
-  const [currentLocationLabel, setCurrentLocationLabel] = useState('Tap to use current location');
+  const [currentLocationLabel, setCurrentLocationLabel] = useState('Current Location');
   const [locationLoading, setLocationLoading] = useState(false);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -324,7 +349,7 @@ export default function DashboardScreen() {
       cards.push({
         boutiqueId,
         boutiqueName: (b.name || '').trim() || 'Boutique',
-        boutiqueLocation: (b.location || '').trim() || 'Location unavailable',
+        boutiqueLocation: formatBoutiqueCardLocation(b.location),
         coverImageUrl: cover,
         matchingDressCount: meta.count,
       });
@@ -467,8 +492,8 @@ export default function DashboardScreen() {
     <View className="flex-1 bg-white">
       {/* Fixed Header */}
       <View 
-        className="pt-4 pb-2 px-6 border-b border-[#F0F0F0]" 
-        style={{ paddingTop: insets.top + 10 }}
+        className="px-5" 
+        style={{ paddingTop: insets.top + 8, paddingBottom: 6 }}
       >
         <View className="flex-row justify-center items-center relative mb-4">
           <Text 
@@ -484,7 +509,7 @@ export default function DashboardScreen() {
             Dress Live
           </Text>
 
-          <TouchableOpacity
+          {/* <TouchableOpacity
             onPress={() => router.push('/notifications' as any)}
             className="absolute right-0"
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -502,54 +527,65 @@ export default function DashboardScreen() {
                 </View>
               ) : null}
             </View>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
 
-        <View className="pt-2 mt-2">
-          <View className="flex-row items-center rounded-full border border-[#E7E7E7] bg-[#FAFAFA] px-4 py-3">
-            <Ionicons name="search-outline" size={18} color="#8C8C8C" />
+        <View style={{ paddingTop: 4, paddingBottom: 10 }}>
+          <View
+            style={{
+              borderTopWidth: 1,
+              borderBottomWidth: 1,
+              borderColor: '#E5E5E5',
+              minHeight: 62,
+              justifyContent: 'center',
+              paddingHorizontal: 0,
+              alignItems: 'center',
+            }}
+          >
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Search dresses, boutiques, locations"
-              placeholderTextColor="#A0A0A0"
-              className="flex-1 ml-3 text-[#1A1A1A]"
+              placeholder="WHAT ARE YOU LOOKING?"
+              placeholderTextColor="#9B9B9B"
+              className="text-[#1A1A1A]"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
-                fontSize: 14,
-                lineHeight: 18,
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.72,
+                width: '100%',
+                paddingHorizontal: 0,
                 paddingVertical: 0,
+                textAlign: 'center',
               }}
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
             />
-            {searchQuery ? (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close-circle" size={18} color="#8C8C8C" />
-              </TouchableOpacity>
-            ) : null}
           </View>
         </View>
-
-        
       </View>
       <TouchableOpacity
         activeOpacity={0.8}
         onPress={handleFetchCurrentLocation}
-        className="flex-row items-center justify-center mt-4 mb-2 px-6"
+        className="flex-row items-center justify-center px-5"
+        style={{ minHeight: 36, marginTop: 10, marginBottom: 10 }}
       >
-          <Ionicons name="location-outline" size={16} color="#1A1A1A" />
+          <Image source={MARKER_ICON} style={{ width: 17, height: 17 }} contentFit="contain" />
           {locationLoading ? (
             <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
           ) : (
             <Text
-              className="text-[#1A1A1A] text-xs font-light ml-2 tracking-[0.5px]"
+              className="text-[#1A1A1A] ml-2"
               numberOfLines={1}
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontSize: 12,
+                fontWeight: '400',
+                lineHeight: 12,
+                letterSpacing: 0,
+              }}
             >
               {currentLocationLabel}
             </Text>
@@ -558,13 +594,13 @@ export default function DashboardScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Categories Tab Bar */}
-        <View className="border-b border-[#F0F0F0]">
+        <View>
           <View className="relative">
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              className="px-6 py-6"
-              contentContainerStyle={{ paddingRight: showHomeFilters ? 64 : 0 }}
+              className="px-5"
+              contentContainerStyle={{ paddingTop: 10, paddingBottom: 14, paddingRight: showHomeFilters ? 64 : 12 }}
             >
               {CATEGORIES.map((cat) => (
                 <TouchableOpacity
@@ -582,13 +618,11 @@ export default function DashboardScreen() {
                       fontWeight: '400',
                       fontSize: 14,
                       lineHeight: 14,
-                      letterSpacing: 2,
+                      letterSpacing: 0,
                     }}
                   >
                     {cat}
                   </Text>
-
-                  {activeCategory === cat && <View className="w-1 h-1 rounded-full bg-black mt-1" />}
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -614,7 +648,7 @@ export default function DashboardScreen() {
         </View>
 
         {/* Product Feed */}
-        <View className="px-6 py-6">
+        <View className="px-5 pt-2 pb-6">
           {loading ? (
             <View className="py-20 items-center justify-center">
               <ActivityIndicator color="#1A1A1A" />
@@ -628,10 +662,10 @@ export default function DashboardScreen() {
             </View>
           ) : (
             boutiqueCards.map((b) => (
-              <View key={b.boutiqueId} className="mb-10">
+              <View key={b.boutiqueId} className="mb-7">
                 <TouchableOpacity
                   activeOpacity={0.9}
-                  className="mb-4"
+                  className="mb-3"
                   onPress={() =>
                     router.push({
                       pathname: '/(tabs)/boutique-details',
@@ -639,55 +673,58 @@ export default function DashboardScreen() {
                     })
                   }
                 >
-                  <Image
-                    source={
-                      b.coverImageUrl
-                        ? { uri: b.coverImageUrl }
-                        : require('@/assets/images/Dashboard image 1.png')
-                    }
-                    style={{ width: '100%', height: 200 }}
-                    contentFit="cover"
-                  />
+                  <View style={{ width: '100%', height: 196, overflow: 'hidden' }}>
+                    <Image
+                      source={
+                        b.coverImageUrl
+                          ? { uri: b.coverImageUrl }
+                          : require('@/assets/images/Dashboard image 1.png')
+                      }
+                      style={{ width: '100%', height: 260, marginTop: -14 }}
+                      contentFit="cover"
+                    />
+                  </View>
                 </TouchableOpacity>
 
-                <View className="flex-row justify-between items-start">
-                  <TouchableOpacity
-                    onPress={() =>
-                      router.push({
-                        pathname: '/(tabs)/boutique-details',
-                        params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
-                      })
-                    }
-                    className="flex-1"
-                  >
+                <TouchableOpacity
+                  onPress={() =>
+                    router.push({
+                      pathname: '/(tabs)/boutique-details',
+                      params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                    })
+                  }
+                  activeOpacity={0.85}
+                >
+                  <View className="flex-row items-center justify-between mb-1">
                     <Text
-                      className="text-[#1A1A1A] text-[14px] mb-1"
-                      style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
+                      className="text-[#1A1A1A] flex-1 pr-3 mb-1.5"
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '500',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 2,
+                      }}
                       numberOfLines={1}
                     >
                       {b.boutiqueName}
                     </Text>
-                    <Text
-                      className="text-[#1A1A1A]/35 text-[12px]"
-                      style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}
-                      numberOfLines={1}
-                    >
-                      {b.boutiqueLocation}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    className="p-1 items-center justify-center w-8 h-8"
-                    activeOpacity={0.85}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/(tabs)/boutique-details',
-                        params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
-                      })
-                    }
+                    <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
+                  </View>
+                  <Text
+                    className="text-[#1A1A1A]/60"
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '400',
+                      fontSize: 14,
+                      lineHeight: 14,
+                      letterSpacing: 0,
+                    }}
+                    numberOfLines={1}
                   >
-                    <Ionicons name="add" size={18} color="#1A1A1A" />
-                  </TouchableOpacity>
-                </View>
+                    {b.boutiqueLocation}
+                  </Text>
+                </TouchableOpacity>
               </View>
             ))
           )}

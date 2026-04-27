@@ -1,20 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 const IMG_1 = require('@/assets/images/Image 1.png');
 const IMG_2 = require('@/assets/images/Image 2.png');
-const IMG_3 = require('@/assets/images/Image 3.png');
-
-const { width } = Dimensions.get('window');
 
 export default function LandingPage() {
   const [isSplashVisible, setIsSplashVisible] = useState(true);
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+
+  const availableHeight = height - insets.top - insets.bottom;
+  const imageHeight = Math.max(235, Math.min(width * 0.88, availableHeight * 0.37));
+  const titleFontSize = Math.min(width * 0.1, 34);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -44,80 +45,78 @@ export default function LandingPage() {
 
 
   return (
-    <View style={{ flex: 1, backgroundColor: 'white' }}>
-      <ScrollView 
-        showsVerticalScrollIndicator={false} 
-        contentContainerStyle={{ flexGrow: 1, paddingTop: 50, paddingBottom: insets.bottom + 40 }}
-      >
-        {/* Section 1: Top */}
-        <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
-          <View style={{ width: '100%', aspectRatio: 3/2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: 'white',
+        paddingTop: insets.top + 20,
+        paddingBottom: Math.max(insets.bottom + 6, 8),
+        paddingHorizontal: 16,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        <View style={{ marginTop: 4, gap: 10 }}>
+          {/* Section 1: Page Title */}
+          <View style={{ paddingHorizontal: 24, alignItems: 'center', marginBottom: 8 }}>
+            <Text
+              className="text-black text-center"
+              style={{
+                fontFamily: 'PlayfairDisplay-SemiBold',
+                fontSize: titleFontSize,
+                fontWeight: '600',
+                lineHeight: titleFontSize,
+                letterSpacing: 0,
+              }}
+            >
+              Dress Live
+            </Text>
+          </View>
+
+          {/* Section 2: Top */}
+          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
             <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" />
           </View>
-        </View>
 
-        {/* Section 2: Middle */}
-        <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
-          <View style={{ width: '100%', aspectRatio: 3/2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+          {/* Section 3: Middle */}
+          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
             <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="cover" />
           </View>
         </View>
 
-        {/* Section 3: Bottom */}
-        <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
-          <View style={{ position: 'relative', width: '100%', aspectRatio: 3/2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_3} style={{ width: '100%', height: '100%' }} contentFit="cover" />
-            
-            {/* "Dress Live" Text Overlay */}
-            <View style={{ position: 'absolute', left: 0, right:0, top: 20, alignItems: 'center' }}>
-              <Text 
-                className="text-black text-center"
-                style={{ 
-                  fontFamily: 'PlayfairDisplay-SemiBold',
-                  fontSize: 34,
-                  fontWeight: '600',
-                  lineHeight: 34,
-                  letterSpacing: 0
-                }}
-              >
-                Dress Live
-              </Text>
-            </View>
+        <View style={{ paddingHorizontal: 8, gap: 10, marginTop: 8 }}>
+          <TouchableOpacity 
+            activeOpacity={0.9}
+            onPress={() => router.push('/(tabs)')}
+            style={{ backgroundColor: 'black', paddingVertical: 14, alignItems: 'center' }}
+          >
+            <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', letterSpacing: 3, textTransform: 'uppercase' }}>
+              Get Started
+            </Text>
+          </TouchableOpacity>
 
-            {/* "Get Started" Button Overlay */}
+          {/* Section 4: Auth Buttons */}
+          <View style={{ flexDirection: 'row', gap: 12 }}>
             <TouchableOpacity 
-              activeOpacity={0.9}
-              onPress={() => router.push('/(tabs)')}
-              style={{ 
-                position: 'absolute', 
-                bottom: 0, 
-                left: 0, 
-                right: 0, 
-                backgroundColor: 'black', 
-                paddingVertical: 14, 
-                alignItems: 'center' 
-              }}
+              activeOpacity={0.7}
+              onPress={() => router.push('/login')}
+              style={{ flex: 1, borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center' }}
             >
-              <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', letterSpacing: 3, textTransform: 'uppercase' }}>
-                Get Started
+              <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
+                Log in
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={() => router.push('/signup')}
+              style={{ flex: 1, borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center' }}
+            >
+              <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
+                Sign up
               </Text>
             </TouchableOpacity>
           </View>
         </View>
-
-        {/* Section 4: Secondary Button */}
-        <View style={{ paddingHorizontal: 24, gap: 16 }}>
-          <TouchableOpacity 
-            activeOpacity={0.7}
-            onPress={() => router.push('/auth-choice')}
-            style={{ borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center' }}
-          >
-            <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
-              Log in / Sign up
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+      </View>
     </View>
   );
 }

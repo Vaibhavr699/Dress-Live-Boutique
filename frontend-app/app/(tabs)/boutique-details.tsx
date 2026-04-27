@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -10,6 +10,8 @@ import { useShortlistStore } from '@/store/useShortlistStore';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
 
+const PLUS_ICON = require('@/assets/svg/plus.svg');
+const STAR_ICON = require('@/assets/svg/Star.svg');
 const CATEGORIES = ['All', 'Abendkleider', 'Hochzeitskleider', 'Add-Ons'];
 
 type Boutique = {
@@ -32,6 +34,7 @@ type Dress = {
 export default function BoutiqueDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { addItem } = useCartStore();
   const isAuthenticated = useAuthStore((state: { isAuthenticated: boolean }) => state.isAuthenticated);
   const guestDressIds = useShortlistStore((s) => s.dressIds);
@@ -47,6 +50,7 @@ export default function BoutiqueDetailsScreen() {
   const [dresses, setDresses] = useState<Dress[]>([]);
   const [authShortlistIds, setAuthShortlistIds] = useState<number[]>([]);
   const [shortlistBusyId, setShortlistBusyId] = useState<number | null>(null);
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
 
   const loadAuthShortlist = useCallback(async () => {
     if (!isAuthenticated) {
@@ -141,6 +145,16 @@ export default function BoutiqueDetailsScreen() {
     return firstDress.trim() || null;
   }, [boutique, coverFromHome, dresses]);
 
+  const heroImages = useMemo(
+    () => [
+      {
+        key: 'hero',
+        source: headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 1.png'),
+      },
+    ],
+    [headerImageUrl]
+  );
+
   const filteredDresses = useMemo(() => {
     if (activeCategory === 'All') return dresses;
     const needle = activeCategory.toLowerCase();
@@ -153,41 +167,142 @@ export default function BoutiqueDetailsScreen() {
     });
   }, [activeCategory, dresses]);
 
+  const heroImageHeight = useMemo(() => {
+    const referenceHeight = (width * 265) / 428;
+    return Math.max(210, Math.min(referenceHeight, 320));
+  }, [width]);
+
+  const dressCardWidth = useMemo(() => Math.max((width - 55) / 2, 145), [width]);
+  const dressImageHeight = dressCardWidth;
+
+  if (loading) {
+    return (
+      <View className="flex-1 bg-white items-center justify-center" style={{ paddingTop: insets.top }}>
+        <ActivityIndicator color="#1A1A1A" />
+        <Text className="text-[#1A1A1A]/50 text-[12px] mt-4" style={{ fontFamily: 'Helvetica Neue' }}>
+          Loading boutique...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!boutique) {
+    return (
+      <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
+        <View className="px-5 pt-3">
+          <TouchableOpacity onPress={() => router.back()} className="w-10 h-10 items-start justify-center">
+            <Ionicons name="arrow-back" size={20} color="black" />
+          </TouchableOpacity>
+        </View>
+        <View className="flex-1 items-center justify-center px-8">
+          <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">Boutique unavailable</Text>
+          <Text className="text-[#1A1A1A]/45 text-[12px] text-center leading-5">
+            We could not load this boutique right now. Please try again.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-white">
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100, paddingTop: insets.top }}
       >
-        {/* Header Image */}
-        <View className="relative w-full aspect-[4/3] px-6">
-          <Image
-            source={
-              headerImageUrl
-                ? { uri: headerImageUrl }
-                : require('@/assets/images/Dashboard image 1.png')
-            }
-            style={{ width: '100%', height: '100%' }}
-            contentFit="cover"
-          />
+        <View className="px-5 pt-3 pb-3">
           <TouchableOpacity
             onPress={() => router.back()}
-            className="absolute left-10 top-4 w-10 h-10 items-center justify-center bg-white/20 rounded-full"
+            className="w-10 h-10 items-start justify-center"
           >
-            <Ionicons name="arrow-back" size={24} color="black" />
+            <Ionicons name="arrow-back" size={20} color="black" />
           </TouchableOpacity>
         </View>
 
-        <View className="px-6 py-6">
+        {/* Header Image */}
+        <View className="w-full" style={{ height: heroImageHeight }}>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(event) => {
+              const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(width, 1));
+              setHeroImageIndex(nextIndex);
+            }}
+            scrollEventThrottle={16}
+          >
+            {heroImages.map((image) => (
+              <Image
+                key={image.key}
+                source={image.source}
+                style={{ width, height: heroImageHeight }}
+                contentFit="cover"
+              />
+            ))}
+          </ScrollView>
+          <View className="absolute left-3 right-3 bottom-2 h-[3px] bg-white/90">
+            <View
+              className="absolute left-0 top-0 bottom-0 bg-black"
+              style={{
+                width: `${100 / Math.max(heroImages.length, 4)}%`,
+                transform: [{ translateX: (heroImageIndex * (width - 24)) / Math.max(heroImages.length, 4) }],
+              }}
+            />
+          </View>
+        </View>
+
+        <View className="px-5 pt-2 pb-6">
           {/* Boutique Info */}
           <View className="flex-row justify-between items-start mb-1">
-            <Text className="text-black text-2xl font-medium" style={{ fontFamily: 'Helvetica Neue' }}>
-              {(boutique?.name || '').trim() || 'Boutique'}
-            </Text>
+            <View className="flex-1 pr-4">
+              <Text
+                className="text-[#1A1A1A] mb-2"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '500',
+                  fontSize: 24,
+                  lineHeight: 24,
+                  letterSpacing: 2,
+                }}
+                numberOfLines={1}
+              >
+                {(boutique?.name || '').trim() || 'Boutique'}
+              </Text>
+              <Text
+                className="text-[#1A1A1A]/55 mt-1"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '400',
+                  fontSize: 12,
+                  lineHeight: 12,
+                  letterSpacing: 0,
+                }}
+                numberOfLines={1}
+              >
+                {(boutique?.location || '').trim() || 'Location unavailable'}
+              </Text>
+            </View>
+            <View className="items-end pt-1">
+              <View className="flex-row items-center">
+                <Text className="text-[#F2C94C] text-[10px] font-bold mr-1">4.6</Text>
+                <Image source={STAR_ICON} style={{ width: 15, height: 14 }} contentFit="contain" />
+              </View>
+              <Text className="text-[#1A1A1A]/50 text-[10px] mt-3">EN | DE | FR</Text>
+            </View>
           </View>
-          <View className="flex-row justify-between items-center mb-6">
-            <Text className="text-[#1A1A1A50] text-[15px] font-normal" style={{ fontFamily: 'Helvetica Neue' }}>
-              {(boutique?.location || '').trim() || 'Location unavailable'}
+
+          <View className="items-end mb-5 mt-5">
+            <Text
+              style={{
+                color: '#004CC4',
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '400',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0,
+              }}
+            >
+              Filters
             </Text>
           </View>
 
@@ -199,15 +314,15 @@ export default function BoutiqueDetailsScreen() {
             contentContainerStyle={{ paddingRight: 40 }}
           >
             {CATEGORIES.map((cat) => (
-              <TouchableOpacity key={cat} onPress={() => setActiveCategory(cat)} className="mr-8 items-center">
+              <TouchableOpacity key={cat} onPress={() => setActiveCategory(cat)} className="mr-9 items-center">
                 <Text
                   className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#1A1A1A50]'}
                   style={{
                     fontFamily: 'Helvetica Neue',
-                    fontWeight: '500',
-                    fontSize: 12,
-                    lineHeight: 12,
-                    letterSpacing: 0.5,
+                    fontWeight: '400',
+                    fontSize: 14,
+                    lineHeight: 14,
+                    letterSpacing: 0,
                   }}
                 >
                   {cat}
@@ -237,47 +352,62 @@ export default function BoutiqueDetailsScreen() {
                   : require('@/assets/images/Dashboard image 3.png');
 
                 return (
-                  <View key={dress.id} style={{ width: '48%', marginBottom: 24 }}>
+                  <View key={dress.id} style={{ width: dressCardWidth, minHeight: 231, marginBottom: 20 }}>
                     <View className="relative mb-3">
                       <TouchableOpacity
                         activeOpacity={0.9}
                         onPress={() =>
                           router.push({
                             pathname: '/(tabs)/product-details',
-                            params: { id: String(dress.id) },
+                            params: {
+                              id: String(dress.id),
+                              boutiqueId: String(boutiqueId),
+                              coverImageUrl: headerImageUrl ?? undefined,
+                            },
                           })
                         }
                       >
-                        <Image source={imageSource} style={{ width: '100%', height: 180 }} contentFit="cover" />
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        onPress={() => void handleToggleShortlist(dress)}
-                        disabled={shortlistBusyId === dress.id}
-                        className="absolute top-2 right-2 w-8 h-8 items-center justify-center bg-white/60 rounded-full"
-                      >
-                        <Ionicons
-                          name={isDressShortlisted(dress.id) ? 'heart' : 'heart-outline'}
-                          size={18}
-                          color={isDressShortlisted(dress.id) ? '#FF3B30' : 'black'}
-                        />
+                        <Image source={imageSource} style={{ width: '100%', height: dressImageHeight }} contentFit="cover" />
                       </TouchableOpacity>
                     </View>
 
-                    <View className="flex-row justify-between items-center px-1">
+                    <View className="flex-row justify-between items-start">
                       <TouchableOpacity
                         onPress={() =>
                           router.push({
                             pathname: '/(tabs)/product-details',
-                            params: { id: String(dress.id) },
+                            params: {
+                              id: String(dress.id),
+                              boutiqueId: String(boutiqueId),
+                              coverImageUrl: headerImageUrl ?? undefined,
+                            },
                           })
                         }
                         className="flex-1"
                       >
-                        <Text className="text-black text-[14px] font-[500] mb-1" style={{ fontFamily: 'Helvetica Neue' }} numberOfLines={1}>
+                        <Text
+                          className="text-black mb-1"
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '500',
+                            fontSize: 14,
+                            lineHeight: 14,
+                            letterSpacing: 0,
+                          }}
+                          numberOfLines={1}
+                        >
                           {dress.name}
                         </Text>
-                        <Text className="text-black/40 text-[12px] font-[400]" style={{ fontFamily: 'Helvetica Neue' }}>
+                        <Text
+                          className="text-black/40"
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '400',
+                            fontSize: 12,
+                            lineHeight: 12,
+                            letterSpacing: 0,
+                          }}
+                        >
                           {priceLabel}
                         </Text>
                       </TouchableOpacity>
@@ -292,9 +422,10 @@ export default function BoutiqueDetailsScreen() {
                           });
                           Alert.alert('Added', `${dress.name} has been added to your bag.`);
                         }}
-                        className="p-1 items-center justify-center w-8 h-8 rounded-full border border-black/10"
+                        className="items-center justify-center"
+                        style={{ width: 24, height: 18 }}
                       >
-                        <Ionicons name="add" size={18} color="black" />
+                        <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
                       </TouchableOpacity>
                     </View>
                   </View>

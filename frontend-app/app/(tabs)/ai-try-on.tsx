@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
 
 type Dress = {
@@ -19,6 +20,14 @@ type Dress = {
 function toJpegDataUrl(base64: string) {
   return `data:image/jpeg;base64,${base64}`;
 }
+
+type SavedTestingImage = {
+  uri: string;
+  dataUrl: string;
+};
+
+let cachedSelfieImage: SavedTestingImage | null = null;
+let cachedFullBodyImage: SavedTestingImage | null = null;
 
 export default function AITryOnScreen() {
   const router = useRouter();
@@ -38,6 +47,8 @@ export default function AITryOnScreen() {
   const [renderedUri, setRenderedUri] = useState<string | null>(null);
   const [dress, setDress] = useState<Dress | null>(null);
   const [dressLoading, setDressLoading] = useState(false);
+  const [savedSelfie, setSavedSelfie] = useState<SavedTestingImage | null>(cachedSelfieImage);
+  const [savedFullBody, setSavedFullBody] = useState<SavedTestingImage | null>(cachedFullBodyImage);
 
   const normalizedDressId = useMemo(() => {
     const raw = typeof params.dressId === 'string' ? Number(params.dressId) : NaN;
@@ -151,6 +162,74 @@ export default function AITryOnScreen() {
     setRenderedUri(res.image_data_url);
   }, [normalizedDressId, selfieDataUrl]);
 
+  const processFullBodyCandidate = useCallback(async (candidate: SavedTestingImage) => {
+    setFullBodyUri(candidate.uri);
+    setValidating(true);
+    setRendering(false);
+    setRenderedUri(null);
+    setValidationError(null);
+
+    try {
+      const res = (await api.post('/ai/validate-full-body-base64', {
+        image_data_url: candidate.dataUrl,
+      })) as { ok?: boolean; reason?: string };
+
+      if (!res?.ok) {
+        setValidationError(res?.reason || 'Please retake the photo with your full body in view.');
+        setStep(5);
+        return;
+      }
+
+      cachedFullBodyImage = candidate;
+      setSavedFullBody(candidate);
+      setValidating(false);
+      setRendering(true);
+      setStep(7);
+
+      try {
+        await createTryOnPreview(candidate.dataUrl);
+        setStep(8);
+      } catch (renderError: any) {
+        setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
+        setStep(5);
+      } finally {
+        setRendering(false);
+      }
+    } catch (error: any) {
+      setValidationError(error?.message || 'Could not validate the photo. Please try again.');
+      setStep(5);
+    } finally {
+      setValidating(false);
+    }
+  }, [createTryOnPreview]);
+
+  const pickImageFromGallery = useCallback(async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Photos permission', 'Please allow photo library access to continue.');
+      return null;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.85,
+      base64: true,
+    });
+
+    if (result.canceled) return null;
+    const asset = result.assets?.[0];
+    if (!asset?.uri || !asset.base64) {
+      Alert.alert('AI Try On', 'Could not read the selected image. Please try again.');
+      return null;
+    }
+
+    return {
+      uri: asset.uri,
+      dataUrl: toJpegDataUrl(asset.base64),
+    } satisfies SavedTestingImage;
+  }, []);
+
   useEffect(() => {
     if (step !== 6) return;
     // Countdown for the full-body photo, then capture automatically.
@@ -173,49 +252,10 @@ export default function AITryOnScreen() {
             if (!pic.base64) {
               throw new Error('Could not read the photo. Please try again.');
             }
-            const fullBodyImageDataUrl = toJpegDataUrl(pic.base64);
-            setFullBodyUri(pic.uri);
-            setValidating(true);
-            setRendering(false);
-            setRenderedUri(null);
-            setValidationError(null);
-            try {
-              const res = (await api.post('/ai/validate-full-body-base64', {
-                image_data_url: fullBodyImageDataUrl,
-              })) as { ok?: boolean; reason?: string };
-              if (!res?.ok) {
-                setValidationError(res?.reason || 'Please retake the photo with your full body in view.');
-                setStep(5);
-                return;
-              }
-              setValidating(false);
-              setRendering(true);
-              setStep(7);
-              try {
-                await createTryOnPreview(fullBodyImageDataUrl);
-                if (!cancelled) {
-                  setStep(8);
-                }
-              } catch (renderError: any) {
-                if (!cancelled) {
-                  setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
-                  setStep(5);
-                }
-                return;
-              } finally {
-                if (!cancelled) {
-                  setRendering(false);
-                }
-              }
-            } catch (e: any) {
-              setValidationError(e?.message || 'Could not validate the photo. Please try again.');
-              setStep(5);
-              return;
-            } finally {
-              if (!cancelled) {
-                setValidating(false);
-              }
-            }
+            await processFullBodyCandidate({
+              uri: pic.uri,
+              dataUrl: toJpegDataUrl(pic.base64),
+            });
           }
         } catch {
           // ignore
@@ -253,7 +293,10 @@ export default function AITryOnScreen() {
           return;
         }
         setSelfieUri(pic.uri);
-        setSelfieDataUrl(toJpegDataUrl(pic.base64));
+        const candidate = { uri: pic.uri, dataUrl: toJpegDataUrl(pic.base64) };
+        setSelfieDataUrl(candidate.dataUrl);
+        cachedSelfieImage = candidate;
+        setSavedSelfie(candidate);
         setStep(4);
         return;
       }
@@ -264,6 +307,37 @@ export default function AITryOnScreen() {
       }
     } catch {
       // ignore
+    }
+  };
+
+  const handlePickFromGallery = async () => {
+    const picked = await pickImageFromGallery();
+    if (!picked) return;
+
+    if (currentStep.id === 3) {
+      setSelfieUri(picked.uri);
+      setSelfieDataUrl(picked.dataUrl);
+      cachedSelfieImage = picked;
+      setSavedSelfie(picked);
+      setStep(4);
+      return;
+    }
+
+    if (currentStep.id === 5) {
+      await processFullBodyCandidate(picked);
+    }
+  };
+
+  const handleUseSavedTestingPhoto = async () => {
+    if (currentStep.id === 3 && savedSelfie) {
+      setSelfieUri(savedSelfie.uri);
+      setSelfieDataUrl(savedSelfie.dataUrl);
+      setStep(4);
+      return;
+    }
+
+    if (currentStep.id === 5 && savedFullBody) {
+      await processFullBodyCandidate(savedFullBody);
     }
   };
 
@@ -378,28 +452,56 @@ export default function AITryOnScreen() {
             </View>
             
             {currentStep.type === 'camera' && (
-              <View className="flex-row justify-between items-center mb-10 px-8">
-                <TouchableOpacity className="w-10 h-10 rounded-lg overflow-hidden border border-black/10">
-                  <Image
-                    source={
-                      activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/Dashboard image 1.png')
-                    }
-                    style={{ width: '100%', height: '100%' }}
-                    contentFit="cover"
-                  />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                   onPress={handleCapture}
-                   className="w-16 h-16 rounded-full border-4 border-black items-center justify-center"
-                >
-                  <View className="w-12 h-12 bg-black rounded-full" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  className="w-10 h-10 items-center justify-center"
-                  onPress={() => setCameraFacing((f) => (f === 'front' ? 'back' : 'front'))}
-                >
-                  <Ionicons name="camera-reverse-outline" size={28} color="black" />
-                </TouchableOpacity>
+              <View className="mb-10 px-8">
+                <View className="flex-row justify-between items-center">
+                  <TouchableOpacity className="w-10 h-10 rounded-lg overflow-hidden border border-black/10">
+                    <Image
+                      source={
+                        activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/Dashboard image 1.png')
+                      }
+                      style={{ width: '100%', height: '100%' }}
+                      contentFit="cover"
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                     onPress={handleCapture}
+                     className="w-16 h-16 rounded-full border-4 border-black items-center justify-center"
+                  >
+                    <View className="w-12 h-12 bg-black rounded-full" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    className="w-10 h-10 items-center justify-center"
+                    onPress={() => setCameraFacing((f) => (f === 'front' ? 'back' : 'front'))}
+                  >
+                    <Ionicons name="camera-reverse-outline" size={28} color="black" />
+                  </TouchableOpacity>
+                </View>
+
+                <View className="mt-6">
+                  <TouchableOpacity
+                    onPress={handlePickFromGallery}
+                    activeOpacity={0.85}
+                    className="border border-black py-3 items-center mb-3"
+                  >
+                    <Text className="text-black text-[10px] font-bold uppercase tracking-[1px]">Choose from gallery</Text>
+                  </TouchableOpacity>
+
+                  {((currentStep.id === 3 && savedSelfie) || (currentStep.id === 5 && savedFullBody)) ? (
+                    <TouchableOpacity
+                      onPress={handleUseSavedTestingPhoto}
+                      activeOpacity={0.85}
+                      className="border border-black/15 py-3 items-center bg-black/[0.03]"
+                    >
+                      <Text className="text-black text-[10px] font-medium uppercase tracking-[1px]">
+                        {currentStep.id === 3 ? 'Use saved selfie' : 'Use saved full-body photo'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  <Text className="text-black/35 text-[10px] text-center mt-3 leading-4">
+                    Testing shortcut: reuse saved images instead of capturing again.
+                  </Text>
+                </View>
               </View>
             )}
 

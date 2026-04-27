@@ -55,7 +55,17 @@ export default function ProfileScreen() {
         className="px-6 items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <Text className="text-black text-sm font-bold uppercase tracking-[2px]">
+        <Text
+          className="text-black"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '400',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 0,
+            textAlign: 'center',
+          }}
+        >
           Profile Details
         </Text>
       </View>
@@ -70,10 +80,10 @@ export default function ProfileScreen() {
 
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() => router.push('/auth-choice')}
+              onPress={() => router.push('/signup')}
               className="w-full bg-black py-4 items-center justify-center mb-4"
             >
-              <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Log In / Sign Up</Text>
+              <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Sign Up</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -87,36 +97,62 @@ export default function ProfileScreen() {
         ) : (
           <>
             {/* User Info Card */}
-            <View className="px-8 pt-10 pb-8">
-          <View className="flex-row items-center relative">
-            <Image
-              source={
-                user?.profile_image_url || user?.profile_image_uri
-                  ? { uri: user?.profile_image_url || user?.profile_image_uri || '' }
-                  : require('@/assets/images/Dashboard image 2.png')
-              }
-              style={{ width: 64, height: 64, borderRadius: 2 }}
-              contentFit="cover"
-            />
+            <View style={{ paddingHorizontal: 20, marginTop: 20 }}>
+              <View
+                className="flex-row items-end relative"
+                style={{ height: 90, width: '100%', maxWidth: 390, alignSelf: 'center' }}
+              >
+                <Image
+                  source={
+                    user?.profile_image_url || user?.profile_image_uri
+                      ? { uri: user?.profile_image_url || user?.profile_image_uri || '' }
+                      : require('@/assets/images/Dashboard image 2.png')
+                  }
+                  style={{ width: 90, height: 90, borderRadius: 2 }}
+                  contentFit="cover"
+                />
 
-            <View className="ml-6 flex-1">
-              <Text className="text-black text-[16px] font-medium">{user?.full_name || 'Elif Terzi'}</Text>
-              <Text className="text-black/40 text-[12px] mt-1">{user?.email || 'example@gmail.com'}</Text>
-            </View>
+                <View className="ml-6 flex-1" style={{ justifyContent: 'flex-end', paddingBottom: 2 }}>
+                  <Text
+                    className="text-black"
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '400',
+                      fontSize: 16,
+                      lineHeight: 16,
+                      letterSpacing: 0,
+                    }}
+                  >
+                    {user?.full_name || 'Elif Terzi'}
+                  </Text>
+                  <Text
+                    className="text-black"
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '400',
+                      fontSize: 14,
+                      lineHeight: 14,
+                      letterSpacing: 0,
+                      marginTop: 4,
+                    }}
+                  >
+                    {user?.email || 'example@gmail.com'}
+                  </Text>
+                </View>
 
-            <TouchableOpacity
-              className="absolute top-0 right-0"
-              onPress={() =>
-                router.push({
-                  pathname: '/profile-edit-address',
-                  params: { source: 'profile' },
-                })
-              }
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Feather name="edit-3" size={18} color="black" />
-            </TouchableOpacity>
-          </View>
+                <TouchableOpacity
+                  className="absolute top-0 right-0"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/profile-edit-address',
+                      params: { source: 'profile' },
+                    })
+                  }
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Feather name="edit-3" size={18} color="black" />
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* Menu List */}
@@ -132,7 +168,18 @@ export default function ProfileScreen() {
               }
               className="py-5 flex-row justify-between items-center bg-white"
             >
-              <Text className="text-black/30 text-[10px] font-bold uppercase tracking-[1px]">{item.label}</Text>
+              <Text
+                className="text-black/30 uppercase"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 12,
+                  lineHeight: 12,
+                  letterSpacing: 0.48,
+                }}
+              >
+                {item.label}
+              </Text>
               <Ionicons name="chevron-forward" size={16} color="black" />
             </TouchableOpacity>
           ))}
@@ -140,16 +187,72 @@ export default function ProfileScreen() {
 
             {/* Personal Info */}
             <View className="px-8 mt-8">
-          <Text className="text-black/30 text-[10px] font-bold uppercase mb-6 tracking-[1px]">Personal Information</Text>
+          <Text
+            className="text-black mb-6"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '400',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 0,
+              textTransform: 'uppercase',
+            }}
+          >
+            PERSONAL INFORMATION
+          </Text>
           
           <View className="mb-6">
-            <Text className="text-black/30 text-[9px] font-bold uppercase mb-1 tracking-[0.5px]">Email</Text>
-            <Text className="text-black text-[13px]">{user?.email || 'example@gmail.com'}</Text>
+            <Text
+              className="text-black/30 uppercase mb-1"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.72,
+              }}
+            >
+              Email
+            </Text>
+            <Text
+              className="text-black"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0.84,
+              }}
+            >
+              {user?.email || 'example@gmail.com'}
+            </Text>
           </View>
 
           <View className="mb-8">
-            <Text className="text-black/30 text-[9px] font-bold uppercase mb-1 tracking-[0.5px]">Phone Number</Text>
-            <Text className="text-black text-[13px]">{user?.phone || 'Not added yet'}</Text>
+            <Text
+              className="text-black/30 uppercase mb-1"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.72,
+              }}
+            >
+              Phone Number
+            </Text>
+            <Text
+              className="text-black"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0.84,
+              }}
+            >
+              {user?.phone || 'Not added yet'}
+            </Text>
           </View>
 
           <TouchableOpacity 
@@ -159,9 +262,20 @@ export default function ProfileScreen() {
                 params: { source: 'profile' },
               })
             }
-            className="py-5 border-t border-[#F0F0F0] flex-row justify-between items-center"
+            className="py-5 flex-row justify-between items-center"
           >
-            <Text className="text-black/30 text-[10px] font-bold uppercase tracking-[1px]">Security and Password</Text>
+            <Text
+              className="text-black/30 uppercase"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.48,
+              }}
+            >
+              Security and Password
+            </Text>
             <Ionicons name="chevron-forward" size={16} color="black" />
           </TouchableOpacity>
 
@@ -175,7 +289,18 @@ export default function ProfileScreen() {
             }
             className="py-5 border-t border-[#F0F0F0] flex-row justify-between items-center"
           >
-            <Text className="text-black/30 text-[10px] font-bold uppercase tracking-[1px]">Delete Account</Text>
+            <Text
+              className="text-black/30 uppercase"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.48,
+              }}
+            >
+              Delete Account
+            </Text>
             <Ionicons name="chevron-forward" size={16} color="black" />
           </TouchableOpacity>
 

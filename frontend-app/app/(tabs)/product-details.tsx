@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert, GestureResponderEvent } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert, GestureResponderEvent, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -9,12 +9,22 @@ import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 
+const STAR_ICON = require('@/assets/svg/Star.svg');
+const BOOKING_SMALL_ICON = require('@/assets/svg/booking_small.svg');
+const CART_SMALL_ICON = require('@/assets/svg/cart small.svg');
+const CART_BLACK_ICON = require('@/assets/svg/Cart Black.svg');
+const HEART_ICON = require('@/assets/svg/Heart.svg');
+
 export default function ProductDetailsScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, boutiqueId, coverImageUrl } = useLocalSearchParams<{
+    id?: string;
+    boutiqueId?: string;
+    coverImageUrl?: string;
+  }>();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const isAuthenticated = useAuthStore((state: any) => state.isAuthenticated);
-  const guestDressIds = useShortlistStore((state: any) => state.dressIds);
   const toggleGuest = useShortlistStore((state: any) => state.toggle);
   const [optionModalVisible, setOptionModalVisible] = useState(false);
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
@@ -23,6 +33,7 @@ export default function ProductDetailsScreen() {
   const [isShortlisted, setIsShortlisted] = useState(false);
   const [shortlistLoading, setShortlistLoading] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const [productImageIndex, setProductImageIndex] = useState(0);
   const [viewerZoom, setViewerZoom] = useState(1);
   const [viewerOffset, setViewerOffset] = useState({ x: 0, y: 0 });
   const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number } | null>(null);
@@ -62,7 +73,7 @@ export default function ProductDetailsScreen() {
               : false
           );
         } else {
-          setIsShortlisted(guestDressIds.includes(Number(id)));
+          setIsShortlisted(useShortlistStore.getState().dressIds.includes(Number(id)));
         }
       } catch (error) {
         if (isActive) {
@@ -80,7 +91,7 @@ export default function ProductDetailsScreen() {
     return () => {
       isActive = false;
     };
-  }, [guestDressIds, id, isAuthenticated]);
+  }, [id, isAuthenticated]);
 
   const product = useMemo(() => {
     const normalizedPrice =
@@ -117,6 +128,9 @@ export default function ProductDetailsScreen() {
     { label: 'Dress Status:', value: dress?.is_ai_enabled === false ? 'Preview Only' : 'Available' },
   ];
 
+  const productImageWidth = width;
+  const productImageHeight = (productImageWidth * 347) / 430;
+
 
   const handleToggleWishlist = async () => {
     if (!dress?.id) {
@@ -124,25 +138,27 @@ export default function ProductDetailsScreen() {
     }
 
     if (!isAuthenticated) {
+      const wasShortlisted = isShortlisted;
       const result = toggleGuest(Number(dress.id));
       if (!result.ok) {
         Alert.alert('Selection', 'You can select a maximum of 4 dresses.');
         return;
       }
-      setIsShortlisted((prev) => !prev);
+      setIsShortlisted(!wasShortlisted);
       return;
     }
 
+    const wasShortlisted = isShortlisted;
+    setIsShortlisted(!wasShortlisted);
     setShortlistLoading(true);
     try {
-      if (isShortlisted) {
+      if (wasShortlisted) {
         await api.delete(`/shortlists/me/${dress.id}`);
-        setIsShortlisted(false);
       } else {
         await api.post('/shortlists/me', { dress_id: dress.id });
-        setIsShortlisted(true);
       }
     } catch (error) {
+      setIsShortlisted(wasShortlisted);
       Alert.alert('Selection', error instanceof Error ? error.message : 'Could not update selection.');
     } finally {
       setShortlistLoading(false);
@@ -156,6 +172,21 @@ export default function ProductDetailsScreen() {
       'The item has been added your bag.',
       [{ text: 'OK' }]
     );
+  };
+
+  const handleBack = () => {
+    if (boutiqueId) {
+      router.replace({
+        pathname: '/(tabs)/boutique-details',
+        params: {
+          boutiqueId,
+          coverImageUrl: typeof coverImageUrl === 'string' ? coverImageUrl : undefined,
+        },
+      });
+      return;
+    }
+
+    router.back();
   };
 
   const openImageViewer = (index = 0) => {
@@ -260,63 +291,105 @@ export default function ProductDetailsScreen() {
     }
   };
 
+  if (loading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-white" style={{ paddingTop: insets.top }}>
+        <ActivityIndicator color="#1A1A1A" />
+        <Text className="text-[#1A1A1A]/50 text-[12px] mt-4" style={{ fontFamily: 'Helvetica Neue' }}>
+          Loading dress...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!dress) {
+    return (
+      <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
+        <View className="px-6 pt-3">
+          <TouchableOpacity onPress={handleBack} className="w-10 h-10 items-start justify-center">
+            <Ionicons name="arrow-back" size={22} color="black" />
+          </TouchableOpacity>
+        </View>
+        <View className="flex-1 items-center justify-center px-8">
+          <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">Dress unavailable</Text>
+          <Text className="text-[#1A1A1A]/45 text-[12px] text-center leading-5">
+            We could not load this dress right now. Please try again.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-white">
-      {loading ? (
-        <View className="flex-1 items-center justify-center bg-white">
-          <ActivityIndicator color="#1A1A1A" />
-        </View>
-      ) : (
-        <>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-        {/* Header Image Section */}
-        <View className="relative w-full aspect-[4/3] px-6" style={{ marginTop: 8 }}>
-          <TouchableOpacity activeOpacity={0.92} onPress={() => openImageViewer(0)}>
-            <Image 
-              key={product.id}
-              source={headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 3.png')} 
-              style={{ width: '100%', height: '100%' }}
-              contentFit="cover"
-            />
-          </TouchableOpacity>
-          
-          {/* Top Buttons */}
-          <View 
-            className="absolute left-10 right-10 flex-row justify-between"
-            style={{ top: insets.top + 14 }}
+        <View
+          className="flex-row items-center justify-between px-5"
+          style={{ paddingTop: insets.top + 12, paddingBottom: 10 }}
+        >
+          <TouchableOpacity
+            onPress={handleBack}
+            className="w-8 h-8 items-start justify-center"
           >
-            <TouchableOpacity 
-              onPress={() => router.back()}
-              className="w-10 h-10 items-center justify-center bg-white/20 rounded-full"
+            <Ionicons name="arrow-back" size={22} color="black" />
+          </TouchableOpacity>
+
+          <View className="flex-row items-center gap-5">
+            <TouchableOpacity
+              onPress={() => router.push('/(tabs)/cart')}
+              className="w-8 h-8 items-center justify-center"
             >
-              <Ionicons name="arrow-back" size={24} color="black" />
+              <Image source={CART_BLACK_ICON} style={{ width: 16, height: 15 }} contentFit="contain" />
             </TouchableOpacity>
-            
-            <View className="flex-row gap-4">
-              <TouchableOpacity 
-                onPress={() => router.push('/(tabs)/cart')}
-                className="w-10 h-10 items-center justify-center bg-white/20 rounded-full"
-              >
-                <Feather name="shopping-cart" size={20} color="black" />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                onPress={handleToggleWishlist}
-                disabled={shortlistLoading}
-                className="w-10 h-10 items-center justify-center bg-white/20 rounded-full"
-              >
-                <Ionicons 
-                  name={isShortlisted ? "heart" : "heart-outline"} 
-                  size={22} 
-                  color={isShortlisted ? "#FF3B30" : "black"} 
+            <TouchableOpacity
+              onPress={handleToggleWishlist}
+              disabled={shortlistLoading}
+              className="w-8 h-8 items-center justify-center"
+            >
+              {isShortlisted ? (
+                <Ionicons name="heart" size={18} color="#FF3B30" />
+              ) : (
+                <Image source={HEART_ICON} style={{ width: 14, height: 13 }} contentFit="contain" />
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Header Image Section */}
+        <View className="relative w-full" style={{ height: productImageHeight }}>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(event) => {
+              const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(productImageWidth, 1));
+              setProductImageIndex(nextIndex);
+            }}
+            scrollEventThrottle={16}
+          >
+            {galleryImages.map((image, index) => (
+              <TouchableOpacity key={image.key} activeOpacity={0.92} onPress={() => openImageViewer(index)}>
+                <Image
+                  source={image.source}
+                  style={{ width: productImageWidth, height: productImageHeight }}
+                  contentFit="cover"
                 />
               </TouchableOpacity>
-            </View>
-
+            ))}
+          </ScrollView>
+          <View className="absolute left-3 right-3 bottom-2 h-[3px] bg-white/90">
+            <View
+              className="absolute left-0 top-0 bottom-0 bg-black"
+              style={{
+                width: `${100 / Math.max(galleryImages.length, 4)}%`,
+                transform: [{ translateX: (productImageIndex * (productImageWidth - 24)) / Math.max(galleryImages.length, 4) }],
+              }}
+            />
           </View>
 
           {/* AI Try On Button Overlay */}
           {dress?.is_ai_enabled === false ? null : (
-            <View className="absolute bottom-6 right-10">
+            <View className="absolute bottom-4 right-5">
               <TouchableOpacity 
                 onPress={() =>
                   router.push({
@@ -327,43 +400,48 @@ export default function ProductDetailsScreen() {
                     },
                   })
                 }
-                className="bg-white/80 px-4 py-2 rounded-lg flex-row items-center border border-black/10"
+                className="bg-white/80 flex-row items-center justify-center border border-black/10"
+                style={{ width: 72, height: 25 }}
                 activeOpacity={0.8}
               >
                 <Image 
                   source={require('@/assets/svg/AI try on logo.svg')}
-                  style={{ width: 16, height: 16, marginRight: 4 }}
+                  style={{ width: 12, height: 12, marginRight: 3 }}
                   contentFit="contain"
                 />
-                <Text className="text-black text-xs font-medium uppercase tracking-[0.5px]">AI Try On</Text>
+                <Text className="text-black text-[10px] font-medium tracking-[0.2px]">AI Try On</Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
 
         {/* Product Info Section */}
-        <View className="px-6 py-6">
+        <View className="px-5 py-6">
           <View className="flex-row justify-between items-start mb-1">
             <Text 
-              className="text-black text-2xl font-medium"
-              style={{ fontFamily: 'Helvetica Neue' }}
+              className="text-black flex-1 pr-4"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '500',
+                fontSize: 24,
+                lineHeight: 24,
+                letterSpacing: 0,
+              }}
+              numberOfLines={1}
             >
               {product.name}
             </Text>
-            <View className="flex-row items-center">
-              <Text className="text-black text-xs font-medium mr-1">4.8</Text>
-              <Ionicons name="star" size={14} color="#FFD700" />
+            <View className="items-end pt-1">
+              <View className="flex-row items-center">
+                <Text className="text-[#F2C94C] text-xs font-medium mr-1">4.8</Text>
+                <Image source={STAR_ICON} style={{ width: 15, height: 14 }} contentFit="contain" />
+              </View>
+              <Text className="text-[#1A1A1A]/50 text-[10px] mt-3">EN | DE | FR</Text>
             </View>
           </View>
           
           <View className="flex-row justify-between items-center mb-10">
             <View>
-              <Text 
-                className="text-black/40 text-[12px] font-light mb-1"
-                style={{ fontFamily: 'Helvetica Neue' }}
-              >
-                {dress?.description || 'Partner catalog dress'}
-              </Text>
               <Text 
                 className="text-black/40 text-[10px] font-light uppercase tracking-[0.5px]"
                 style={{ fontFamily: 'Helvetica Neue' }}
@@ -377,10 +455,59 @@ export default function ProductDetailsScreen() {
           <View className="flex-row flex-wrap justify-between">
             {productInfo.map((info, idx) => (
               <View key={idx} style={{ width: '48%', marginBottom: 30 }}>
-                <Text className="text-black text-[12px] font-bold mb-1">{info.label}</Text>
-                <Text className="text-black/50 text-[12px] font-light">{info.value}</Text>
+                <Text
+                  className="text-black mb-1"
+                  style={{
+                    fontFamily: 'Helvetica Neue',
+                    fontWeight: '500',
+                    fontSize: 14,
+                    lineHeight: 14,
+                    letterSpacing: 0,
+                  }}
+                >
+                  {info.label}
+                </Text>
+                <Text
+                  className="text-black/50"
+                  style={{
+                    fontFamily: 'Helvetica Neue',
+                    fontWeight: '300',
+                    fontSize: 12,
+                    lineHeight: 12,
+                    letterSpacing: 0,
+                  }}
+                >
+                  {info.value}
+                </Text>
               </View>
             ))}
+          </View>
+
+          <View className="mt-2">
+            <Text
+              className="text-black mb-4"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '500',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0,
+              }}
+            >
+              Dress Description:
+            </Text>
+            <Text
+              className="text-black/40"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 20,
+                letterSpacing: 0,
+              }}
+            >
+              {dress?.description || 'No description available for this dress.'}
+            </Text>
           </View>
 
         </View>
@@ -388,24 +515,26 @@ export default function ProductDetailsScreen() {
 
       {/* Footer Buttons */}
       <View 
-        className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 border-t border-[#F5F5F5] flex-row justify-between items-center"
+        className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 flex-row justify-between items-center"
         style={{ paddingBottom: insets.bottom + 10 }}
       >
         <TouchableOpacity 
           onPress={() => setOptionModalVisible(true)}
           activeOpacity={0.8}
-          className="flex-1 mr-4 border border-black py-4 items-center flex-row justify-center"
+          className="flex-1 mr-4 border border-black items-center flex-row justify-center"
+          style={{ height: 48 }}
         >
-          <Ionicons name="calendar-outline" size={18} color="black" style={{ marginRight: 8 }} />
+          <Image source={BOOKING_SMALL_ICON} style={{ width: 21, height: 21, marginRight: 8 }} contentFit="contain" />
           <Text className="text-black text-[12px] font-bold tracking-[2px] uppercase">Booking</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
           activeOpacity={0.9}
           onPress={handleAddToCart}
-          className="flex-1 bg-black py-4 items-center flex-row justify-center"
+          className="flex-1 bg-black items-center flex-row justify-center"
+          style={{ height: 48 }}
         >
-          <Ionicons name="cart-outline" size={18} color="white" style={{ marginRight: 8 }} />
+          <Image source={CART_SMALL_ICON} style={{ width: 18, height: 18, marginRight: 8 }} contentFit="contain" />
           <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Add to Cart</Text>
         </TouchableOpacity>
 
@@ -419,11 +548,22 @@ export default function ProductDetailsScreen() {
         onRequestClose={() => setOptionModalVisible(false)}
       >
         <Pressable 
-          className="flex-1 bg-black/40 items-center justify-center px-8"
+          className="flex-1 items-center justify-center px-8"
+          style={{ backgroundColor: 'rgba(255,255,255,0.72)' }}
           onPress={() => setOptionModalVisible(false)}
         >
-          <Pressable className="bg-white w-full p-8 items-center rounded-sm">
-            <Text className="text-[#1A1A1A] text-sm text-center mb-10 font-[300]">
+          <Pressable className="bg-white w-full p-8 items-center rounded-sm border border-black">
+            <Text
+              className="text-[#1A1A1A] text-left mb-10"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '400',
+                fontSize: 12,
+                lineHeight: 18,
+                letterSpacing: 0.48,
+                alignSelf: 'stretch',
+              }}
+            >
               Choose the option that suits you best.
             </Text>
             
@@ -439,9 +579,20 @@ export default function ProductDetailsScreen() {
                   },
                 });
               }}
-              className="w-full border border-[#E0E0E0] py-4 items-center mb-4"
+              className="w-full border border-black py-4 items-center mb-4"
             >
-              <Text className="text-[#1A1A1A] text-[12px] font-medium tracking-[1.5px] uppercase">In Store Visit</Text>
+              <Text
+                className="text-[#1A1A1A] uppercase"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 14,
+                  letterSpacing: 0.56,
+                }}
+              >
+                In Store Visit
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
@@ -456,9 +607,20 @@ export default function ProductDetailsScreen() {
                   },
                 });
               }}
-              className="w-full border border-[#E0E0E0] py-4 items-center"
+              className="w-full border border-black py-4 items-center"
             >
-              <Text className="text-[#1A1A1A] text-[12px] font-medium tracking-[1.5px] uppercase">Video Call</Text>
+              <Text
+                className="text-[#1A1A1A] uppercase"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 14,
+                  letterSpacing: 0.56,
+                }}
+              >
+                Video Call
+              </Text>
             </TouchableOpacity>
 
 
@@ -530,8 +692,6 @@ export default function ProductDetailsScreen() {
           </View>
         </View>
       </Modal>
-        </>
-      )}
     </View>
   );
 }

@@ -335,7 +335,7 @@ export default function BookingCalendarScreen() {
     if (!isAuthenticated) {
       Alert.alert('Login Required', 'Please create an account or log in to book an appointment.', [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Continue', onPress: () => router.replace('/auth-choice') },
+        { text: 'Sign Up', onPress: () => router.replace('/signup') },
       ]);
       return;
     }

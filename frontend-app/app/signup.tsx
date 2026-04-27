@@ -93,7 +93,7 @@ export default function SignupScreen() {
                 fontFamily: 'Helvetica Neue',
                 fontSize: 28,
                 fontWeight: '400',
-                lineHeight: 28,
+                lineHeight: 30,
                 letterSpacing: 0
               }}
             >
@@ -107,7 +107,7 @@ export default function SignupScreen() {
                 fontFamily: 'Helvetica Neue',
                 fontSize: 12,
                 fontWeight: '300',
-                lineHeight: 12,
+                lineHeight: 14,
                 letterSpacing: 0.72
               }}
             >
@@ -159,7 +159,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -180,7 +180,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -202,7 +202,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -223,7 +223,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -250,7 +250,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >

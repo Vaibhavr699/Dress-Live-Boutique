@@ -10,6 +10,7 @@ import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 
 const WISHLIST_EMPTY_SVG = require('@/assets/svg/wishlist-heart 1.svg');
+const PLUS_ICON = require('@/assets/svg/plus.svg');
 
 const EMPTY_STATE_HEADING_STYLE = {
   fontFamily: 'Helvetica Neue',
@@ -43,36 +44,6 @@ type Dress = {
   image_url?: string | null;
   boutique_id: number;
 };
-
-/** Thin-stroke plus (~1px) to match design; Ionicons "add" is too heavy. */
-function ThinPlusIcon({ size = 14, color = '#000000' }: { size?: number; color?: string }) {
-  const stroke = Math.max(StyleSheet.hairlineWidth, 1);
-  const half = size / 2;
-  return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          width: size,
-          height: stroke,
-          backgroundColor: color,
-          top: half - stroke / 2,
-        }}
-      />
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          width: stroke,
-          height: size,
-          backgroundColor: color,
-          left: half - stroke / 2,
-        }}
-      />
-    </View>
-  );
-}
 
 const HEADER_TITLE_STYLE = {
   fontFamily: 'Helvetica Neue',
@@ -294,7 +265,7 @@ export default function WishlistScreen() {
                         paddingVertical: 8,
                       }}
                     >
-                      <ThinPlusIcon size={14} color="#000000" />
+                      <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       activeOpacity={0.7}

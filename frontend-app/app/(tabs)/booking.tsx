@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
@@ -13,6 +14,10 @@ import {
   sendLocalPhoneNotification,
   syncScheduledBookingReminder,
 } from '@/lib/buyerNotifications';
+
+const NO_BOOKING_ICON = require('@/assets/svg/No Booking.svg');
+const LANGUAGE_ICON = require('@/assets/svg/Language.svg');
+const MARKER_ICON = require('@/assets/svg/marker.svg');
 
 type Booking = {
   id: number;
@@ -33,8 +38,23 @@ export default function BookingScreen() {
   const setBookingHistoryFromApi = useBookingHistoryStore((state) => state.setFromApi);
   const addNotification = useNotificationStore((s) => s.add);
   const upsertNotification = useNotificationStore((s) => s.upsert);
-  const token = useAuthStore((s) => s.token);
+  const token = useAuthStore((s: any) => s.token);
   const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated());
+
+  const openGoogleMaps = useCallback(async (query: string) => {
+    const q = query?.trim();
+    if (!q) {
+      Alert.alert('Google Maps', 'Boutique location is not available yet.');
+      return;
+    }
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    const canOpen = await Linking.canOpenURL(url);
+    if (!canOpen) {
+      Alert.alert('Google Maps', 'Could not open Google Maps.');
+      return;
+    }
+    await Linking.openURL(url);
+  }, []);
 
   useEffect(() => {
     const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
@@ -126,7 +146,7 @@ export default function BookingScreen() {
       ) : !isLoggedIn ? (
         <View className="flex-1 items-center justify-center px-10">
           <View className="mb-8 opacity-20">
-            <MaterialCommunityIcons name="calendar-check-outline" size={64} color="black" />
+            <Image source={NO_BOOKING_ICON} style={{ width: 64, height: 64 }} />
           </View>
           <Text className="text-black text-sm font-medium uppercase tracking-[2px] mb-2 text-center">
             Sign in required
@@ -139,23 +159,35 @@ export default function BookingScreen() {
           </TouchableOpacity>
         </View>
       ) : isEmpty ? (
-        <View className="flex-1 items-center justify-center px-10">
-          <View className="mb-8 opacity-20">
-            <MaterialCommunityIcons name="calendar-check-outline" size={64} color="black" />
+        <View className="flex-1 items-center px-10" style={{ paddingTop: 76 }}>
+          <View className="mb-6 items-center justify-center">
+            <Image source={NO_BOOKING_ICON} style={{ width: 34, height: 34 }} contentFit="contain" />
           </View>
-          <Text className="text-black text-sm font-medium uppercase tracking-[2px] mb-2 text-center">
+          <Text
+            className="text-black uppercase mb-4 text-center"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 0.56,
+            }}
+          >
             No Booking
           </Text>
-          <Text className="text-black/40 text-[10px] text-center font-light leading-4 px-6">
-            You haven&apos;t booked a video call or store visit yet. When you do, they will be shown here.
-          </Text>
-          
-          <TouchableOpacity 
-            onPress={() => router.push('/')}
-            className="mt-10 border-b border-black pb-1"
+          <Text
+            className="text-black/40 text-center px-6"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 12,
+              lineHeight: 24,
+              letterSpacing: 0,
+            }}
           >
-            <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Book Now</Text>
-          </TouchableOpacity>
+            You haven&apos;t booked a video call or store visit yet.{'\n'}
+            When you do, they will be shown here.
+          </Text>
         </View>
       ) : (
         <ScrollView 
@@ -164,14 +196,14 @@ export default function BookingScreen() {
           contentContainerStyle={{ paddingTop: 24, paddingBottom: 100 }}
         >
           {bookings.map((booking) => (
-            <View key={booking.id} className="px-6 mb-10">
-              <Text className="text-black text-[12px] font-bold uppercase mb-4 tracking-[1px] opacity-60">
+            <View key={booking.id} className="px-5 mb-10">
+              <Text className="text-black text-[14px] font-[400] uppercase mb-5 tracking-[0px]">
                 {booking.appointment_type === 'video' ? 'VIDEO CALL BOOKED' : 'STORE VISIT BOOKED'} | {booking.id}
               </Text>
               
-              <View className="border border-[#F0F0F0] p-6 rounded-sm">
+              <View className="border border-black rounded-sm" style={{ height: 256, position: 'relative' }}>
                 {/* Actions Row */}
-                <View className="flex-row justify-end mb-6 gap-6">
+                <View className="absolute right-4 top-3 flex-row gap-5 z-10">
                   <TouchableOpacity
                     onPress={() =>
                       router.push({
@@ -193,45 +225,100 @@ export default function BookingScreen() {
                 </View>
 
                 {/* Details Section */}
-                <View className="mb-6">
-                  <Text className="text-black/30 text-[10px] font-bold uppercase mb-4 tracking-[0.5px]">
-                    {booking.appointment_type === 'video' ? 'Date & Time:' : 'Store Visit Date/Time & Location'}
+                <View className="px-6 pt-5">
+                  <Text
+                    className="text-black mb-4"
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '200',
+                      fontSize: 14,
+                      lineHeight: 14,
+                      letterSpacing: 0.56,
+                      textAlign: 'left',
+                    }}
+                  >
+                    {booking.appointment_type === 'video' ? 'Data & Time:' : 'Date & Time:'}
                   </Text>
-                  <View className="flex-row items-center mb-6">
-                    <MaterialCommunityIcons name="calendar-month-outline" size={20} color="black" className="mr-4" />
-                    <Text className="text-black text-xs font-medium ml-4">{booking.scheduled_for}</Text>
-                  </View>
-
-                  <Text className="text-black/30 text-[10px] font-bold uppercase mb-4 tracking-[0.5px]">Languages</Text>
-                  <View className="flex-row items-center">
-                    <Ionicons name="globe-outline" size={20} color="black" className="mr-4" />
-                    <Text className="text-black text-xs font-medium ml-4">{booking.language}</Text>
+                  <View className="flex-row items-center mb-4">
+                    <Image source={NO_BOOKING_ICON} style={{ width: 20, height: 20, marginRight: 16 }} />
+                    <Text
+                      className="text-black flex-1"
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '500',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 0.56,
+                        textAlign: 'left',
+                      }}
+                    >
+                      {booking.scheduled_for}
+                    </Text>
                   </View>
 
                   {booking.appointment_type === 'in_store' && (
-                    <View className="flex-row items-center mt-6">
-                      <Ionicons name="location-outline" size={20} color="black" className="mr-4" />
-                      <Text className="text-black text-[11px] font-medium ml-4">
+                    <View className="flex-row items-center mb-4">
+                      <Image source={MARKER_ICON} style={{ width: 20, height: 20, marginRight: 16 }} />
+                      <Text
+                        className="text-black flex-1"
+                        numberOfLines={1}
+                        style={{
+                          fontFamily: 'Helvetica Neue',
+                          fontWeight: '400',
+                          fontSize: 14,
+                          lineHeight: 14,
+                          letterSpacing: 0.56,
+                          textAlign: 'left',
+                        }}
+                      >
                         {booking.location || 'Boutique location shared by partner'}
                       </Text>
                     </View>
                   )}
 
-                  <View className="mt-6 self-start rounded-full bg-black/5 px-3 py-2">
-                    <Text className="text-[10px] font-bold uppercase tracking-[0.8px] text-black/60">
-                      Status: {booking.status}
+                  <Text
+                    className="text-black mb-4"
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '300',
+                      fontSize: 14,
+                      lineHeight: 14,
+                      letterSpacing: 0.56,
+                      textAlign: 'left',
+                    }}
+                  >
+                    Languages
+                  </Text>
+                  <View className="flex-row items-center">
+                    <Image source={LANGUAGE_ICON} style={{ width: 20, height: 20, marginRight: 16 }} />
+                    <Text
+                      className="text-black flex-1"
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '400',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 0.56,
+                        textAlign: 'left',
+                      }}
+                    >
+                      {booking.language}
                     </Text>
                   </View>
                 </View>
 
                 {/* Main Action Button */}
                 <TouchableOpacity 
-                   onPress={() =>
-                    booking.appointment_type === 'video'
-                      ? router.push({ pathname: '/(tabs)/video-call', params: { bookingId: String(booking.id) } } as any)
-                      : null
-                  }
-                   className="w-full bg-black py-4 items-center justify-center mt-4"
+                  onPress={() => {
+                    if (booking.appointment_type === 'video') {
+                      router.push({ pathname: '/(tabs)/video-call', params: { bookingId: String(booking.id) } } as any);
+                      return;
+                    }
+                    const locationQuery = booking.location || booking.boutique?.location || '';
+                    void openGoogleMaps(locationQuery);
+                  }}
+                   className="absolute left-0 right-0 bottom-0 bg-black items-center justify-center"
+                   style={{ height: 48 }}
                 >
                   <Text className="text-white text-[12px] font-bold tracking-[2.5px] uppercase">
                     {booking.appointment_type === 'video' ? 'Start Video Call' : 'See Google Map'}

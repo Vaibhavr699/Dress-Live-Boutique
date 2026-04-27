@@ -73,32 +73,32 @@ export default function Home() {
         <section className="card-surface">
           <div className="grid gap-8 px-6 py-8 lg:grid-cols-[1.05fr_0.95fr] lg:px-10 lg:py-10">
             <div className="flex flex-col justify-between">
-              <div>
+            <div>
                 <p className="pill-label text-black/45">Modern Bridal Commerce Experience</p>
                 <h1 className="font-serif-display mt-6 max-w-4xl text-5xl leading-[0.92] tracking-[-0.05em] text-black md:text-6xl lg:text-7xl">
                   Discover dresses, book meaningful appointments and move with confidence toward the right choice.
-                </h1>
+              </h1>
                 <p className="mt-6 max-w-2xl text-base leading-7 text-black/55 lg:text-lg">
                   Dress Live is a bridal platform that connects elegant dress discovery with real boutique guidance.
                   Instead of treating bridal shopping like generic ecommerce, it supports shortlisting, consultation,
                   booking and boutique-led decision-making in one connected experience.
-                </p>
-              </div>
+              </p>
+            </div>
 
               <div className="mt-10 flex flex-wrap gap-4">
-                <Link
+              <Link
                   href="/register?role=buyer"
                   className={blackButtonClass}
                   style={{ color: "#FFFFFF" }}
                 >
                   Start Your Journey
-                </Link>
-                <Link
+              </Link>
+              <Link
                   href="/register?role=partner"
                   className={`${outlineButtonClass} px-6`}
                 >
                   <span className="transition-colors duration-300 group-hover:text-white">List Your Boutique</span>
-                </Link>
+              </Link>
               </div>
 
               <div className="mt-10 grid gap-4 md:grid-cols-3">
@@ -132,19 +132,19 @@ export default function Home() {
                     Built for premium bridal browsing, thoughtful appointments and high-intent consultations rather than
                     a simple storefront checkout.
                   </p>
-                </div>
-              </div>
+            </div>
+          </div>
 
               <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
                 <div className="rounded-[28px] border border-black/10 bg-[#111111] p-6 text-white">
-                  <p className="pill-label text-white/55">Product Logic</p>
-                  <h3 className="font-serif-display mt-4 text-3xl tracking-[-0.04em]">
+              <p className="pill-label text-white/55">Product Logic</p>
+              <h3 className="font-serif-display mt-4 text-3xl tracking-[-0.04em]">
                     Discover. Shortlist. Book. Decide.
-                  </h3>
-                  <div className="hero-divider my-6 opacity-30" />
+              </h3>
+              <div className="hero-divider my-6 opacity-30" />
                   <div className="grid gap-4">
-                    <div>
-                      <p className="text-3xl">01</p>
+                <div>
+                  <p className="text-3xl">01</p>
                       <p className="mt-2 text-sm text-white/70">Find boutiques and visible collections</p>
                     </div>
                     <div>
@@ -308,8 +308,8 @@ export default function Home() {
               boutique context intact.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/register?role=buyer"
+                <Link
+                  href="/register?role=buyer"
                 className={blackButtonClass}
                 style={{ color: "#FFFFFF" }}
               >
@@ -320,9 +320,9 @@ export default function Home() {
                 className={outlineButtonClass}
               >
                 <span className="transition-colors duration-300 group-hover:text-white">Sign in</span>
-              </Link>
+                </Link>
             </div>
-          </div>
+              </div>
 
           <div className="card-surface rounded-[32px] bg-[#111111] p-6 text-black lg:p-8">
             <p className="pill-label text-black/45">For Boutiques</p>
@@ -332,8 +332,8 @@ export default function Home() {
               reflects the boutique side of the business.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/register?role=partner"
+                <Link
+                  href="/register?role=partner"
                 className={blackButtonClass}
                 style={{ color: "#FFFFFF" }}
               >
@@ -344,7 +344,7 @@ export default function Home() {
                 className="group inline-flex rounded-full border border-white/25 px-5 py-3 text-sm text-white transition hover:bg-white"
               >
                 <span className="transition-colors duration-300 group-hover:text-black">Open workspace</span>
-              </Link>
+                </Link>
             </div>
           </div>
         </section>

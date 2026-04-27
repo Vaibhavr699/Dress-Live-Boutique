@@ -172,7 +172,7 @@ export default function RootLayout() {
       );
 
     if (!isAuthenticated && isProtectedForGuests) {
-      router.replace('/auth-choice');
+      router.replace('/signup');
       return;
     }
 
@@ -270,7 +270,6 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="signup" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="auth-choice" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="forgot-password" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="otp-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="reset-password" options={{ headerShown: false, animation: 'slide_from_right' }} />

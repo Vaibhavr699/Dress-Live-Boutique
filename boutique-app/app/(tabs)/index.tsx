@@ -317,8 +317,8 @@ export default function BoutiqueDashboard() {
                 letterSpacing: 0,
               }}
             >
-              Shop Dashboard
-            </Text>
+            Shop Dashboard
+          </Text>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => router.push('/notifications')}
