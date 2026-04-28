@@ -5,6 +5,34 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 
+const RESET_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 24,
+  lineHeight: 24,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const RESET_DESCRIPTION_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#1A1A1A',
+};
+
+const BUTTON_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+  color: '#FFFFFF',
+};
+
 export default function OTPVerifyScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -83,25 +111,13 @@ export default function OTPVerifyScreen() {
             {/* Title Section */}
             <View className="mb-12">
               <Text 
-                className="text-black mb-2"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 28,
-                  fontWeight: '400',
-                  lineHeight: 32,
-                  letterSpacing: -0.5
-                }}
+                className="mb-2"
+                style={RESET_TITLE_STYLE}
               >
                 Check Your Account Email
               </Text>
               <Text 
-                className="text-[#1A1A1A] opacity-60"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 14,
-                  fontWeight: '400',
-                  lineHeight: 20
-                }}
+                style={RESET_DESCRIPTION_STYLE}
               >
                 We send a reset link to {email || 'example@gmail.com'} enter 6 digital code that mentioned in the email.
               </Text>
@@ -139,8 +155,7 @@ export default function OTPVerifyScreen() {
                 <ActivityIndicator color="white" />
               ) : (
                 <Text 
-                  className="text-white text-sm font-bold tracking-[2px] uppercase"
-                  style={{ fontFamily: 'Helvetica Neue' }}
+                  style={BUTTON_TEXT_STYLE}
                 >
                   VERIFY CODE
                 </Text>

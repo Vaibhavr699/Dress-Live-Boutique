@@ -1,44 +1,113 @@
 import React from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function DeleteAccountScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
-        <TouchableOpacity onPress={() => router.back()} className="mb-10">
-          <Ionicons name="arrow-back" size={18} color="black" />
+    <View className="flex-1 bg-white">
+      <View className="px-6 flex-row items-center pb-4" style={{ paddingTop: insets.top + 10 }}>
+        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+          <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
+      </View>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-3">
-          Delete Your Account
+      <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
+        <Text
+          className="text-black mb-4"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
+          Delete your Account
         </Text>
-        <Text className="text-[11px] text-black/55 leading-6 mb-12">
+        <Text
+          className="text-black mb-12"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '300',
+            fontSize: 14,
+            lineHeight: 18,
+            letterSpacing: 0,
+            opacity: 0.6,
+          }}
+        >
           You are about to begin the process to delete your account.
         </Text>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-3">Remember:</Text>
-        <Text className="text-[11px] text-black/55 leading-6 mb-12">
-          You will not be able to track any purchase, return and/or exchange online.
-        </Text>
-
-        <Text className="text-[11px] text-black/55 leading-6">
-          You will not able to access your Live Dress account.
-        </Text>
+        <View className="mb-12">
+          <Text
+            className="text-black mb-4"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '200',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+              opacity: 0.7,
+            }}
+          >
+            Remember:
+          </Text>
+          <Text
+            className="text-black mb-10"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 18,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
+            You will not be able to track any purchase, return and/or exchange online.
+          </Text>
+          <Text
+            className="text-black"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 18,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
+            You will not be able to access your Live Dress account.
+          </Text>
+        </View>
 
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={() => router.push('/delete-account-confirmation')}
-          className="bg-black py-4 items-center justify-center mt-auto mb-10"
+          className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
+          style={{ marginTop: 120 }}
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">Continue</Text>
+          <Text
+            className="text-white"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '400',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+            }}
+          >
+            Continue
+          </Text>
         </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+      </ScrollView>
+    </View>
   );
 }

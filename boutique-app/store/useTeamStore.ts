@@ -72,30 +72,7 @@ const storage = {
   },
 };
 
-const INITIAL_MEMBERS: TeamMember[] = [
-  {
-    id: '1',
-    name: 'Elife',
-    role: 'Sale Executive',
-    email: 'example@gmail.com',
-    status: 'Offline',
-    languages: ['English', 'French'],
-    availabilityOn: true,
-    availabilitySchedule: DEFAULT_TEAM_AVAILABILITY,
-    imageKey: 'avatar',
-  },
-  {
-    id: '2',
-    name: 'Amina',
-    role: 'Sale Executive',
-    email: 'amina@example.com',
-    status: 'Offline',
-    languages: ['English', 'German'],
-    availabilityOn: false,
-    availabilitySchedule: DEFAULT_TEAM_AVAILABILITY,
-    imageKey: 'catalog',
-  },
-];
+const INITIAL_MEMBERS: TeamMember[] = [];
 
 export const TEAM_MEMBER_IMAGES: Record<TeamMemberImageKey, any> = {
   avatar: require('../assets/images/avatar.png'),

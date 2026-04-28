@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Pressable, Alert } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, Pressable, Alert, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -10,8 +10,18 @@ export default function TeamScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const members = useTeamStore((state) => state.members);
   const deleteMember = useTeamStore((state) => state.deleteMember);
+
+  const filteredMembers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter((m) => {
+      const haystack = `${m.name} ${m.role} ${m.email}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [members, searchQuery]);
 
   const handleDeleteMember = (id: string) => {
     Alert.alert('Delete Member', 'Are you sure you want to remove this team member?', [
@@ -143,10 +153,25 @@ export default function TeamScreen() {
             </View>
           </View>
 
-          <View className="border-t border-[#EDEDED] pt-7 mb-9">
-            <Text className="text-[10px] uppercase tracking-[0.8px] text-center text-black/30">
-              Search Team Member Name...
-            </Text>
+          <View style={{ borderTopWidth: 1, borderTopColor: '#E6E6E6', borderBottomWidth: 1, borderBottomColor: '#E6E6E6', marginBottom: 30 }}>
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="SEARCH TEAM MEMBER NAME..."
+              placeholderTextColor="#9B9B9B"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={{
+                height: 62,
+                color: '#000000',
+                fontFamily: 'Helvetica Neue',
+                fontSize: 12,
+                fontWeight: '400',
+                letterSpacing: 0.36,
+                textAlign: 'center',
+                textTransform: 'uppercase',
+              }}
+            />
           </View>
 
           {members.length === 0 ? (
@@ -163,8 +188,15 @@ export default function TeamScreen() {
                 <Text className="text-[11px] uppercase tracking-[1px] text-white">Add Member</Text>
               </TouchableOpacity>
             </View>
+          ) : filteredMembers.length === 0 ? (
+            <View className="py-20 items-center">
+              <Text className="text-[14px] text-black mb-2">No matching members</Text>
+              <Text className="text-[11px] text-center text-black/35 leading-5 px-10">
+                Try searching with another name or email.
+              </Text>
+            </View>
           ) : (
-            members.map((member) => (
+            filteredMembers.map((member) => (
             <TouchableOpacity
               key={member.id}
               activeOpacity={0.9}

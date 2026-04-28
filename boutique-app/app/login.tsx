@@ -6,6 +6,53 @@ import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 
+const LOGIN_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 28,
+  lineHeight: 28,
+  letterSpacing: 0,
+};
+
+const LOGIN_SECTION_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 16,
+  lineHeight: 24,
+  letterSpacing: 0,
+  color: '#1A1A1A',
+  textTransform: 'uppercase' as const,
+};
+
+const INPUT_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0.72,
+  textTransform: 'uppercase' as const,
+  color: 'rgba(26,26,26,0.5)',
+};
+
+const FORGOT_LINK_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0,
+  color: 'rgba(26,26,26,0.6)',
+};
+
+const BUTTON_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+  color: '#FFFFFF',
+};
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -73,43 +120,25 @@ export default function LoginScreen() {
           {/* Dress Live Title */}
           <Text 
             className="text-black text-center mb-20"
-            style={{ 
-              fontFamily: 'Helvetica Neue',
-              fontSize: 28,
-              fontWeight: '400',
-              lineHeight: 28,
-              letterSpacing: 0
-            }}
+            style={LOGIN_TITLE_STYLE}
           >
             Dress Live
           </Text>
 
           {/* Section Header */}
           <Text 
-            className="text-[#1A1A1A] uppercase mb-12 opacity-70"
-            style={{ 
-              fontFamily: 'Helvetica Neue',
-              fontSize: 12,
-              fontWeight: '300',
-              lineHeight: 12,
-              letterSpacing: 0.72
-            }}
+            className="mb-12"
+            style={LOGIN_SECTION_HEADING_STYLE}
           >
             Add Your Log In Info
           </Text>
 
           {/* Input Fields */}
-          <View className="gap-10 mb-8">
+          <View className="gap-10 mb-2">
             <View className="border-b border-[#E0E0E0] pb-2">
               <Text 
-                className="text-[#1A1A1A]/50 uppercase mb-1"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 12,
-                  fontWeight: '300',
-                  lineHeight: 12,
-                  letterSpacing: 0.72
-                }}
+                className="mb-1"
+                style={INPUT_HEADING_STYLE}
               >
                 Email *
               </Text>
@@ -124,14 +153,8 @@ export default function LoginScreen() {
 
             <View className="border-b border-[#E0E0E0] pb-2 relative">
               <Text 
-                className="text-[#1A1A1A]/50 uppercase mb-1"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 12,
-                  fontWeight: '300',
-                  lineHeight: 12,
-                  letterSpacing: 0.72
-                }}
+                className="mb-1"
+                style={INPUT_HEADING_STYLE}
               >
                 Password *
               </Text>
@@ -156,13 +179,7 @@ export default function LoginScreen() {
             className="items-end mb-16"
           >
             <Text 
-              className="text-[#1A1A1A] opacity-60"
-              style={{ 
-                fontFamily: 'Helvetica Neue',
-                fontSize: 12,
-                fontWeight: '300',
-                lineHeight: 12
-              }}
+              style={FORGOT_LINK_STYLE}
             >
               Forgot your password?
             </Text>
@@ -173,12 +190,12 @@ export default function LoginScreen() {
             activeOpacity={0.9}
             onPress={handleLogin}
             disabled={loading}
-            className="bg-[#1A1A1A] py-6 items-center mb-10"
+            className="bg-[#1A1A1A] py-6 items-center mb-8"
           >
             {loading ? (
               <ActivityIndicator color="white" />
             ) : (
-              <Text className="text-white text-sm font-bold tracking-[3px] uppercase">
+              <Text style={BUTTON_TEXT_STYLE}>
                 Log In
               </Text>
             )}
@@ -205,7 +222,7 @@ export default function LoginScreen() {
                   fontFamily: 'Helvetica Neue',
                   fontSize: 14,
                   fontWeight: '300',
-                  lineHeight: 14,
+                  lineHeight: 16,
                   letterSpacing: 0
                 }}
               >

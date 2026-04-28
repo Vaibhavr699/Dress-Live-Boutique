@@ -1,57 +1,87 @@
-import React, { useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity } from 'react-native';
+import React from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
+import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 
-const PAYMENT_OPTIONS = [
-  { id: 'card', title: 'Card', subtitle: 'CARD', accent: 'AppleCard' },
-  { id: 'paypal', title: 'PayPal', subtitle: 'PAYPAL', accent: 'PP' },
-  { id: 'apple-pay', title: 'Apple Pay', subtitle: 'APPLE PAY', accent: 'ApplePay' },
-  { id: 'gift-card', title: 'Gift Card', subtitle: 'GIFT CARD', accent: 'GIFT\nCARD.' },
-  { id: 'in-card', title: 'In Card', subtitle: 'IN CARD', accent: 'IN' },
-] as const;
+const { width } = Dimensions.get('window');
 
 export default function PaymentMethodsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [selectedMethod, setSelectedMethod] = useState<(typeof PAYMENT_OPTIONS)[number]['id']>('paypal');
+  const [selectedMethod, setSelectedMethod] = React.useState('paypal');
+
+  const methods = [
+    { id: 'card', label: 'CARD', icon: <Ionicons name="card-outline" size={24} color="black" />, subtitle: 'Card' },
+    { id: 'paypal', label: 'PAYPAL', icon: <FontAwesome5 name="paypal" size={24} color="black" />, subtitle: 'PayPal' },
+    { id: 'applepay', label: 'APPLE PAY', icon: <Ionicons name="logo-apple" size={24} color="black" />, subtitle: 'Apple Pay' },
+    { id: 'giftcard', label: 'GIFT CARD', icon: <Ionicons name="gift-outline" size={24} color="black" />, subtitle: 'Gift Card' },
+    { id: 'incard', label: 'IN CARD', icon: <Ionicons name="apps-outline" size={24} color="black" />, subtitle: 'In Card' },
+  ];
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
-        <TouchableOpacity onPress={() => router.back()} className="mb-10">
-          <Ionicons name="arrow-back" size={18} color="black" />
+    <View className="flex-1 bg-white">
+      {/* Header */}
+      <View className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" style={{ paddingTop: insets.top + 10 }}>
+        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+          <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
+        <Text className="text-black text-sm font-bold uppercase tracking-[2px] ml-4">Payment Methods</Text>
+      </View>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-10">
-          Please Choose A Payment Method
+      <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8" contentContainerStyle={{ paddingBottom: 120 }}>
+        <Text
+          className="text-black mb-10 text-center"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 18,
+            lineHeight: 18,
+            letterSpacing: 2,
+            opacity: 0.7,
+            textTransform: 'uppercase',
+          }}
+        >
+          Please Choose a Payment Method
         </Text>
 
         <View className="flex-row flex-wrap justify-between">
-          {PAYMENT_OPTIONS.map((option) => {
-            const selected = option.id === selectedMethod;
-
+          {methods.map((method) => {
+            const isSelected = selectedMethod === method.id;
+            const cardWidth = Math.min(185, (width - 64 - 24) / 2);
             return (
               <TouchableOpacity
-                key={option.id}
-                activeOpacity={0.85}
-                onPress={() => setSelectedMethod(option.id)}
-                className="w-[48.2%] border px-4 py-6 mb-5 items-center justify-center min-h-[110px]"
-                style={{ borderColor: selected ? '#1A1A1A' : '#E2E2E2' }}
+                key={method.id}
+                activeOpacity={0.8}
+                onPress={() => setSelectedMethod(method.id)}
+                className={`items-center justify-center mb-6 border ${isSelected ? 'border-black' : 'border-[#F0F0F0]'}`}
+                style={{
+                  width: cardWidth,
+                  height: 110,
+                  borderWidth: 1,
+                }}
               >
+                <View className="mb-4">{method.icon}</View>
                 <Text
-                  className="text-[18px] text-black mb-3 text-center"
-                  style={{ fontFamily: 'Helvetica Neue', fontWeight: '700' }}
+                  className="text-black uppercase"
+                  style={{
+                    fontFamily: 'Helvetica Neue',
+                    fontWeight: '300',
+                    fontSize: 18,
+                    lineHeight: 18,
+                    letterSpacing: 1,
+                  }}
                 >
-                  {option.accent}
+                  {method.label}
                 </Text>
-                <Text className="text-[16px] text-black text-center">{option.subtitle}</Text>
               </TouchableOpacity>
             );
           })}
         </View>
+      </ScrollView>
 
+      {/* Continue Button */}
+      <View className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 pb-8 border-t border-[#F5F5F5]" style={{ paddingBottom: 30 }}>
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={() =>
@@ -60,11 +90,11 @@ export default function PaymentMethodsScreen() {
               params: { method: selectedMethod },
             })
           }
-          className="bg-black py-4 items-center justify-center mt-auto mb-10"
+          className="w-full bg-black py-4 items-center justify-center"
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">Continue</Text>
+          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Continue</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Ionicons, Feather, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
@@ -41,22 +41,50 @@ export default function PaymentMethodsScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8" contentContainerStyle={{ paddingBottom: 120 }}>
-        <Text className="text-black text-[12px] font-bold uppercase mb-10 tracking-[1px] opacity-40 text-center">Please Choose a Payment Method</Text>
+        <Text
+          className="text-black mb-10 text-center"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 18,
+            lineHeight: 18,
+            letterSpacing: 2,
+            opacity: 0.7,
+            textTransform: 'uppercase',
+          }}
+        >
+          Please Choose a Payment Method
+        </Text>
         
         <View className="flex-row flex-wrap justify-between">
           {methods.map((method) => {
             const isSelected = selectedMethod === method.id;
+            const cardWidth = Math.min(185, (width - 64 - 24) / 2);
             return (
               <TouchableOpacity 
                 key={method.id}
                 activeOpacity={0.8}
                 onPress={() => setSelectedMethod(method.id)}
-                className={`items-center justify-center mb-6 py-8 px-4 border ${isSelected ? 'border-black' : 'border-[#F0F0F0]'}`}
-                style={{ width: (width - 64 - 24) / 2 }}
+                className={`items-center justify-center mb-6 border ${isSelected ? 'border-black' : 'border-[#F0F0F0]'}`}
+                style={{
+                  width: cardWidth,
+                  height: 110,
+                  borderWidth: 1,
+                }}
               >
                 <View className="mb-4">{method.icon}</View>
-                <Text className="text-black text-[10px] font-bold tracking-[1px] uppercase mb-1">{method.label}</Text>
-                <Text className="text-black/30 text-[9px] uppercase tracking-[0.5px]">{method.subtitle}</Text>
+                <Text
+                  className="text-black uppercase"
+                  style={{
+                    fontFamily: 'Helvetica Neue',
+                    fontWeight: '300',
+                    fontSize: 18,
+                    lineHeight: 18,
+                    letterSpacing: 1,
+                  }}
+                >
+                  {method.label}
+                </Text>
               </TouchableOpacity>
             );
           })}

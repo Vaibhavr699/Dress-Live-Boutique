@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +33,7 @@ export default function AITryOnScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ dressId?: string; source?: string }>();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [step, setStep] = useState(1);
   const [countdown, setCountdown] = useState(5);
   const [permission, requestPermission] = useCameraPermissions();
@@ -47,6 +48,7 @@ export default function AITryOnScreen() {
   const [renderedUri, setRenderedUri] = useState<string | null>(null);
   const [dress, setDress] = useState<Dress | null>(null);
   const [dressLoading, setDressLoading] = useState(false);
+  const [selectedDressImageIndex, setSelectedDressImageIndex] = useState(0);
   const [savedSelfie, setSavedSelfie] = useState<SavedTestingImage | null>(cachedSelfieImage);
   const [savedFullBody, setSavedFullBody] = useState<SavedTestingImage | null>(cachedFullBodyImage);
 
@@ -60,47 +62,68 @@ export default function AITryOnScreen() {
       id: 1,
       type: 'instruction',
       image: require('@/assets/images/AI Try 1.png'),
-      instructions: 'We will create a dress preview using one selfie and one clear full-body photo.',
+      instructions: 'MAKE NEED THE PHOTO: IS WELL LIT AND THAT YOUR’RE THE ONLY ONE IN IT, WITH ON GLASSES,HATS OR HEADPHONES',
     },
     {
       id: 2,
       type: 'instruction',
       image: require('@/assets/images/AI try 2.png'),
-      instructions: 'Use bright lighting and make sure only you are visible, with your full body inside the frame.',
+      instructions: 'WE NEED TWO PHOTOS: A SELFIE AND A FULL BODY SHOT',
     },
     {
       id: 3,
       type: 'camera',
-      instructions: 'Take a clear selfie in good lighting.',
+      instructions: 'TAKE A SELFIE! YOU’LL NEED GOOD LIHTING',
     },
     {
       id: 4,
       type: 'confirmation',
-      instructions: 'Selfie captured',
+      instructions: 'SELFIE CAPTURED!',
     },
     {
       id: 5,
       type: 'camera',
-      instructions: 'Now take a full-body photo with your full silhouette visible.',
+      instructions: 'NOW TAKE A FULL-BODY PHOTO',
     },
     {
       id: 6,
       type: 'countdown',
-      instructions: 'Hold still while we capture your full-body photo.',
+      instructions: 'HOLD STILL WHILE WE CAPTURE YOUR FULL-BODY PHOTO.',
     },
     {
       id: 7,
       type: 'analysis',
-      instructions: 'Creating your AI dress preview',
+      instructions: 'ALL SET! WE’VE GOT ALL THE PHOTO',
     },
     {
       id: 8,
       type: 'result',
-      instructions: 'Your AI preview is ready. Review the look before you continue to booking.',
+      instructions: 'YOUR AI PREVIEW IS READY! REVIEW THE LOOK BEFORE YOU CONTINUE TO BOOKING.',
     },
   ];
 
   const currentStep = steps[step - 1];
+
+  const selectedDressImages = useMemo(() => {
+    if (!dress) return [];
+    const candidates = [dress.image_url, dress.ai_model_url].filter(Boolean) as string[];
+    const urls = candidates.filter((u) => /^https?:\/\//i.test(u));
+    // de-dupe while preserving order
+    return Array.from(new Set(urls));
+  }, [dress]);
+
+  useEffect(() => {
+    setSelectedDressImageIndex(0);
+  }, [dress?.id]);
+
+  const cameraFrameWidth = useMemo(() => Math.min(389, Math.max(280, windowWidth - 40)), [windowWidth]);
+  const cameraFrameHeight = useMemo(() => {
+    const maxH = 580;
+    const minH = 420;
+    const reserved = insets.top + insets.bottom + 240; // header + instruction + controls
+    const available = windowHeight - reserved;
+    return Math.max(minH, Math.min(maxH, Math.floor(available)));
+  }, [insets.bottom, insets.top, windowHeight]);
 
   const activePreviewUri = useMemo(() => {
     if (currentStep.id === 4) return selfieUri;
@@ -373,15 +396,38 @@ export default function AITryOnScreen() {
                 <ActivityIndicator color="#1A1A1A" />
               ) : dress ? (
                 <View className="w-full border border-black/10 px-4 py-3 flex-row items-center">
-                  <Image
-                    source={
-                      dress.image_url
-                        ? { uri: dress.image_url }
-                        : require('@/assets/images/Dashboard image 3.png')
-                    }
-                    style={{ width: 44, height: 56, borderRadius: 4 }}
-                    contentFit="cover"
-                  />
+                  <View style={{ width: 44 }}>
+                    <ScrollView
+                      horizontal
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
+                      scrollEnabled={selectedDressImages.length > 1}
+                      onMomentumScrollEnd={(e) => {
+                        const nextIndex = Math.round(e.nativeEvent.contentOffset.x / 44);
+                        setSelectedDressImageIndex(nextIndex);
+                      }}
+                      style={{ width: 44, height: 56, borderRadius: 4, overflow: 'hidden' }}
+                    >
+                      {(selectedDressImages.length > 0 ? selectedDressImages : [null]).map((url, idx) => (
+                        <Image
+                          key={`${dress.id}-${idx}-${url || 'fallback'}`}
+                          source={url ? { uri: url } : require('@/assets/images/Dashboard image 3.png')}
+                          style={{ width: 44, height: 56 }}
+                          contentFit="cover"
+                        />
+                      ))}
+                    </ScrollView>
+                    {selectedDressImages.length > 1 ? (
+                      <View className="flex-row justify-center gap-1 mt-1">
+                        {selectedDressImages.map((_, i) => (
+                          <View
+                            key={i}
+                            className={`h-[3px] w-[10px] rounded-full ${i === selectedDressImageIndex ? 'bg-black' : 'bg-black/15'}`}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
                   <View className="ml-3 flex-1">
                     <Text className="text-black text-[10px] font-bold uppercase tracking-[1px] opacity-55">
                       Selected dress
@@ -407,8 +453,18 @@ export default function AITryOnScreen() {
             <View className="items-center justify-center h-[55%] mt-4">
               <Image source={currentStep.image} style={{ width: '100%', height: '100%' }} contentFit="contain" />
             </View>
-            <View className="items-center mt-8 px-4 h-[100px] justify-center">
-              <Text className="text-[#1A1A1A] text-[13px] font-medium text-center leading-5 uppercase tracking-[0.5px]">
+            <View className="items-center mt-8 px-4 h-[120px] justify-center">
+              <Text
+                className="text-[#1A1A1A] text-center"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 24,
+                  letterSpacing: 0.56,
+                  textAlign: 'center',
+                }}
+              >
                 {currentStep.instructions}
               </Text>
             </View>
@@ -418,8 +474,17 @@ export default function AITryOnScreen() {
       case 'camera':
       case 'countdown':
         return (
-          <View className="flex-1 px-8">
-            <View className="items-center justify-center flex-1 mb-10 overflow-hidden">
+          <View className="flex-1" style={{ paddingHorizontal: 20 }}>
+            <View
+              className="items-center justify-center mb-10 overflow-hidden"
+              style={{
+                width: cameraFrameWidth,
+                height: cameraFrameHeight,
+                alignSelf: 'center',
+                borderWidth: 1,
+                borderColor: '#000',
+              }}
+            >
               <CameraView
                 ref={(r) => {
                   cameraRef.current = r;
@@ -445,16 +510,30 @@ export default function AITryOnScreen() {
                 </View>
               ) : null}
             </View>
-            <View className="items-center mb-10">
-              <Text className="text-[#1A1A1A] text-[10px] font-medium uppercase tracking-[1px] opacity-60">
+            <View className="items-center mb-10 px-6">
+              <Text
+                className="text-[#1A1A1A]"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 24,
+                  letterSpacing: 0.56,
+                  textAlign: 'center',
+                  opacity: 0.6,
+                }}
+              >
                 {currentStep.instructions}
               </Text>
             </View>
             
             {currentStep.type === 'camera' && (
-              <View className="mb-10 px-8">
+              <View className="mb-10" style={{ paddingHorizontal: 20 }}>
                 <View className="flex-row justify-between items-center">
-                  <TouchableOpacity className="w-10 h-10 rounded-lg overflow-hidden border border-black/10">
+                  <TouchableOpacity
+                    className="overflow-hidden border border-black"
+                    style={{ width: 50, height: 50 }}
+                  >
                     <Image
                       source={
                         activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/Dashboard image 1.png')
@@ -465,15 +544,17 @@ export default function AITryOnScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity 
                      onPress={handleCapture}
-                     className="w-16 h-16 rounded-full border-4 border-black items-center justify-center"
+                     className="items-center justify-center border border-black"
+                     style={{ width: 70, height: 70 }}
                   >
-                    <View className="w-12 h-12 bg-black rounded-full" />
+                    <View style={{ width: 50, height: 50, backgroundColor: '#000' }} />
                   </TouchableOpacity>
                   <TouchableOpacity
-                    className="w-10 h-10 items-center justify-center"
+                    className="items-center justify-center border border-black"
+                    style={{ width: 50, height: 50 }}
                     onPress={() => setCameraFacing((f) => (f === 'front' ? 'back' : 'front'))}
                   >
-                    <Ionicons name="camera-reverse-outline" size={28} color="black" />
+                    <Ionicons name="camera-reverse-outline" size={26} color="black" />
                   </TouchableOpacity>
                 </View>
 
@@ -547,8 +628,18 @@ export default function AITryOnScreen() {
                 </View>
               ) : null}
             </View>
-            <View className="items-center mb-10">
-              <Text className="text-[#1A1A1A] text-[10px] font-bold uppercase tracking-[2px] text-center">
+            <View className="items-center mb-10 px-6">
+              <Text
+                className="text-[#1A1A1A]"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 24,
+                  letterSpacing: 0.56,
+                  textAlign: 'center',
+                }}
+              >
                 {currentStep.instructions}
               </Text>
               {currentStep.type === 'analysis' ? (
@@ -572,8 +663,18 @@ export default function AITryOnScreen() {
                 contentFit="cover"
               />
             </View>
-            <View className="items-center mb-10">
-              <Text className="text-[#1A1A1A] text-[12px] font-medium text-center leading-5 uppercase tracking-[0.5px]">
+            <View className="items-center mb-10 px-6">
+              <Text
+                className="text-[#1A1A1A]"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 24,
+                  letterSpacing: 0.56,
+                  textAlign: 'center',
+                }}
+              >
                 {currentStep.instructions}
               </Text>
               {dress ? (
@@ -596,13 +697,15 @@ export default function AITryOnScreen() {
         className="px-6 flex-row justify-between items-center bg-white mb-2"
         style={{ paddingTop: insets.top }}
       >
-        <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="close" size={24} color="black" />
+        <View style={{ width: 32 }} />
+        <View style={{ width: 32 }} />
+        <TouchableOpacity
+          onPress={() => router.back()}
+          activeOpacity={0.85}
+          className="w-8 h-8 rounded-full items-center justify-center bg-black/10"
+        >
+          <Ionicons name="close" size={18} color="black" />
         </TouchableOpacity>
-        <Text className="text-black text-[10px] font-bold uppercase tracking-[2px]">
-          {currentStep.type === 'camera' ? 'Click Photo' : currentStep.type === 'result' ? 'View Your Look' : 'AI Try On'}
-        </Text>
-        <View style={{ width: 24 }} />
       </View>
 
       {renderContent()}

@@ -1,13 +1,12 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions, Switch, ActivityIndicator, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { SvgXml } from 'react-native-svg';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
-import { useNotificationStore } from '@/store/useNotificationStore';
 import { FigmaConfirmModal } from '../../components/FigmaConfirmModal';
 
 const { width } = Dimensions.get('window');
@@ -15,6 +14,9 @@ const { width } = Dimensions.get('window');
 const DRESS_SVG = `<svg width="32" height="34" viewBox="0 0 32 34" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M29.4255 20.7868C31.2232 21.9683 31.6836 24.3851 30.4922 26.1772C27.2707 31.0222 21.5446 34.1119 15.5691 34.0893C9.59357 34.1119 3.88157 30.7629 0.660067 25.9179C-0.53135 24.1258 -0.0709332 21.7104 1.72682 20.5289L9.9024 15.5848H21.2357L29.4255 20.7868ZM9.9024 12.75H21.2357L22.2812 9.61633C22.5277 8.5085 22.6524 7.37092 22.6524 6.23617V1.41667C22.6524 0.634667 22.0177 0 21.2357 0C20.4537 0 19.8191 0.634667 19.8191 1.41667V2.975C17.9349 3.32492 16.4856 4.29958 15.5691 5.11558C14.6525 4.29958 13.2032 3.32492 11.3191 2.975V1.41667C11.3191 0.634667 10.6844 0 9.9024 0C9.1204 0 8.48573 0.634667 8.48573 1.41667V6.23617C8.48573 7.37092 8.6104 8.5085 8.8569 9.61633L9.9024 12.75Z" fill="black"/>
 </svg>`;
+
+const PENCIL_ICON = require('../../assets/svg/pencil.svg');
+const TRASH_ICON = require('../../assets/svg/trash.svg');
 
 const EMPTY_CATALOG_TITLE_STYLE = {
   fontFamily: 'Helvetica Neue',
@@ -34,6 +36,144 @@ const EMPTY_CATALOG_SUBTITLE_STYLE = {
   letterSpacing: 0,
   textAlign: 'center' as const,
   color: '#000000',
+};
+
+const DASHBOARD_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 18,
+  lineHeight: 18,
+  letterSpacing: 0,
+  color: '#000000',
+  textAlign: 'center' as const,
+};
+
+const STATUS_CARD_TEXT_REGULAR_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#6E6E6E',
+};
+
+const STATUS_CARD_TEXT_MEDIUM_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const VISIBILITY_SUBTITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 12,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const ADD_DRESS_BUTTON_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+  color: '#000000',
+};
+
+const SECTION_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 16,
+  lineHeight: 16,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const SECTION_SUBTITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 24,
+  letterSpacing: 0,
+  color: '#6E6E6E',
+};
+
+const DASHBOARD_SECTION_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 18,
+  lineHeight: 18,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const VIEW_ALL_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+  color: '#000000',
+};
+
+const RECENT_ORDER_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const RECENT_ORDER_DESCRIPTION_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0,
+  color: '#6E6E6E',
+};
+
+const CUSTOM_REQUEST_TITLE_STYLE = {
+  fontFamily: 'Inter',
+  fontWeight: '500' as const,
+  fontSize: 16,
+  lineHeight: 16,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const CUSTOM_REQUEST_SUBTITLE_STYLE = {
+  fontFamily: 'Inter',
+  fontWeight: '400' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0,
+  color: '#6E6E6E',
+};
+
+const CATALOG_CARD_NAME_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 2,
+  color: '#000000',
+};
+
+const CATALOG_CARD_ADDRESS_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#6E6E6E',
 };
 
 type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed';
@@ -108,6 +248,26 @@ function bookingTotalLabel(booking: Booking) {
   return `${booking.dress_ids.length} item${booking.dress_ids.length === 1 ? '' : 's'}`;
 }
 
+function formatCityCountry(location?: string | null) {
+  const raw = (location || '').trim();
+  if (!raw) return 'Location unavailable';
+
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const country = parts[parts.length - 1];
+    const city =
+      [...parts.slice(0, -1)].reverse().find((part) => !/\d/.test(part)) ||
+      parts[parts.length - 2];
+    return `${city}, ${country}`;
+  }
+
+  return raw;
+}
+
 function getTimeGreeting(): string {
   const hour = new Date().getHours();
   if (hour >= 5 && hour < 12) return 'Good morning';
@@ -138,7 +298,6 @@ export default function BoutiqueDashboard() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const boutiqueId = user?.boutique_id ?? null;
-  const unreadCount = useNotificationStore((s) => s.items.filter((n) => !n.readAt).length);
   
   const [loading, setLoading] = useState(true);
   const [dresses, setDresses] = useState<any[]>([]);
@@ -282,7 +441,7 @@ export default function BoutiqueDashboard() {
     });
   }, [bookings]);
 
-  const recentOrders = useMemo(() => sortedBookings.slice(0, 4), [sortedBookings]);
+  const recentOrders = useMemo(() => sortedBookings.slice(0, 5), [sortedBookings]);
   const customRequests = useMemo(
     () => sortedBookings.filter((booking) => booking.status === 'requested').slice(0, 3),
     [sortedBookings]
@@ -305,21 +464,14 @@ export default function BoutiqueDashboard() {
         contentContainerStyle={{ flexGrow: 1, paddingBottom: 100 }}
       >
         {/* Header */}
-        <View style={{ paddingTop: insets.top + 14 }} className="px-6 pb-4 border-b border-[#F0F0F0]">
+        <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 20, paddingBottom: 16 }} className="border-b border-[#F0F0F0]">
           <View className="items-center justify-center">
             <Text
-              className="text-black text-center"
-              style={{
-                fontFamily: 'Helvetica Neue',
-                fontWeight: '500',
-                fontSize: 18,
-                lineHeight: 18,
-                letterSpacing: 0,
-              }}
+              style={DASHBOARD_TITLE_STYLE}
             >
             Shop Dashboard
           </Text>
-            <TouchableOpacity
+            {/* <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => router.push('/notifications')}
               className="absolute right-0 top-0 w-10 h-10 items-center justify-center"
@@ -332,14 +484,14 @@ export default function BoutiqueDashboard() {
                   </Text>
                 </View>
               ) : null}
-            </TouchableOpacity>
+            </TouchableOpacity> */}
           </View>
         </View>
 
         {/* Greeting + Shop Status Card (Figma-style) */}
-        <View className="px-6 pt-6 mb-10">
-          <View className="border border-black">
-            <View className="p-4 flex-row items-center justify-between">
+        <View style={{ paddingHorizontal: 20, paddingTop: 24, marginBottom: 10 }}>
+          <View className="border border-black" style={{ height: 186 }}>
+            <View className="flex-row items-center justify-between" style={{ height: 58, paddingHorizontal: 14 }}>
               <View className="flex-row items-center">
                 <View className="w-10 h-10 rounded-sm bg-gray-100 overflow-hidden mr-3">
                   {avatarUri ? (
@@ -349,53 +501,65 @@ export default function BoutiqueDashboard() {
                   )}
                 </View>
                 <View>
-                  <Text className="text-[11px] text-black/50">{timeGreeting}</Text>
-                  <Text className="text-[13px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+                  <Text style={[STATUS_CARD_TEXT_REGULAR_STYLE, { marginBottom: 4 }]}>{timeGreeting}</Text>
+                  <Text style={STATUS_CARD_TEXT_MEDIUM_STYLE}>
                     {user?.full_name?.trim() || user?.email || 'Partner'}
                   </Text>
                 </View>
               </View>
               <View className="flex-row items-center">
                 <View className={`w-2 h-2 rounded-full mr-2 ${isStoreVisible ? 'bg-green-500' : 'bg-black/40'}`} />
-                <Text className="text-[11px] text-black">{isStoreVisible ? 'Online' : 'Offline'}</Text>
+                <Text style={STATUS_CARD_TEXT_REGULAR_STYLE}>{isStoreVisible ? 'Online' : 'Offline'}</Text>
               </View>
             </View>
 
             <View className="h-px bg-black/10" />
 
-            <View className="p-4">
-              <Text className="text-[12px] font-bold uppercase tracking-[0.8px] mb-3 text-black">
+            <View style={{ paddingHorizontal: 14, paddingTop: 14 }}>
+              <Text style={[STATUS_CARD_TEXT_MEDIUM_STYLE, { textTransform: 'uppercase', marginBottom: 14 }]}>
                 Shop Status
               </Text>
 
-              <View className="border border-black p-4">
+              <View className="border border-black justify-center" style={{ height: 72, paddingHorizontal: 14 }}>
                 <View className="flex-row items-center justify-between">
                   <View className="flex-row items-center flex-1 pr-4">
                     <View className="w-8 h-8 items-center justify-center mr-3">
                       <Ionicons name="eye-outline" size={18} color="black" />
                     </View>
                     <View className="flex-1">
-                      <Text className="text-[12px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+                      <Text style={[STATUS_CARD_TEXT_MEDIUM_STYLE, { marginBottom: 6 }]}>
                         Set Customer Visibility
                       </Text>
-                      <Text className="text-[10px] text-black/50 mt-0.5">Customers can see your shop</Text>
+                      <Text style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' as const, fontSize: 12, lineHeight: 14, letterSpacing: 0, color: '#6E6E6E' }}>Customers can see your shop</Text>
                     </View>
                   </View>
 
-                  <Switch
-                    value={isStoreVisible}
-                    onValueChange={handleStoreVisibilityChange}
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => handleStoreVisibilityChange(!isStoreVisible)}
                     disabled={isUpdatingVisibility}
-                    trackColor={{ false: '#D1D5DB', true: '#86EFAC' }}
-                    thumbColor={
-                      Platform.OS === 'android'
-                        ? isStoreVisible
-                          ? '#FFFFFF'
-                          : '#F3F4F6'
-                        : '#FFFFFF'
-                    }
-                    ios_backgroundColor="#D1D5DB"
-                  />
+                    style={{
+                      width: 30,
+                      height: 20,
+                      borderRadius: 10,
+                      backgroundColor: isStoreVisible ? '#86EFAC' : '#D9D9D9',
+                      justifyContent: 'center',
+                      paddingHorizontal: 2,
+                      opacity: isUpdatingVisibility ? 0.6 : 1,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 8,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderColor: '#000000',
+                        transform: [{ translateX: isStoreVisible ? 10 : 0 }],
+                      }}
+                    />
+                  </TouchableOpacity>
                 </View>
               </View>
             </View>
@@ -422,48 +586,51 @@ export default function BoutiqueDashboard() {
               Add Your First Catalog Dress
             </Text>
             <Text className="mb-8" style={EMPTY_CATALOG_SUBTITLE_STYLE}>
-              Customers can see your catalog dresses and shop address.
+              Customers can see your catalog dresses and{'\n'}shop address.
             </Text>
             <TouchableOpacity 
               onPress={() => router.push('/add-dress')}
-              className="border border-black px-10 py-4"
+              className="border border-black items-center justify-center"
+              style={{ width: 133, height: 48, paddingHorizontal: 24, paddingVertical: 4 }}
               activeOpacity={0.7}
             >
-              <Text className="text-[12px] font-bold uppercase tracking-[1px] text-black">ADD DRESS</Text>
+              <Text style={ADD_DRESS_BUTTON_TEXT_STYLE}>Add Dress</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <>
             {/* Dresses Catalog Listings */}
-            <View className="px-6 mb-10">
-              <Text className="text-[14px] text-black mb-1" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+            <View style={{ paddingHorizontal: 20, marginBottom: 24, marginTop: 24 }}>
+              <Text style={[SECTION_TITLE_STYLE, { marginBottom: 6 }]}>
                 Dresses Catalog Listings
               </Text>
-              <Text className="text-[10px] text-black/40 mb-4">
-                Manage your bridal orders, designs, and customer requests.
+              <Text style={[SECTION_SUBTITLE_STYLE, { marginBottom: 24 }]}>
+                Manage your bridal orders, designs, and customer{'\n'}requests.
               </Text>
 
-              <View className="border border-[#EAEAEA] bg-white">
+              <View className="border border-[#EAEAEA] bg-white" style={{ height: 196, overflow: 'hidden' }}>
                 <Image
                   source={
                     dresses[0]?.image_url
                       ? { uri: dresses[0].image_url }
                       : require('../../assets/images/Dashboard image 2.png')
                   }
-                  style={{ width: '100%', height: 160 }}
+                  style={{ width: '100%', height: 148 }}
                   contentFit="cover"
                   cachePolicy="none"
                 />
-                <View className="p-4 flex-row items-start justify-between">
+                <View className="px-4 flex-row items-center justify-between" style={{ height: 48 }}>
                   <View className="flex-1 pr-4">
-                    <Text className="text-[13px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+                    <Text style={CATALOG_CARD_NAME_STYLE} numberOfLines={1}>
                       {boutique?.name || 'Boutique Partner'}
                     </Text>
-                    <Text className="text-[10px] text-black/40 mt-1">{boutique?.location || 'Location unavailable'}</Text>
+                    <Text style={[CATALOG_CARD_ADDRESS_STYLE, { marginTop: 6 }]} numberOfLines={1}>
+                      {formatCityCountry(boutique?.location)}
+                    </Text>
                   </View>
                   <View className="flex-row items-center">
                     <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="mr-3" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                      <Feather name="edit-2" size={16} color="black" />
+                      <Image source={PENCIL_ICON} style={{ width: 16, height: 16 }} contentFit="contain" />
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => setDeleteModalOpen(true)}
@@ -471,49 +638,54 @@ export default function BoutiqueDashboard() {
                       disabled={!selectedDressForDelete || isDeleting}
                       style={{ opacity: !selectedDressForDelete || isDeleting ? 0.4 : 1 }}
                     >
-                      <Ionicons name="trash-outline" size={18} color="black" />
+                      <Image source={TRASH_ICON} style={{ width: 16, height: 16 }} contentFit="contain" />
                     </TouchableOpacity>
                   </View>
                 </View>
               </View>
             </View>
 
-            <View className="px-6 mb-10">
-                <View className="flex-row justify-between items-center mb-6">
-                    <Text className="text-sm font-bold">Recent Orders</Text>
-                    <TouchableOpacity className="border border-black px-3 py-1 rounded-sm" onPress={() => router.push('/(tabs)/bookings')}>
-                        <Text className="text-[10px] font-bold uppercase">View All</Text>
+            <View style={{ paddingHorizontal: 20, marginBottom: 40 }}>
+                <View className="flex-row justify-between items-center" style={{ marginBottom: 24 }}>
+                    <Text style={DASHBOARD_SECTION_HEADING_STYLE}>Recent Orders</Text>
+                    <TouchableOpacity
+                      className="border border-black items-center justify-center"
+                      style={{ width: 110, height: 38, paddingHorizontal: 14, paddingVertical: 4 }}
+                      onPress={() => router.push('/(tabs)/bookings')}
+                    >
+                        <Text style={VIEW_ALL_TEXT_STYLE} numberOfLines={1}>View All</Text>
                     </TouchableOpacity>
                 </View>
-                <View className="gap-6">
+                <View style={{ gap: 14, minHeight: recentOrders.length > 0 ? 476 : undefined }}>
                     {recentOrders.length === 0 ? (
                         <View className="border border-[#EAEAEA] px-4 py-5">
                           <Text className="text-[11px] text-black/45">No recent booking activity yet.</Text>
                         </View>
                     ) : recentOrders.map((order) => (
-                        <View key={order.id} className="flex-row items-center justify-between border border-[#EAEAEA] px-4 py-3">
+                        <View
+                          key={order.id}
+                          className="flex-row items-center justify-between"
+                          style={{ height: 84 }}
+                        >
                             <View className="flex-row items-center flex-1">
-                                <View className="w-12 h-12 rounded-full overflow-hidden mr-4">
+                                <View className="overflow-hidden mr-4" style={{ width: 70, height: 70 }}>
                                     <Image 
                                         source={
-                                          order.customer?.profile_image_url
-                                            ? { uri: order.customer.profile_image_url }
+                                          order.dresses?.[0]?.image_url
+                                            ? { uri: order.dresses[0].image_url }
                                             : require('../../assets/images/Dashboard image 2.png')
                                         }
                                         style={{ width: '100%', height: '100%' }}
+                                        contentFit="cover"
                                     />
                                 </View>
                                 <View className="flex-1">
-                                    <View className="flex-row items-center mb-1">
-                                        <Text className="text-xs font-bold mr-2">{customerName(order)}</Text>
+                                    <View className="flex-row items-center" style={{ marginBottom: 8 }}>
+                                        <Text style={RECENT_ORDER_TITLE_STYLE} numberOfLines={1}>{customerName(order)}</Text>
                                     </View>
-                                    <Text className="text-[10px] text-black/40 mb-1">{bookingDressSummary(order)} - {order.scheduled_for}</Text>
-                                    <Text className="text-xs font-bold">{bookingTotalLabel(order)}</Text>
-                                </View>
-                            </View>
-                            <View className="items-end">
-                                <View className="border border-black px-2 py-1">
-                                  <Text className="text-[9px] font-bold">{bookingStatusLabel(order.status)}</Text>
+                                    <Text style={RECENT_ORDER_DESCRIPTION_STYLE} numberOfLines={1}>
+                                      {bookingDressSummary(order)} · {order.scheduled_for}
+                                    </Text>
                                 </View>
                             </View>
                         </View>
@@ -521,18 +693,22 @@ export default function BoutiqueDashboard() {
                 </View>
             </View>
 
-            <View className="px-6 mb-10">
-                <Text className="text-sm font-bold mb-6">New Custom Requests</Text>
-                <View className="gap-4">
+            <View style={{ paddingHorizontal: 20, marginBottom: 40 }}>
+                <Text style={[DASHBOARD_SECTION_HEADING_STYLE, { marginBottom: 24 }]}>New Custom Requests</Text>
+                <View style={{ gap: 14 }}>
                     {customRequests.length === 0 ? (
-                      <View className="border border-[#EAEAEA] rounded-2xl p-4 bg-white">
+                      <View className="border border-[#EAEAEA] p-4 bg-white">
                         <Text className="text-[11px] text-black/45">No new custom requests right now.</Text>
                       </View>
                     ) : customRequests.map((request) => (
-                        <View key={request.id} className="border border-[#EAEAEA] rounded-2xl p-4 bg-white">
-                            <Text className="text-xs font-bold mb-1">{customerName(request)}</Text>
-                            <Text className="text-[10px] text-black/35 mb-3">
-                              {request.appointment_type === 'video' ? 'Video consultation request' : 'In-store consultation request'}
+                        <View
+                          key={request.id}
+                          className="border border-black bg-white"
+                          style={{ height: 164, paddingHorizontal: 18, paddingVertical: 16 }}
+                        >
+                            <Text style={[CUSTOM_REQUEST_TITLE_STYLE, { marginBottom: 10 }]} numberOfLines={1}>{customerName(request)}</Text>
+                            <Text style={[CUSTOM_REQUEST_SUBTITLE_STYLE, { marginBottom: 12 }]} numberOfLines={1}>
+                              {request.dresses?.[0]?.name || (request.appointment_type === 'video' ? 'Video consultation request' : 'Custom Bridesmaid Dress')}
                             </Text>
 
                             <View className="flex-row flex-wrap gap-2 mb-4">
@@ -557,7 +733,7 @@ export default function BoutiqueDashboard() {
                                         Review Request
                                     </Text>
                                 </TouchableOpacity>
-                                <TouchableOpacity
+                                {/* <TouchableOpacity
                                     activeOpacity={0.8}
                                     onPress={() => router.push('/notifications')}
                                     className="flex-1 border border-[#D9D9D9] rounded-full py-3 items-center justify-center"
@@ -565,37 +741,41 @@ export default function BoutiqueDashboard() {
                                     <Text className="text-[9px] font-bold uppercase tracking-[1.2px] text-black/70">
                                         Message Bride
                                     </Text>
-                                </TouchableOpacity>
+                                </TouchableOpacity> */}
                             </View>
                         </View>
                     ))}
                 </View>
             </View>
 
-            <View className="px-6 mb-12">
-                <View className="flex-row justify-between items-center mb-6">
-                    <Text className="text-sm font-bold">Upcoming Fittings</Text>
-                    <TouchableOpacity className="border border-black px-3 py-1 rounded-sm" onPress={() => router.push('/(tabs)/bookings')}>
-                        <Text className="text-[10px] font-bold uppercase">View Calendar</Text>
+            <View style={{ paddingHorizontal: 20, marginBottom: 48 }}>
+                <View className="flex-row justify-between items-center" style={{ marginBottom: 24 }}>
+                    <Text style={DASHBOARD_SECTION_HEADING_STYLE}>Upcoming Fittings</Text>
+                    <TouchableOpacity
+                      className="border border-black items-center justify-center"
+                      style={{ width: 147, height: 38, paddingHorizontal: 14, paddingVertical: 4 }}
+                      onPress={() => router.push('/(tabs)/bookings')}
+                    >
+                        <Text style={VIEW_ALL_TEXT_STYLE}>View Calendar</Text>
                     </TouchableOpacity>
                 </View>
 
-                <View className="gap-5">
+                <View style={{ gap: 14 }}>
                     {upcomingFittings.length === 0 ? (
                       <View className="border border-[#EAEAEA] px-4 py-5">
                         <Text className="text-[11px] text-black/45">No upcoming fittings scheduled yet.</Text>
                       </View>
                     ) : upcomingFittings.map((fitting) => (
-                        <View key={fitting.id} className="flex-row items-center justify-between">
+                        <View key={fitting.id} className="flex-row items-center justify-between" style={{ height: 64 }}>
                             <View className="flex-row items-center flex-1">
-                                <View className="w-12 h-12 rounded-2xl bg-[#F7F7F7] mr-4 overflow-hidden">
+                                <View className="bg-[#F7F7F7] mr-4 overflow-hidden" style={{ width: 48, height: 48 }}>
                                   {fitting.customer?.profile_image_url ? (
                                     <Image source={{ uri: fitting.customer.profile_image_url }} style={{ width: '100%', height: '100%' }} />
                                   ) : null}
                                 </View>
                                 <View className="flex-1">
-                                    <Text className="text-xs font-bold mb-1">{customerName(fitting)}</Text>
-                                    <Text className="text-[10px] text-black/40">
+                                    <Text style={[RECENT_ORDER_TITLE_STYLE, { marginBottom: 8 }]} numberOfLines={1}>{customerName(fitting)}</Text>
+                                    <Text style={RECENT_ORDER_DESCRIPTION_STYLE} numberOfLines={1}>
                                       {fitting.appointment_type === 'video' ? 'Video fitting' : 'Store fitting'}
                                     </Text>
                                 </View>
@@ -603,7 +783,7 @@ export default function BoutiqueDashboard() {
 
                             <View className="flex-row items-center">
                                 <Ionicons name="time-outline" size={12} color="#EB5757" />
-                                <Text className="text-[9px] font-bold text-[#EB5757] ml-1.5">{fitting.scheduled_for}</Text>
+                                <Text style={[RECENT_ORDER_DESCRIPTION_STYLE, { color: '#EB5757', marginLeft: 6 }]} numberOfLines={1}>{fitting.scheduled_for}</Text>
                             </View>
                         </View>
                     ))}

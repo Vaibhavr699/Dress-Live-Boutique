@@ -20,7 +20,7 @@ export default function DeleteAccountScreen() {
     <View className="flex-1 bg-white">
       {/* Header */}
       <View 
-        className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" 
+        className="px-6 flex-row items-center pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
         <TouchableOpacity onPress={handleBack} className="mr-4">
@@ -29,17 +29,72 @@ export default function DeleteAccountScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
-        <Text className="text-black text-xs font-bold uppercase mb-4 tracking-[1px] opacity-40">Delete your Account</Text>
-        <Text className="text-black/50 text-[12px] leading-5 mb-12">
+        <Text
+          className="text-black mb-4"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
+          Delete your Account
+        </Text>
+        <Text
+          className="text-black mb-12"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '300',
+            fontSize: 14,
+            lineHeight: 18,
+            letterSpacing: 0,
+            opacity: 0.6,
+          }}
+        >
           You are about to begin the process to delete your account.
         </Text>
 
         <View className="mb-12">
-          <Text className="text-black text-[12px] font-bold uppercase mb-4 tracking-[1px] opacity-40">REMEMBER:</Text>
-          <Text className="text-black/50 text-[12px] leading-5 mb-10">
+          <Text
+            className="text-black mb-4"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '200',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+              opacity: 0.7,
+            }}
+          >
+            Remember:
+          </Text>
+          <Text
+            className="text-black mb-10"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 18,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
             You will not be able to track any purchase, return and/or exchange online.
           </Text>
-          <Text className="text-black/50 text-[12px] leading-5">
+          <Text
+            className="text-black"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 18,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
             You will not be able to access your Live Dress account.
           </Text>
         </View>
@@ -55,7 +110,19 @@ export default function DeleteAccountScreen() {
           className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
           style={{ marginTop: 120 }}
         >
-          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Continue</Text>
+          <Text
+            className="text-white"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '400',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+            }}
+          >
+            Continue
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </View>

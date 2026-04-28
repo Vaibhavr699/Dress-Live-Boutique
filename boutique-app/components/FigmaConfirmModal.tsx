@@ -1,6 +1,7 @@
 import React from 'react';
-import { Modal, Pressable, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 
 type Props = {
   visible: boolean;
@@ -29,30 +30,47 @@ export function FigmaConfirmModal({
 }: Props) {
   const danger = tone === 'danger';
   const accentText = danger ? '#C9491A' : '#1A1A1A';
-  const iconBg = danger ? '#FDEEEE' : '#F2F2F2';
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable className="flex-1 bg-black/25 justify-center px-7" onPress={onClose}>
+      <Pressable className="flex-1 justify-center px-7" onPress={onClose}>
+        <BlurView intensity={18} tint="light" style={StyleSheet.absoluteFillObject} />
+        <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.35)' }} />
         <Pressable
           className="bg-white p-6"
-          style={{ borderRadius: 2 }}
+          style={{ borderRadius: 2, borderWidth: 1, borderColor: '#000000' }}
           onPress={(e) => e.stopPropagation()}
         >
           <View className="items-center">
             <View
               className="items-center justify-center mb-4"
-              style={{ width: 52, height: 52, borderRadius: 2, backgroundColor: iconBg }}
+              style={{ width: 52, height: 52, borderRadius: 2, backgroundColor: danger ? '#FEF8F6' : '#F2F2F2' }}
             >
               <Ionicons name={iconName} size={22} color={accentText} />
             </View>
 
-            <Text className="text-[16px] text-black text-center" style={{ fontFamily: 'Helvetica Neue', fontWeight: '600' }}>
+            <Text
+              className="text-black text-center"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '500',
+                fontSize: 16,
+                lineHeight: 16,
+                letterSpacing: 0,
+              }}
+            >
               {title}
             </Text>
             <Text
-              className="text-[12px] text-center mt-3"
-              style={{ color: accentText, lineHeight: 18 }}
+              className="text-center mt-3"
+              style={{
+                color: danger ? '#D32F2F' : '#000000',
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '400',
+                fontSize: 12,
+                lineHeight: 18,
+                letterSpacing: 0.48,
+              }}
             >
               {description}
             </Text>

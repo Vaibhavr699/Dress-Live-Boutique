@@ -22,7 +22,7 @@ const DEFAULT_BUSINESS_HOURS = [
 export default function StoreOpeningHoursScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const user = useAuthStore((state) => state.user);
+  const user = useAuthStore((s: any) => s.user);
   const [loading, setLoading] = useState(true);
   const [schedule, setSchedule] = useState<ScheduleItem[]>(DEFAULT_BUSINESS_HOURS);
 
@@ -76,7 +76,17 @@ export default function StoreOpeningHoursScreen() {
         >
           Set Store Opening Hours
         </Text>
-        <Text className="text-[10px] text-black/45 leading-4 mb-6">
+        <Text
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '400',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 0,
+            color: '#6E6E6E',
+            marginBottom: 24,
+          }}
+        >
           {state === 'configured'
             ? 'Each shop can invite their consultant and availabilities'
             : 'Each shop can invite their consultant and availabilities'}
@@ -128,9 +138,37 @@ export default function StoreOpeningHoursScreen() {
 
               <View className="border-t border-[#ECECEC] pt-5">
                 {schedule.map((item) => (
-                  <View key={item.day} className="flex-row justify-between items-center mb-2">
-                    <Text className="text-[11px] text-black">{item.day}</Text>
-                    <Text className="text-[11px] text-black/45">{item.value}</Text>
+                  <View
+                    key={item.day}
+                    className="flex-row justify-between items-center"
+                    style={{ paddingVertical: 6, marginBottom: 6 }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '400',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 0,
+                        color: '#000000',
+                        paddingBottom:2,
+                      }}
+                    >
+                      {item.day}
+                    </Text>
+                    <Text
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '400',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 0,
+                        color: '#6E6E6E',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {item.value}
+                    </Text>
                   </View>
                 ))}
               </View>

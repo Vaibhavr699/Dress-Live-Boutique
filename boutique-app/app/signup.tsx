@@ -10,6 +10,20 @@ import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 
 type OnboardingStep = 'plan' | 'shop_info' | 'owner_info' | 'store_photos';
+type SignupErrorKey =
+  | 'logo'
+  | 'shopName'
+  | 'shopDescription'
+  | 'ownerImage'
+  | 'ownerName'
+  | 'email'
+  | 'phone'
+  | 'address'
+  | 'password'
+  | 'confirmPassword'
+  | 'frontImage'
+  | 'insideImage';
+type SignupErrors = Partial<Record<SignupErrorKey, string>>;
 
 /** React Native Web does not send `{ uri, name, type }` parts correctly; use a Blob. */
 async function appendPickerImageToForm(form: FormData, uri: string, filename: string) {
@@ -35,6 +49,9 @@ const FEATURES = [
     "Size & Measurement Management",
     "Secure Payment Processing"
 ];
+
+const TICK_ICON = require('../assets/svg/Tick.svg');
+const ERROR_ICON = require('../assets/svg/diamond-exclamation.svg');
 
 const TIME_SVG = `<svg width="53" height="38" viewBox="0 0 53 38" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M7.55959 0.000187397V0.480187C7.01559 0.496187 6.59959 0.560187 6.31159 0.672187C6.03959 0.768187 5.85559 0.960187 5.75959 1.24819C5.66359 1.52019 5.61559 1.95219 5.61559 2.54419V14.7362C5.61559 15.2322 5.64759 15.6002 5.71159 15.8402C5.79159 16.0802 5.93559 16.2402 6.14359 16.3202C6.36759 16.4002 6.69559 16.4402 7.12759 16.4402H8.30359C8.84759 16.4402 9.35959 16.3122 9.83959 16.0562C10.3196 15.8002 10.7516 15.4402 11.1356 14.9762C11.5196 14.4962 11.8396 13.9282 12.0956 13.2722C12.3516 12.6162 12.5436 11.8882 12.6716 11.0882H13.2236C13.1756 11.6322 13.1516 12.3362 13.1516 13.2002C13.1516 13.5682 13.1596 14.1042 13.1756 14.8082C13.1916 15.5122 13.2396 16.2402 13.3196 16.9922C12.5036 16.9602 11.5836 16.9442 10.5596 16.9442C9.53559 16.9282 8.62359 16.9202 7.82359 16.9202C7.42359 16.9202 6.91159 16.9202 6.28759 16.9202C5.66359 16.9202 4.99159 16.9282 4.27159 16.9442C3.55159 16.9442 2.82359 16.9522 2.08759 16.9682C1.35159 16.9682 0.655594 16.9762 -0.000406206 16.9922V16.5122C0.511594 16.4802 0.895594 16.4162 1.15159 16.3202C1.40759 16.2242 1.57559 16.0322 1.65559 15.7442C1.75159 15.4562 1.79959 15.0242 1.79959 14.4482V2.54419C1.79959 1.95219 1.75159 1.52019 1.65559 1.24819C1.57559 0.960187 1.39959 0.768187 1.12759 0.672187C0.871594 0.560187 0.495594 0.496187 -0.000406206 0.480187V0.000187397C0.399594 0.0161872 0.935594 0.032187 1.60759 0.0481868C2.29559 0.0641866 3.02359 0.0721865 3.79159 0.0721865C4.49559 0.0721865 5.18359 0.0641866 5.85559 0.0481868C6.54359 0.032187 7.11159 0.0161872 7.55959 0.000187397ZM20.6235 4.24819C21.7915 4.24819 22.8155 4.46419 23.6955 4.89619C24.5755 5.32819 25.2635 6.02419 25.7595 6.98419C26.2555 7.94419 26.5035 9.21619 26.5035 10.8002C26.5035 12.3842 26.2555 13.6562 25.7595 14.6162C25.2635 15.5602 24.5755 16.2482 23.6955 16.6802C22.8155 17.1122 21.7915 17.3282 20.6235 17.3282C19.4875 17.3282 18.4715 17.1122 17.5755 16.6802C16.6955 16.2482 15.9995 15.5602 15.4875 14.6162C14.9915 13.6562 14.7435 12.3842 14.7435 10.8002C14.7435 9.21619 14.9915 7.94419 15.4875 6.98419C15.9995 6.02419 16.6955 5.32819 17.5755 4.89619C18.4715 4.46419 19.4875 4.24819 20.6235 4.24819ZM20.6235 4.72819C19.9835 4.72819 19.4475 5.20819 19.0155 6.16819C18.5835 7.11219 18.3675 8.65619 18.3675 10.8002C18.3675 12.9442 18.5835 14.4882 19.0155 15.4322C19.4475 16.3762 19.9835 16.8482 20.6235 16.8482C21.2795 16.8482 21.8155 16.3762 22.2315 15.4322C22.6635 14.4882 22.8795 12.9442 22.8795 10.8002C22.8795 8.65619 22.6635 7.11219 22.2315 6.16819C21.8155 5.20819 21.2795 4.72819 20.6235 4.72819ZM32.6578 21.5042C31.6658 21.5042 30.7778 21.4162 29.9938 21.2402C29.2258 21.0802 28.6178 20.8242 28.1698 20.4722C27.7378 20.1362 27.5218 19.7202 27.5218 19.2242C27.5218 18.7282 27.7458 18.2802 28.1938 17.8802C28.6418 17.4962 29.3058 17.1922 30.1858 16.9682L30.4018 17.3522C30.0978 17.5922 29.8738 17.8482 29.7298 18.1202C29.6018 18.4082 29.5378 18.7042 29.5378 19.0082C29.5378 19.6802 29.8418 20.1922 30.4498 20.5442C31.0738 20.9122 31.9138 21.0962 32.9698 21.0962C33.6898 21.0962 34.3298 21.0002 34.8898 20.8082C35.4658 20.6162 35.9138 20.3282 36.2338 19.9442C36.5698 19.5602 36.7378 19.0882 36.7378 18.5282C36.7378 18.0482 36.5618 17.6402 36.2098 17.3042C35.8578 16.9842 35.1538 16.8242 34.0978 16.8242H32.6098C31.9538 16.8242 31.3778 16.7522 30.8818 16.6082C30.4018 16.4642 30.0258 16.2402 29.7538 15.9362C29.4818 15.6162 29.3458 15.2162 29.3458 14.7362C29.3458 14.0642 29.6098 13.4722 30.1378 12.9602C30.6658 12.4482 31.4498 11.9682 32.4898 11.5202L32.7298 11.7122C32.4258 11.9042 32.1378 12.1122 31.8658 12.3362C31.6098 12.5442 31.4818 12.8162 31.4818 13.1522C31.4818 13.6642 31.8018 13.9202 32.4418 13.9202H35.0578C35.9378 13.9202 36.7218 14.0242 37.4098 14.2322C38.1138 14.4402 38.6658 14.7842 39.0658 15.2642C39.4818 15.7282 39.6898 16.3362 39.6898 17.0882C39.6898 17.8722 39.4338 18.6002 38.9218 19.2722C38.4258 19.9442 37.6578 20.4802 36.6178 20.8802C35.5778 21.2962 34.2578 21.5042 32.6578 21.5042ZM32.8978 11.8802C31.9858 11.8802 31.1698 11.7442 30.4498 11.4722C29.7298 11.2002 29.1618 10.7842 28.7458 10.2242C28.3298 9.66419 28.1218 8.94419 28.1218 8.06419C28.1218 7.18419 28.3298 6.46419 28.7458 5.90419C29.1618 5.32819 29.7298 4.91219 30.4498 4.65619C31.1698 4.38419 31.9858 4.24819 32.8978 4.24819C33.8098 4.24819 34.6258 4.38419 35.3458 4.65619C36.0658 4.91219 36.6338 5.32819 37.0498 5.90419C37.4658 6.46419 37.6738 7.18419 37.6738 8.06419C37.6738 8.94419 37.4658 9.66419 37.0498 10.2242C36.6338 10.7842 36.0658 11.2002 35.3458 11.4722C34.6258 11.7442 33.8098 11.8802 32.8978 11.8802ZM32.8978 11.4482C33.3298 11.4482 33.6658 11.2082 33.9058 10.7282C34.1458 10.2322 34.2658 9.34419 34.2658 8.06419C34.2658 6.78419 34.1458 5.90419 33.9058 5.42419C33.6658 4.92819 33.3298 4.68019 32.8978 4.68019C32.4818 4.68019 32.1458 4.92819 31.8898 5.42419C31.6498 5.90419 31.5298 6.78419 31.5298 8.06419C31.5298 9.34419 31.6498 10.2322 31.8898 10.7282C32.1458 11.2082 32.4818 11.4482 32.8978 11.4482ZM36.6418 6.31219L36.1618 6.14419C36.4018 5.52019 36.7858 5.00019 37.3138 4.58419C37.8578 4.16819 38.4418 3.96019 39.0658 3.96019C39.5778 3.96019 39.9618 4.10419 40.2178 4.39219C40.4898 4.66419 40.6258 5.02419 40.6258 5.47219C40.6258 5.95219 40.4978 6.31219 40.2418 6.55219C39.9858 6.77619 39.6978 6.88819 39.3778 6.88819C39.1058 6.88819 38.8498 6.79219 38.6098 6.60019C38.3858 6.40819 38.2578 6.12019 38.2258 5.73619C38.1938 5.33619 38.3298 4.82419 38.6338 4.20019L38.8018 4.34419C38.1938 4.56819 37.7378 4.83219 37.4338 5.13619C37.1298 5.42419 36.8658 5.81619 36.6418 6.31219ZM47.0844 4.24819C48.2524 4.24819 49.2764 4.46419 50.1564 4.89619C51.0364 5.32819 51.7244 6.02419 52.2204 6.98419C52.7164 7.94419 52.9644 9.21619 52.9644 10.8002C52.9644 12.3842 52.7164 13.6562 52.2204 14.6162C51.7244 15.5602 51.0364 16.2482 50.1564 16.6802C49.2764 17.1122 48.2524 17.3282 47.0844 17.3282C45.9484 17.3282 44.9324 17.1122 44.0364 16.6802C43.1564 16.2482 42.4604 15.5602 41.9484 14.6162C41.4524 13.6562 41.2044 12.3842 41.2044 10.8002C41.2044 9.21619 41.4524 7.94419 41.9484 6.98419C42.4604 6.02419 43.1564 5.32819 44.0364 4.89619C44.9324 4.46419 45.9484 4.24819 47.0844 4.24819ZM47.0844 4.72819C46.4444 4.72819 45.9084 5.20819 45.4764 6.16819C45.0444 7.11219 44.8284 8.65619 44.8284 10.8002C44.8284 12.9442 45.0444 14.4882 45.4764 15.4322C45.9084 16.3762 46.4444 16.8482 47.0844 16.8482C47.7404 16.8482 48.2764 16.3762 48.6924 15.4322C49.1244 14.4882 49.3404 12.9442 49.3404 10.8002C49.3404 8.65619 49.1244 7.11219 48.6924 6.16819C48.2764 5.20819 47.7404 4.72819 47.0844 4.72819ZM6.33663 18.3922C7.00863 18.3922 7.53663 18.5602 7.92063 18.8962C8.32063 19.2162 8.52063 19.6642 8.52063 20.2402C8.52063 20.8162 8.32063 21.2722 7.92063 21.6082C7.53663 21.9282 7.00863 22.0882 6.33663 22.0882C5.66463 22.0882 5.12863 21.9282 4.72863 21.6082C4.34463 21.2722 4.15263 20.8162 4.15263 20.2402C4.15263 19.6642 4.34463 19.2162 4.72863 18.8962C5.12863 18.5602 5.66463 18.3922 6.33663 18.3922ZM8.20863 24.3202V34.7602C8.20863 35.4322 8.32063 35.8882 8.54463 36.1282C8.78463 36.3682 9.18463 36.4882 9.74463 36.4882V36.9922C9.45663 36.9762 9.00863 36.9602 8.40063 36.9442C7.79263 36.9122 7.17663 36.8962 6.55263 36.8962C5.92863 36.8962 5.29663 36.9122 4.65663 36.9442C4.01663 36.9602 3.53663 36.9762 3.21663 36.9922V36.4882C3.77663 36.4882 4.16863 36.3682 4.39263 36.1282C4.63263 35.8882 4.75263 35.4322 4.75263 34.7602V27.2002C4.75263 26.4802 4.64063 25.9522 4.41663 25.6162C4.20863 25.2642 3.80863 25.0882 3.21663 25.0882V24.5842C3.72863 24.6322 4.22463 24.6562 4.70463 24.6562C5.37663 24.6562 6.00063 24.6322 6.57663 24.5842C7.16863 24.5202 7.71263 24.4322 8.20863 24.3202ZM17.0269 24.2482C17.6509 24.2482 18.2189 24.3202 18.7309 24.4642C19.2589 24.5922 19.6909 24.7602 20.0269 24.9682C20.4429 25.2242 20.7629 25.5442 20.9869 25.9282C21.2269 26.2962 21.3469 26.7282 21.3469 27.2242C21.3469 27.7842 21.1709 28.2482 20.8189 28.6162C20.4669 28.9682 20.0109 29.1442 19.4509 29.1442C18.8909 29.1442 18.4429 28.9842 18.1069 28.6642C17.7709 28.3442 17.6029 27.9122 17.6029 27.3682C17.6029 26.8562 17.7629 26.4322 18.0829 26.0962C18.4029 25.7442 18.7709 25.5122 19.1869 25.4002C19.0589 25.2402 18.8669 25.1042 18.6109 24.9922C18.3549 24.8802 18.0669 24.8242 17.7469 24.8242C17.2509 24.8242 16.8109 24.9682 16.4269 25.2562C16.0589 25.5442 15.7469 25.9442 15.4909 26.4562C15.2349 26.9682 15.0349 27.5682 14.8909 28.2562C14.7629 28.9442 14.6989 29.6962 14.6989 30.5122C14.6989 31.7442 14.8509 32.7122 15.1549 33.4162C15.4749 34.1202 15.8749 34.6162 16.3549 34.9042C16.8509 35.1922 17.3629 35.3362 17.8909 35.3362C18.1949 35.3362 18.5229 35.2882 18.8749 35.1922C19.2429 35.0962 19.6109 34.9042 19.9789 34.6162C20.3629 34.3282 20.7149 33.9202 21.0349 33.3922L21.4429 33.5362C21.2669 34.1282 20.9789 34.7202 20.5789 35.3122C20.1789 35.9042 19.6589 36.3922 19.0189 36.7762C18.3789 37.1442 17.5949 37.3282 16.6669 37.3282C15.6269 37.3282 14.6829 37.1042 13.8349 36.6562C13.0029 36.1922 12.3309 35.4882 11.8189 34.5442C11.3229 33.5842 11.0749 32.3522 11.0749 30.8482C11.0749 29.4082 11.3309 28.2002 11.8429 27.2242C12.3709 26.2322 13.0829 25.4882 13.9789 24.9922C14.8749 24.4962 15.8909 24.2482 17.0269 24.2482ZM28.8852 24.2482C30.0532 24.2482 31.0772 24.4642 31.9572 24.8962C32.8372 25.3282 33.5252 26.0242 34.0212 26.9842C34.5172 27.9442 34.7652 29.2162 34.7652 30.8002C34.7652 32.3842 34.5172 33.6562 34.0212 34.6162C33.5252 35.5602 32.8372 36.2482 31.9572 36.6802C31.0772 37.1122 30.0532 37.3282 28.8852 37.3282C27.7492 37.3282 26.7332 37.1122 25.8372 36.6802C24.9572 36.2482 24.2612 35.5602 23.7492 34.6162C23.2532 33.6562 23.0052 32.3842 23.0052 30.8002C23.0052 29.2162 23.2532 27.9442 23.7492 26.9842C24.2612 26.0242 24.9572 25.3282 25.8372 24.8962C26.7332 24.4642 27.7492 24.2482 28.8852 24.2482ZM28.8852 24.7282C28.2452 24.7282 27.7092 25.2082 27.2772 26.1682C26.8452 27.1122 26.6292 28.6562 26.6292 30.8002C26.6292 32.9442 26.8452 34.4882 27.2772 35.4322C27.7092 36.3762 28.2452 36.8482 28.8852 36.8482C29.5412 36.8482 30.0772 36.3762 30.4932 35.4322C30.9252 34.4882 31.1412 32.9442 31.1412 30.8002C31.1412 28.6562 30.9252 27.1122 30.4932 26.1682C30.0772 25.2082 29.5412 24.7282 28.8852 24.7282ZM45.1915 24.2482C45.8635 24.2482 46.4075 24.3362 46.8235 24.5122C47.2555 24.6722 47.5915 24.8962 47.8315 25.1842C48.0875 25.4882 48.2715 25.8802 48.3835 26.3602C48.5115 26.8402 48.5755 27.4882 48.5755 28.3042V34.7602C48.5755 35.4322 48.6875 35.8882 48.9115 36.1282C49.1515 36.3682 49.5515 36.4882 50.1115 36.4882V36.9922C49.8075 36.9762 49.3515 36.9602 48.7435 36.9442C48.1355 36.9122 47.5355 36.8962 46.9435 36.8962C46.3355 36.8962 45.7355 36.9122 45.1435 36.9442C44.5675 36.9602 44.1275 36.9762 43.8235 36.9922V36.4882C44.3035 36.4882 44.6395 36.3682 44.8315 36.1282C45.0235 35.8882 45.1195 35.4322 45.1195 34.7602V27.2962C45.1195 26.8962 45.0795 26.5522 44.9995 26.2642C44.9195 25.9602 44.7755 25.7282 44.5675 25.5682C44.3595 25.3922 44.0475 25.3042 43.6315 25.3042C43.1995 25.3042 42.7995 25.4242 42.4315 25.6642C42.0795 25.9042 41.7915 26.2402 41.5675 26.6722C41.3595 27.0882 41.2555 27.5602 41.2555 28.0882V34.7602C41.2555 35.4322 41.3515 35.8882 41.5435 36.1282C41.7515 36.3682 42.0875 36.4882 42.5515 36.4882V36.9922C42.2635 36.9762 41.8395 36.9602 41.2795 36.9442C40.7355 36.9122 40.1675 36.8962 39.5755 36.8962C38.9675 36.8962 38.3435 36.9122 37.7035 36.9442C37.0635 36.9602 36.5835 36.9762 36.2635 36.9922V36.4882C36.8235 36.4882 37.2155 36.3682 37.4395 36.1282C37.6795 35.8882 37.7995 35.4322 37.7995 34.7602V27.2002C37.7995 26.4802 37.6875 25.9522 37.4635 25.6162C37.2555 25.2642 36.8555 25.0882 36.2635 25.0882V24.5842C36.7755 24.6322 37.2715 24.6562 37.7515 24.6562C38.4235 24.6562 39.0475 24.6322 39.6235 24.5842C40.2155 24.5202 40.7595 24.4322 41.2555 24.3202V26.4802C41.6555 25.6642 42.1995 25.0882 42.8875 24.7522C43.5755 24.4162 44.3435 24.2482 45.1915 24.2482Z" fill="#020202"/>
@@ -77,6 +94,91 @@ const SECTION_HEADING_STYLE = {
   letterSpacing: 0,
 };
 
+const PLAN_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 24,
+  lineHeight: 24,
+  letterSpacing: 0,
+};
+
+const PLAN_BODY_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 19,
+  letterSpacing: 0,
+  color: '#6B6B6B',
+};
+
+const PLAN_SECTION_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 16,
+  lineHeight: 16,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const PLAN_FEATURE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#6B6B6B',
+};
+
+const PLAN_PRICE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const ONBOARDING_BUTTON_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+};
+
+const UPLOAD_BUTTON_TEXT_STYLE = {
+  fontFamily: 'Inter',
+  fontWeight: '400' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0.48,
+  textTransform: 'uppercase' as const,
+};
+
+const PHOTO_UPLOAD_LABEL_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const ONBOARDING_ACTION_BUTTON_STYLE = {
+  height: 48,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+};
+
+const ERROR_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 12,
+  lineHeight: 14,
+  color: '#D32F2F',
+};
+
 export default function SignupScreen() {
   const renderHeaderLogo = () => (
     <View className="p-4 mb-4">
@@ -84,8 +186,13 @@ export default function SignupScreen() {
     </View>
   );
 
-  const renderInputHeading = (label: string, required = false, className = 'mb-2') => (
-    <Text className={className} style={INPUT_HEADING_STYLE}>
+  const renderInputHeading = (
+    label: string,
+    required = false,
+    className = 'mb-2',
+    styleOverrides?: Partial<typeof INPUT_HEADING_STYLE>
+  ) => (
+    <Text className={className} style={[INPUT_HEADING_STYLE, styleOverrides]}>
       {label}
       {required ? <Text style={{ color: '#DC2626' }}> *</Text> : null}
     </Text>
@@ -97,6 +204,7 @@ export default function SignupScreen() {
   
   const [step, setStep] = useState<OnboardingStep>('plan');
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<SignupErrors>({});
   
   // Form State
   const [plan, setPlan] = useState<'monthly' | 'annual'>('monthly');
@@ -116,8 +224,30 @@ export default function SignupScreen() {
   const [insideImage, setInsideImage] = useState<string | null>(null);
 
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const pickImage = async (setter: (uri: string) => void) => {
+  const clearError = (key: SignupErrorKey) => {
+    setErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const renderFieldError = (key: SignupErrorKey) => {
+    const message = errors[key];
+    if (!message) return null;
+
+    return (
+      <View className="flex-row items-center mt-2">
+        <Image source={ERROR_ICON} style={{ width: 16, height: 16, marginRight: 6 }} contentFit="contain" />
+        <Text style={ERROR_TEXT_STYLE}>{message}</Text>
+      </View>
+    );
+  };
+
+  const pickImage = async (setter: (uri: string) => void, errorKey?: SignupErrorKey) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission Denied', 'We need permission to access your photos.');
@@ -130,12 +260,62 @@ export default function SignupScreen() {
     });
     if (!result.canceled) {
       setter(result.assets[0].uri);
+      if (errorKey) clearError(errorKey);
     }
   };
 
+  const validateShopInfo = () => {
+    const nextErrors: SignupErrors = {};
+    if (!logo) nextErrors.logo = 'Please upload your boutique logo.';
+    if (!shopName.trim()) nextErrors.shopName = 'Shop name is required.';
+    if (!shopDescription.trim()) nextErrors.shopDescription = 'Business shop description is required.';
+
+    setErrors((current) => ({ ...current, ...nextErrors }));
+    if (Object.keys(nextErrors).length > 0) return false;
+    setStep('owner_info');
+    return true;
+  };
+
+  const validateOwnerInfo = () => {
+    const nextErrors: SignupErrors = {};
+    const normalizedEmail = email.trim();
+    if (!ownerImage) nextErrors.ownerImage = 'Please upload owner image.';
+    if (!ownerName.trim()) nextErrors.ownerName = 'Owner name is required.';
+    if (!normalizedEmail) {
+      nextErrors.email = 'Email is required.';
+    } else if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+      nextErrors.email = 'Please enter a valid email address.';
+    }
+    if (!phone.trim()) nextErrors.phone = 'Primary phone number is required.';
+    if (!address.trim()) nextErrors.address = 'Full address is required.';
+    if (!password) {
+      nextErrors.password = 'Password is required.';
+    } else if (password.length < 6) {
+      nextErrors.password = 'Password must be at least 6 characters.';
+    }
+    if (!confirmPassword) {
+      nextErrors.confirmPassword = 'Confirm password is required.';
+    } else if (password !== confirmPassword) {
+      nextErrors.confirmPassword = 'Passwords do not match.';
+    }
+
+    setErrors((current) => ({ ...current, ...nextErrors }));
+    if (Object.keys(nextErrors).length > 0) return false;
+    setStep('store_photos');
+    return true;
+  };
+
+  const validateStorePhotos = () => {
+    const nextErrors: SignupErrors = {};
+    if (!frontImage) nextErrors.frontImage = 'Please upload front store image.';
+    if (!insideImage) nextErrors.insideImage = 'Please upload inside store image.';
+
+    setErrors((current) => ({ ...current, ...nextErrors }));
+    return Object.keys(nextErrors).length === 0;
+  };
+
   const handleFinalSignup = async () => {
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+    if (!validateStorePhotos()) {
       return;
     }
 
@@ -247,13 +427,13 @@ export default function SignupScreen() {
     return (
       <View className="mb-10">
         <Text
-          className="mb-3 text-[10px] tracking-[2px] text-black/70"
+          className="mb-1 text-[12px] tracking-[2px] text-black/70"
           style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
         >
           {current}
         </Text>
-        <View className="w-full overflow-hidden rounded-full bg-black/20" style={{ height: 2 }}>
-          <View className="rounded-full bg-black" style={{ width: `${progressPercent}%` as const, height: 2 }} />
+        <View className="w-full overflow-hidden rounded-full bg-black/20" style={{ height: 3 }}>
+          <View className="rounded-full bg-black" style={{ width: `${progressPercent}%` as const, height: 3 }} />
         </View>
       </View>
     );
@@ -261,65 +441,89 @@ export default function SignupScreen() {
 
   const renderStepPlan = () => (
     <View className="flex-1">
-        <TouchableOpacity onPress={() => router.back()} className="mb-8">
+        <TouchableOpacity onPress={() => router.back()} style={{ marginBottom: 28 }}>
             <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
 
-        <Text className="text-2xl font-bold mb-6" style={{ fontFamily: 'Helvetica Neue' }}>Subscription Plan</Text>
+        <Text style={PLAN_TITLE_STYLE}>Subscription Plan</Text>
+        <View style={{ height: 1, backgroundColor: '#E5E5E5', marginTop: 18, marginBottom: 18 }} />
         
-        <View className="mb-8">
-            <Text className="text-sm font-bold mb-2">Grow Your Bridal Business</Text>
-            <Text className="text-xs text-black/50 leading-5">
+        <View style={{ marginBottom: 18 }}>
+            <Text style={[PLAN_BODY_STYLE, { color: '#000000', marginBottom: 6 }]}>Grow Your Bridal Business</Text>
+            <Text style={PLAN_BODY_STYLE}>
                 Join the platform where brides discover, customize, and purchase their dream wedding dresses. Showcase your designs, manage orders, and connect with brides planning their big day.
             </Text>
         </View>
 
-        <Text className="text-[10px] font-bold uppercase tracking-[1px] mb-6">Enjoy All Features Lists</Text>
+        <Text style={[PLAN_SECTION_TITLE_STYLE, { marginBottom: 16 }]}>Enjoy All Features Lists</Text>
         
-        <View className="gap-3 mb-12">
+        <View style={{ gap: 12, marginBottom: 34 }}>
             {FEATURES.map((feat, i) => (
                 <View key={i} className="flex-row items-center">
-                    <Ionicons name="checkmark" size={16} color="black" className="mr-3" />
-                    <Text className="text-xs text-black/70">{feat}</Text>
+                    <Image source={TICK_ICON} style={{ width: 18, height: 12, marginRight: 16 }} contentFit="contain" />
+                    <Text style={PLAN_FEATURE_STYLE}>{feat}</Text>
                 </View>
             ))}
         </View>
 
-        <View className="gap-4 mb-10">
+        <View style={{ gap: 14, marginBottom: 36 }}>
             <TouchableOpacity 
                 onPress={() => setPlan('monthly')}
-                className={`p-5 flex-row justify-between items-center border ${plan === 'monthly' ? 'border-black' : 'border-gray-200'}`}
+                className="flex-row justify-between items-center border"
+                style={{ height: 64, paddingHorizontal: 24, borderColor: plan === 'monthly' ? '#000000' : '#777777' }}
             >
                 <View className="flex-row items-center">
-                    <View className={`w-4 h-4 rounded-full border items-center justify-center mr-3 ${plan === 'monthly' ? 'border-black' : 'border-gray-300'}`}>
-                        {plan === 'monthly' && <View className="w-2 h-2 rounded-full bg-black" />}
+                    <View
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderWidth: 0.5,
+                        borderColor: '#000000',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 14,
+                      }}
+                    >
+                        {plan === 'monthly' && <View style={{ width: 6, height: 6, backgroundColor: '#000000' }} />}
                     </View>
-                    <Text className="text-xs font-bold">Monthly 59.90€</Text>
+                    <Text style={PLAN_PRICE_STYLE}>Monthly 59.90€</Text>
                 </View>
-                <Text className="text-[10px] text-black/40 uppercase">Billed Monthly</Text>
+                <Text style={{ fontFamily: 'Helvetica Neue', fontSize: 12, lineHeight: 12, color: '#6B6B6B' }}>Billed Monthly</Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
                 onPress={() => setPlan('annual')}
-                className={`p-5 flex-row justify-between items-center border ${plan === 'annual' ? 'border-black' : 'border-gray-200'}`}
+                className="flex-row justify-between items-center border"
+                style={{ height: 64, paddingHorizontal: 24, borderColor: plan === 'annual' ? '#000000' : '#777777' }}
             >
                 <View className="flex-row items-center">
-                    <View className={`w-4 h-4 rounded-full border items-center justify-center mr-3 ${plan === 'annual' ? 'border-black' : 'border-gray-300'}`}>
-                        {plan === 'annual' && <View className="w-2 h-2 rounded-full bg-black" />}
+                    <View
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderWidth: 0.5,
+                        borderColor: '#000000',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 14,
+                      }}
+                    >
+                        {plan === 'annual' && <View style={{ width: 6, height: 6, backgroundColor: '#000000' }} />}
                     </View>
-                    <Text className="text-xs font-bold">Annual 99.90€</Text>
+                    <Text style={PLAN_PRICE_STYLE}>Annual 90.90€</Text>
                 </View>
-                <View className="bg-gray-100 px-3 py-1">
-                    <Text className="text-[10px] uppercase font-bold">Popular</Text>
+                <View style={{ width: 78, height: 38, borderWidth: 1, borderColor: '#000000', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ fontFamily: 'Helvetica Neue', fontWeight: '400', fontSize: 12, lineHeight: 12, color: '#000000' }}>Popular</Text>
                 </View>
             </TouchableOpacity>
         </View>
 
         <TouchableOpacity 
             onPress={() => setStep('shop_info')}
-            className="bg-black py-5 items-center rounded-sm"
+            className="bg-black items-center justify-center"
+            style={{ height: 48 }}
         >
-            <Text className="text-white text-xs font-bold tracking-[2px] uppercase">Subscribe Plan</Text>
+            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '700', letterSpacing: 0, textTransform: 'uppercase' }}>Subscribe Plan</Text>
         </TouchableOpacity>
     </View>
   );
@@ -335,60 +539,83 @@ export default function SignupScreen() {
         </View>
 
         <View className="mb-12">
-            <Text className="text-[10px] font-bold uppercase tracking-[1px] mb-6">Shop Information</Text>
+            <Text style={[SECTION_HEADING_STYLE, { marginBottom: 32, textTransform: 'uppercase' }]}>
+              Shop Information
+            </Text>
             
-            <View className="flex-row items-center mb-10">
+            <View className="flex-row items-end mb-10">
                 <TouchableOpacity 
-                    onPress={() => pickImage(setLogo)}
+                    onPress={() => pickImage(setLogo, 'logo')}
                     className="w-24 h-24 border border-dashed border-gray-300 items-center justify-center bg-gray-50"
                 >
                     {logo ? (
                         <Image source={{ uri: logo }} style={{ width: '100%', height: '100%' }} />
                     ) : (
-                        <Feather name="upload" size={24} color="gray" />
+                        <Feather name="upload" size={24} color="black" />
                     )}
                 </TouchableOpacity>
                 <TouchableOpacity 
-                    onPress={() => pickImage(setLogo)}
+                    onPress={() => pickImage(setLogo, 'logo')}
                     className="ml-6 border border-black px-6 py-3"
                 >
-                    <Text className="text-[10px] font-bold uppercase">Upload Logo</Text>
+                    <Text style={UPLOAD_BUTTON_TEXT_STYLE}>Upload Logo</Text>
                 </TouchableOpacity>
             </View>
+            {renderFieldError('logo')}
 
             <View className="gap-8">
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Shop Name', true)}
-                    <TextInput 
-                        placeholder="Enter shop name"
-                        className="text-sm font-light"
-                        value={shopName}
-                        onChangeText={setShopName}
-                    />
+                <View>
+                    <View className="border-b border-gray-200 pb-2">
+                        {renderInputHeading('Shop Name', true)}
+                        <TextInput 
+                            placeholder="Enter shop name"
+                            className="text-sm font-light"
+                            value={shopName}
+                            onChangeText={(value) => {
+                              setShopName(value);
+                              clearError('shopName');
+                            }}
+                        />
+                    </View>
+                    {renderFieldError('shopName')}
                 </View>
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Business Shop Description', true)}
-                    <TextInput 
-                        placeholder="Describe your boutique..."
-                        multiline
-                        className="text-sm font-light min-h-[60px]"
-                        value={shopDescription}
-                        onChangeText={setShopDescription}
-                    />
-                    <Text className="text-[10px] text-black/20 text-right mt-2">{shopDescription.length}/500</Text>
+                <View>
+                    <View className="border-b border-gray-200 pb-2">
+                        {renderInputHeading('Business Shop Description', true)}
+                        <TextInput 
+                            placeholder="Describe your boutique..."
+                            multiline
+                            className="text-sm font-light min-h-[60px]"
+                            value={shopDescription}
+                            onChangeText={(value) => {
+                              setShopDescription(value);
+                              clearError('shopDescription');
+                            }}
+                        />
+                    </View>
+                    <View className="flex-row items-center justify-between mt-2">
+                        <Text className="text-[10px] text-black/40">This information will be visible to customers also</Text>
+                        <Text className="text-[10px] text-black/40">{shopDescription.length}/500</Text>
+                    </View>
+                    {renderFieldError('shopDescription')}
                 </View>
             </View>
         </View>
 
-        <View className="flex-row gap-4 mt-auto">
-            <TouchableOpacity onPress={() => setStep('plan')} className="flex-1 border border-gray-200 py-4 items-center">
-                <Text className="text-[10px] font-bold uppercase">Back</Text>
+        <View style={{ flexDirection: 'row', gap: 20, marginTop: 'auto' }}>
+            <TouchableOpacity
+              onPress={() => setStep('plan')}
+              className="flex-1 border border-black"
+              style={ONBOARDING_ACTION_BUTTON_STYLE}
+            >
+                <Text style={[ONBOARDING_BUTTON_TEXT_STYLE, { color: '#000000' }]}>Back</Text>
             </TouchableOpacity>
             <TouchableOpacity 
-                onPress={() => setStep('owner_info')} 
-                className="flex-1 bg-black py-4 items-center"
+                onPress={validateShopInfo} 
+                className="flex-1 bg-black"
+                style={ONBOARDING_ACTION_BUTTON_STYLE}
             >
-                <Text className="text-white text-[10px] font-bold uppercase">Continue</Text>
+                <Text style={[ONBOARDING_BUTTON_TEXT_STYLE, { color: '#FFFFFF' }]}>Continue</Text>
             </TouchableOpacity>
         </View>
     </View>
@@ -405,67 +632,163 @@ export default function SignupScreen() {
         </View>
 
         <View className="mb-10">
-            <Text className="text-[10px] font-bold uppercase tracking-[1px] mb-6">Owner Personal Information</Text>
+            <Text
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '400',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0,
+                marginBottom: 32,
+                textTransform: 'uppercase',
+              }}
+            >
+              Owner Information
+            </Text>
             
-            <View className="flex-row items-center mb-10">
+            <View className="flex-row items-end mb-10">
                 <TouchableOpacity 
-                    onPress={() => pickImage(setOwnerImage)}
-                    className="w-20 h-20 border border-dashed border-gray-300 items-center justify-center bg-gray-50"
+                    onPress={() => pickImage(setOwnerImage, 'ownerImage')}
+                    style={{ width: 90, height: 90 }}
+                    className="border border-dashed border-gray-300 items-center justify-center bg-gray-50"
                 >
                     {ownerImage ? (
                         <Image source={{ uri: ownerImage }} style={{ width: '100%', height: '100%' }} />
                     ) : (
-                        <Feather name="upload" size={20} color="gray" />
+                        <Feather name="upload" size={20} color="black" />
                     )}
                 </TouchableOpacity>
                 <TouchableOpacity 
-                    onPress={() => pickImage(setOwnerImage)}
+                    onPress={() => pickImage(setOwnerImage, 'ownerImage')}
                     className="ml-6 border border-black px-6 py-3"
                 >
-                    <Text className="text-[10px] font-bold uppercase">Upload Image</Text>
+                    <Text style={UPLOAD_BUTTON_TEXT_STYLE}>Upload Image</Text>
                 </TouchableOpacity>
             </View>
+            {renderFieldError('ownerImage')}
 
             <View className="gap-6">
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Owner Name', true, 'mb-1')}
-                    <TextInput className="text-sm font-light" value={ownerName} onChangeText={setOwnerName} />
+                <View>
+                    <View className="border-b border-gray-200 pb-2">
+                        {renderInputHeading('Owner Name', true, 'mb-1', { letterSpacing: 0.48 })}
+                        <TextInput
+                          className="text-sm font-light"
+                          value={ownerName}
+                          onChangeText={(value) => {
+                            setOwnerName(value);
+                            clearError('ownerName');
+                          }}
+                        />
+                    </View>
+                    {renderFieldError('ownerName')}
                 </View>
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Email', true, 'mb-1')}
-                    <TextInput className="text-sm font-light" autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
+                <View>
+                    <View className="border-b border-gray-200 pb-2">
+                        {renderInputHeading('Email', true, 'mb-1', { letterSpacing: 0.72, color: '#6E6E6E' })}
+                        <TextInput
+                          className="text-sm font-light"
+                          autoCapitalize="none"
+                          keyboardType="email-address"
+                          value={email}
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '300',
+                            fontSize: 14,
+                            lineHeight: 14,
+                            letterSpacing: 0.84,
+                            color: '#000000',
+                          }}
+                          onChangeText={(value) => {
+                            setEmail(value);
+                            clearError('email');
+                          }}
+                        />
+                    </View>
+                    {renderFieldError('email')}
                 </View>
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Primary Phone Number', true, 'mb-1')}
-                    <TextInput className="text-sm font-light" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+                <View>
+                    <View className="border-b border-gray-200 pb-2">
+                        {renderInputHeading('Primary Phone Number', true, 'mb-1', { letterSpacing: 0.48 })}
+                        <TextInput
+                          className="text-sm font-light"
+                          keyboardType="phone-pad"
+                          value={phone}
+                          onChangeText={(value) => {
+                            setPhone(value);
+                            clearError('phone');
+                          }}
+                        />
+                    </View>
+                    {renderFieldError('phone')}
                 </View>
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Full Address', true, 'mb-1')}
-                    <TextInput className="text-sm font-light" value={address} onChangeText={setAddress} />
+                <View>
+                    <View className="border-b border-gray-200 pb-2">
+                        {renderInputHeading('Business Adress', true, 'mb-1', { letterSpacing: 0.48 })}
+                        <TextInput
+                          className="text-sm font-light"
+                          value={address}
+                          onChangeText={(value) => {
+                            setAddress(value);
+                            clearError('address');
+                          }}
+                        />
+                    </View>
+                    {renderFieldError('address')}
                 </View>
-                <View className="border-b border-gray-200 pb-2 relative">
-                    {renderInputHeading('Password', true, 'mb-1')}
-                    <TextInput secureTextEntry={!showPassword} className="text-sm font-light pr-10" value={password} onChangeText={setPassword} />
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} className="absolute right-0 bottom-2">
-                        <Ionicons name={showPassword ? "eye-off" : "eye"} size={16} color="gray" />
-                    </TouchableOpacity>
+                <View>
+                    <View className="border-b border-gray-200 pb-2 relative">
+                        {renderInputHeading('Password', true, 'mb-1', { letterSpacing: 0.48 })}
+                        <TextInput
+                          secureTextEntry={!showPassword}
+                          className="text-sm font-light pr-10"
+                          value={password}
+                          onChangeText={(value) => {
+                            setPassword(value);
+                            clearError('password');
+                            clearError('confirmPassword');
+                          }}
+                        />
+                        <TouchableOpacity onPress={() => setShowPassword(!showPassword)} className="absolute right-0 bottom-2">
+                            <Ionicons name={showPassword ? "eye-off" : "eye"} size={16} color="gray" />
+                        </TouchableOpacity>
+                    </View>
+                    {renderFieldError('password')}
                 </View>
-                <View className="border-b border-gray-200 pb-2">
-                    {renderInputHeading('Confirm Password', true, 'mb-1')}
-                    <TextInput secureTextEntry={!showPassword} className="text-sm font-light" value={confirmPassword} onChangeText={setConfirmPassword} />
+                <View>
+                    <View className="border-b border-gray-200 pb-2 relative">
+                        {renderInputHeading('Confirm Password', true, 'mb-1', { letterSpacing: 0.48 })}
+                        <TextInput
+                          secureTextEntry={!showConfirmPassword}
+                          className="text-sm font-light pr-10"
+                          value={confirmPassword}
+                          onChangeText={(value) => {
+                            setConfirmPassword(value);
+                            clearError('confirmPassword');
+                          }}
+                        />
+                        <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-0 bottom-2">
+                            <Ionicons name={showConfirmPassword ? "eye-off" : "eye"} size={16} color="gray" />
+                        </TouchableOpacity>
+                    </View>
+                    {renderFieldError('confirmPassword')}
                 </View>
             </View>
         </View>
 
-        <View className="flex-row gap-4 mt-8 pb-10">
-            <TouchableOpacity onPress={() => setStep('shop_info')} className="flex-1 border border-gray-200 py-4 items-center">
-                <Text className="text-[10px] font-bold uppercase">Back</Text>
+        <View style={{ flexDirection: 'row', gap: 20, marginTop: 'auto' }}>
+            <TouchableOpacity
+              onPress={() => setStep('shop_info')}
+              className="flex-1 border border-black"
+              style={ONBOARDING_ACTION_BUTTON_STYLE}
+            >
+                <Text style={[ONBOARDING_BUTTON_TEXT_STYLE, { color: '#000000' }]}>Back</Text>
             </TouchableOpacity>
             <TouchableOpacity 
-                onPress={() => setStep('store_photos')} 
-                className="flex-1 bg-black py-4 items-center"
+                onPress={validateOwnerInfo} 
+                className="flex-1 bg-black"
+                style={ONBOARDING_ACTION_BUTTON_STYLE}
             >
-                <Text className="text-white text-[10px] font-bold uppercase">Continue</Text>
+                <Text style={[ONBOARDING_BUTTON_TEXT_STYLE, { color: '#FFFFFF' }]}>Continue</Text>
             </TouchableOpacity>
         </View>
     </View>
@@ -482,75 +805,98 @@ export default function SignupScreen() {
         </View>
 
         <View className="mb-10 flex-1">
-            <Text className="text-black mb-8" style={SECTION_HEADING_STYLE}>Upload Store Photos</Text>
+            <Text style={[SECTION_HEADING_STYLE, { marginBottom: 32, textTransform: 'uppercase' }]}>
+              Upload Store Photos
+            </Text>
             
             <View className="mb-10">
-                {renderInputHeading('Upload Front Store Image', true, 'mb-4')}
-                <View className="p-4 border border-gray-200 flex-row items-center justify-between">
+                <Text style={[PHOTO_UPLOAD_LABEL_STYLE, { marginBottom: 4 }]}>
+                  Upload Front Store Image <Text style={{ color: '#DC2626' }}>*</Text>
+                </Text>
+                <View
+                  className="border border-black flex-row items-center justify-between"
+                  style={{ height: 90, paddingHorizontal: 14 }}
+                >
                     <View className="flex-row items-center flex-1">
                         <TouchableOpacity 
-                            onPress={() => pickImage(setFrontImage)}
-                            className="w-16 h-16 border border-dashed border-gray-300 items-center justify-center bg-gray-50 mr-4"
+                            onPress={() => pickImage(setFrontImage, 'frontImage')}
+                            className="border border-gray-300 items-center justify-center bg-gray-50 mr-4"
+                            style={{ width: 46, height: 46 }}
                         >
                             {frontImage ? (
                                 <Image source={{ uri: frontImage }} style={{ width: '100%', height: '100%' }} />
                             ) : (
-                                <Feather name="upload" size={20} color="gray" />
+                                <Feather name="upload" size={20} color="black" />
                             )}
                         </TouchableOpacity>
                         <View>
-                            <Text className="text-[10px] font-bold mb-1">Tap To Upload</Text>
-                            <Text className="text-[10px] text-black/30">JPG, PNG or PDF (max 5MB)</Text>
+                            <Text style={[PLAN_FEATURE_STYLE, { color: '#000000', marginBottom: 4 }]}>Tap To Upload</Text>
+                            <Text style={[PLAN_FEATURE_STYLE, { fontSize: 12, lineHeight: 12, color: 'rgba(0,0,0,0)' }]}>JPG, PNG or PDF (max 5MB)</Text>
                         </View>
                     </View>
                     <TouchableOpacity 
-                        onPress={() => pickImage(setFrontImage)}
-                        className="bg-black px-6 py-3"
+                        onPress={() => pickImage(setFrontImage, 'frontImage')}
+                        className="bg-black items-center justify-center"
+                        style={{ width: 98, height: 38 }}
                     >
-                        <Text className="text-white text-[10px] font-bold uppercase">Upload</Text>
+                        <Text style={[UPLOAD_BUTTON_TEXT_STYLE, { color: '#FFFFFF' }]}>Upload</Text>
                     </TouchableOpacity>
                 </View>
+                {renderFieldError('frontImage')}
             </View>
 
             <View className="mb-10">
-                {renderInputHeading('Upload Inside Store Image', true, 'mb-4')}
-                <View className="p-4 border border-gray-200 flex-row items-center justify-between">
+                <Text style={[PHOTO_UPLOAD_LABEL_STYLE, { marginBottom: 4 }]}>
+                  Upload Inside Store Image <Text style={{ color: '#DC2626' }}>*</Text>
+                </Text>
+                <View
+                  className="border border-black flex-row items-center justify-between"
+                  style={{ height: 90, paddingHorizontal: 14 }}
+                >
                     <View className="flex-row items-center flex-1">
                         <TouchableOpacity 
-                            onPress={() => pickImage(setInsideImage)}
-                            className="w-16 h-16 border border-dashed border-gray-300 items-center justify-center bg-gray-50 mr-4"
+                            onPress={() => pickImage(setInsideImage, 'insideImage')}
+                            className="border border-gray-300 items-center justify-center bg-gray-50 mr-4"
+                            style={{ width: 46, height: 46 }}
                         >
                             {insideImage ? (
                                 <Image source={{ uri: insideImage }} style={{ width: '100%', height: '100%' }} />
                             ) : (
-                                <Feather name="upload" size={20} color="gray" />
+                                <Feather name="upload" size={20} color="black" />
                             )}
                         </TouchableOpacity>
                         <View>
-                            <Text className="text-[10px] font-bold mb-1">Tap To Upload</Text>
-                            <Text className="text-[10px] text-black/30">JPG, PNG or PDF (max 5MB)</Text>
+                            <Text style={[PLAN_FEATURE_STYLE, { color: '#000000', marginBottom: 4 }]}>Tap To Upload</Text>
+                            <Text style={[PLAN_FEATURE_STYLE, { fontSize: 12, lineHeight: 12, color: 'rgba(0,0,0,0)' }]}>JPG, PNG or PDF (max 5MB)</Text>
                         </View>
                     </View>
                     <TouchableOpacity 
-                        onPress={() => pickImage(setInsideImage)}
-                        className="bg-black px-6 py-3"
+                        onPress={() => pickImage(setInsideImage, 'insideImage')}
+                        className="bg-black items-center justify-center"
+                        style={{ width: 98, height: 38 }}
                     >
-                        <Text className="text-white text-[10px] font-bold uppercase">Upload</Text>
+                        <Text style={[UPLOAD_BUTTON_TEXT_STYLE, { color: '#FFFFFF' }]}>Upload</Text>
                     </TouchableOpacity>
                 </View>
+                {renderFieldError('insideImage')}
             </View>
         </View>
 
-        <View className="flex-row gap-4 mt-auto mb-10">
-            <TouchableOpacity onPress={() => setStep('owner_info')} className="flex-1 border border-gray-200 py-4 items-center">
-                <Text className="text-[10px] font-bold uppercase">Back</Text>
+        <View style={{ flexDirection: 'row', gap: 20, marginTop: 'auto' }}>
+            <TouchableOpacity
+              onPress={() => setStep('owner_info')}
+              className="flex-1 border border-black"
+              style={ONBOARDING_ACTION_BUTTON_STYLE}
+            >
+                <Text style={[ONBOARDING_BUTTON_TEXT_STYLE, { color: '#000000' }]}>Back</Text>
             </TouchableOpacity>
             <TouchableOpacity 
                 onPress={handleFinalSignup} 
                 disabled={loading}
-                className="flex-1 bg-black py-4 items-center justify-center"
+                className="flex-1 bg-black"
+                style={ONBOARDING_ACTION_BUTTON_STYLE}
             >
-                {loading ? <ActivityIndicator color="white" size="small" /> : <Text className="text-white text-[10px] font-bold uppercase">Finish</Text>}
+                {loading ? <ActivityIndicator color="white" size="small" /> : <Text style={[ONBOARDING_BUTTON_TEXT_STYLE, { color: '#FFFFFF' }]}>Continue</Text>}
             </TouchableOpacity>
         </View>
     </View>
@@ -566,7 +912,13 @@ export default function SignupScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ flexGrow: 1 }}
         >
-          <SafeAreaView className="flex-1 px-8 pt-4 pb-10" style={{ paddingTop: insets.top }}>
+          <SafeAreaView
+            className="flex-1 pt-4 pb-10"
+            style={{
+              paddingTop: insets.top,
+              paddingHorizontal: 20,
+            }}
+          >
             {step === 'plan' && renderStepPlan()}
             {step === 'shop_info' && renderStepShopInfo()}
             {step === 'owner_info' && renderStepOwnerInfo()}

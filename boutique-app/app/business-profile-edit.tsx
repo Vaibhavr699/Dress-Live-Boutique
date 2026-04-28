@@ -358,7 +358,7 @@ export default function BusinessProfileEditScreen() {
               className="text-black mb-4"
               style={SECTION_HEADING_STYLE}
             >
-              Shop Information
+            SHOP INFORMATION
             </Text>
 
             <Text className="text-[10px] text-black/45 mb-3">Upload Cover Photo *</Text>
@@ -406,7 +406,7 @@ export default function BusinessProfileEditScreen() {
               className="text-black mb-4"
               style={SECTION_HEADING_STYLE}
             >
-              Owner Personal Information
+              OWNER PERSONAL INFORMATION
             </Text>
 
             <View className="mb-5">

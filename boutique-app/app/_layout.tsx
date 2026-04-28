@@ -8,20 +8,55 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
-import { useIncomingVideoRingStore } from '@shared/store/useIncomingVideoRingStore';
-import { useNotificationStore } from '@/store/useNotificationStore';
-import { usePartnerBookingNotificationsSync } from '@/hooks/usePartnerBookingNotificationsSync';
-import { sendLocalPhoneNotification } from '@/lib/partnerNotifications';
 import * as Location from 'expo-location';
-import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
+
+function BootScreen() {
+  return (
+    <View style={{ flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <Text
+        style={{
+          color: '#111111',
+          fontSize: 18,
+          fontWeight: '700',
+          letterSpacing: 4,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Boutique Portal
+      </Text>
+      <View
+        style={{
+          width: 84,
+          height: 2,
+          backgroundColor: '#111111',
+          opacity: 0.14,
+          marginTop: 20,
+          marginBottom: 18,
+        }}
+      />
+      <Text
+        style={{
+          color: '#666666',
+          fontSize: 12,
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Loading experience
+      </Text>
+    </View>
+  );
+}
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -30,9 +65,6 @@ export default function RootLayout() {
   const { isAuthenticated, user, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
   const permissionsRequestedRef = useRef(false);
-  const lastIncomingRingKeyRef = useRef<string | null>(null);
-  const incomingRing = useIncomingVideoRingStore((s) => s.incoming);
-  const upsertNotification = useNotificationStore((s) => s.upsert);
 
   const [loaded, error] = useFonts({
     'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
@@ -40,11 +72,14 @@ export default function RootLayout() {
     'PlayfairDisplay-Regular': PlayfairDisplay_400Regular,
   });
 
+  const fontsReady = loaded || !!error;
+  const appReady = fontsReady && isReady;
+
   useEffect(() => {
-    if (loaded || error) {
+    if (fontsReady) {
       SplashScreen.hideAsync();
     }
-  }, [loaded, error]);
+  }, [fontsReady]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -99,7 +134,6 @@ export default function RootLayout() {
     }
 
     if (!isAuthenticated && inProtectedTabs) {
-      useNotificationStore.getState().clear();
       // Keep protected pages behind login, but do not auto-skip the public landing flow.
       router.replace('/landing');
     }
@@ -116,25 +150,6 @@ export default function RootLayout() {
 
     (async () => {
       try {
-        if (Platform.OS !== 'web' && Constants.appOwnership !== 'expo') {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const Notifications = require('expo-notifications') as typeof import('expo-notifications');
-            const notifPerm = await Notifications.getPermissionsAsync();
-            if (notifPerm.status !== 'granted') {
-              await Notifications.requestPermissionsAsync();
-            }
-            try {
-              const token = await Notifications.getExpoPushTokenAsync();
-              console.log('Expo push token:', token.data);
-            } catch {
-              // ignore
-            }
-          } catch {
-            // ignore
-          }
-        }
-
         const locPerm = await Location.getForegroundPermissionsAsync();
         if (locPerm.status !== 'granted') {
           await Location.requestForegroundPermissionsAsync();
@@ -145,80 +160,13 @@ export default function RootLayout() {
     })();
   }, [isAuthenticated, isReady]);
 
-  useEffect(() => {
-    if (Platform.OS === 'web' || Constants.appOwnership === 'expo') return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const Notifications = require('expo-notifications') as typeof import('expo-notifications');
-      Notifications.setNotificationHandler({
-        handleNotification: async () => ({
-          shouldShowBanner: true,
-          shouldShowList: true,
-          shouldPlaySound: true,
-          shouldSetBadge: false,
-        }),
-      });
-      const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-        const data = response.notification.request.content.data as {
-          type?: string | null;
-          bookingId?: number | string | null;
-          notificationKind?: string | null;
-        };
-        if (data?.notificationKind === 'video_waiting' && data?.bookingId != null) {
-          router.push({
-            pathname: '/video-call',
-            params: { bookingId: String(data.bookingId) },
-          } as never);
-          return;
-        }
-        if (data?.type === 'booking') {
-          router.push('/notifications');
-        }
-      });
-      return () => sub.remove();
-    } catch {
-      return;
-    }
-  }, [router]);
-
   const onPartnerVideoCallRoute = segments[0] === 'video-call';
   useIncomingVideoRingPoller(
     (loaded || !!error) && isAuthenticated && user?.role === 'partner' && !onPartnerVideoCallRoute
   );
-  usePartnerBookingNotificationsSync((loaded || !!error) && isAuthenticated && user?.role === 'partner');
 
-  useEffect(() => {
-    if (!isAuthenticated || user?.role !== 'partner') {
-      lastIncomingRingKeyRef.current = null;
-      return;
-    }
-    if (!incomingRing?.bookingId) {
-      lastIncomingRingKeyRef.current = null;
-      return;
-    }
-
-    const key = `partner-video-waiting-${incomingRing.bookingId}-${incomingRing.scheduledFor ?? ''}`;
-    if (lastIncomingRingKeyRef.current === key) return;
-    lastIncomingRingKeyRef.current = key;
-
-    const notification = {
-      externalKey: key,
-      kind: 'video_waiting' as const,
-      title: 'Customer waiting on video call',
-      body: `${incomingRing.callerDisplayName} is waiting for you to join the Boutique Portal call.`,
-      appointmentType: 'video' as const,
-      scheduledFor: incomingRing.scheduledFor ?? null,
-      customerName: incomingRing.callerDisplayName,
-      status: 'waiting',
-      action: { type: 'booking' as const, bookingId: incomingRing.bookingId },
-    };
-
-    upsertNotification(notification);
-    void sendLocalPhoneNotification(notification);
-  }, [incomingRing, isAuthenticated, upsertNotification, user?.role]);
-
-  if (!loaded && !error) {
-    return null;
+  if (!appReady) {
+    return <BootScreen />;
   }
 
   return (
@@ -252,7 +200,7 @@ export default function RootLayout() {
         <Stack.Screen name="withdraw-funds" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        {/* <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} /> */}
       </Stack>
       <IncomingVideoCallBar app="partner" />
       <StatusBar style="auto" />

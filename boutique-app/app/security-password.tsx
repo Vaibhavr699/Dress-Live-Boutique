@@ -1,89 +1,182 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { Image } from 'expo-image';
+
+const EXCLAMATION_ICON = require('../assets/svg/diamond-exclamation.svg');
 
 export default function SecurityPasswordScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuthStore();
-  const [password, setPassword] = useState('');
+  const userEmail = useAuthStore((s: any) => s.user?.email) ?? '';
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
-  const passwordHint = useMemo(
-    () =>
-      'Enter a secure password: at least 8 characters, including upper-case and lower-case letters and numbers.',
-    []
-  );
+  const handleContinue = async () => {
+    if (newPassword.trim().length < 8) {
+      Alert.alert('Weak Password', 'Please enter a password with at least 8 characters.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Password Mismatch', 'The password confirmation does not match.');
+      return;
+    }
+
+    try {
+      await api.post('/users/me/password/otp', { email: userEmail || undefined });
+    } catch (error) {
+      Alert.alert('OTP Failed', error instanceof Error ? error.message : 'Could not send verification code.');
+      return;
+    }
+
+    router.push({
+      pathname: '/security-password-verify',
+      params: { newPassword, email: userEmail },
+    });
+  };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
-        <TouchableOpacity onPress={() => router.back()} className="mb-10">
-          <Ionicons name="arrow-back" size={18} color="black" />
+    <View className="flex-1 bg-white">
+      <View className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" style={{ paddingTop: insets.top + 10 }}>
+        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+          <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
+      </View>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-4">New Password</Text>
-        <Text className="text-[11px] text-black/55 leading-6 mb-10">Enter a new login password</Text>
+      <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
+        <Text
+          className="text-black mb-4"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
+          New Password
+        </Text>
+        <Text
+          className="text-black mb-10"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '300',
+            fontSize: 14,
+            lineHeight: 18,
+            letterSpacing: 0,
+            opacity: 0.6,
+          }}
+        >
+          Enter a new login password
+        </Text>
 
-        <View>
-          <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">New Password *</Text>
-          <View className="border-b border-[#ECECEC] pb-2 flex-row items-center">
+        <View className="mb-6">
+          <Text
+            className="text-black/40 uppercase mb-2"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 0.72,
+            }}
+          >
+            New Password <Text style={{ color: '#FF3B30' }}>*</Text>
+          </Text>
+          <View className="flex-row border-b border-[#F0F0F0] items-center">
             <TextInput
-              value={password}
-              onChangeText={setPassword}
               secureTextEntry={!showPassword}
-              className="flex-1 text-[12px] text-black"
+              placeholder="Enter new password"
+              className="text-black flex-1"
+              style={{
+                paddingVertical: 0,
+                height: 28,
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0.84,
+              }}
+              value={newPassword}
+              onChangeText={setNewPassword}
             />
-            <TouchableOpacity activeOpacity={0.85} onPress={() => setShowPassword((current) => !current)}>
-              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={18} color="#8A8A8A" />
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+              <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="black" />
             </TouchableOpacity>
           </View>
-          <View className="flex-row mt-3 pr-2">
-            <Ionicons name="alert-circle-outline" size={14} color="#8A8A8A" />
-            <Text className="text-[9px] text-black/45 ml-2 leading-4 flex-1">{passwordHint}</Text>
+
+          <View className="h-8" />
+
+          <Text
+            className="text-black/40 uppercase mb-2"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 0.72,
+            }}
+          >
+            Confirm Password <Text style={{ color: '#FF3B30' }}>*</Text>
+          </Text>
+          <View className="flex-row border-b border-[#F0F0F0] items-center">
+            <TextInput
+              secureTextEntry={!showConfirmPassword}
+              placeholder="Confirm new password"
+              className="text-black flex-1"
+              style={{
+                paddingVertical: 0,
+                height: 28,
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0.84,
+              }}
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+            />
+            <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)}>
+              <Ionicons name={showConfirmPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color="black" />
+            </TouchableOpacity>
           </View>
+        </View>
+
+        <View className="flex-row items-start mt-6">
+          <Image source={EXCLAMATION_ICON} style={{ width: 14, height: 14, marginRight: 10, opacity: 0.45 }} contentFit="contain" />
+          <Text
+            className="text-black flex-1"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 10,
+              lineHeight: 15,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
+            Enter a secure password: at least 8 characters, including upper-case{'\n'}
+            and lower-case letters and numbers.
+          </Text>
         </View>
 
         <TouchableOpacity
           activeOpacity={0.9}
-          disabled={loading}
-          onPress={async () => {
-            if (loading) return;
-            if (!password.trim() || password.trim().length < 8) {
-              Alert.alert('Password', 'Password must be at least 8 characters.');
-              return;
-            }
-            if (!user?.email) {
-              Alert.alert('Account', 'Email missing. Please log in again.');
-              return;
-            }
-            setLoading(true);
-            try {
-              await api.post('/users/me/password/otp', { email: user.email });
-              router.push({
-                pathname: '/security-password-verify',
-                params: { email: user.email, newPassword: password },
-              });
-            } catch (error: any) {
-              Alert.alert('OTP Failed', error?.message || 'Could not send verification code.');
-            } finally {
-              setLoading(false);
-            }
-          }}
-          className="bg-black py-4 items-center justify-center mt-auto mb-10"
+          onPress={handleContinue}
+          className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
+          style={{ marginTop: 240 }}
         >
-          {loading ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text className="text-[11px] uppercase tracking-[1px] text-white">Continue</Text>
-          )}
+          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Continue</Text>
         </TouchableOpacity>
-      </View>
-    </SafeAreaView>
+      </ScrollView>
+    </View>
   );
 }
