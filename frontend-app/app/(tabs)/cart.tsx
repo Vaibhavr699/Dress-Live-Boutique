@@ -40,10 +40,37 @@ export default function CartScreen() {
   const cartItems = useCartStore((state) => state.items);
   const removeItem = useCartStore((state) => state.removeItem);
   const toggleSelected = useCartStore((state) => state.toggleSelected);
+  const selectOnly = useCartStore((state) => state.selectOnly);
   const addGuestShortlist = useShortlistStore((state) => state.add);
   const [wishlistedIds, setWishlistedIds] = useState<number[]>([]);
 
   const toggleSelect = (id: string) => {
+    const item = cartItems.find((i) => i.id === id);
+    if (!item) return;
+
+    if (!item.selected) {
+      const nextBoutiqueId = item.boutiqueId ?? null;
+      if (nextBoutiqueId != null) {
+        const selectedOther = cartItems.filter((i) => i.selected && i.id !== id);
+        const conflicting = selectedOther.some((i) => (i.boutiqueId ?? null) != null && (i.boutiqueId ?? null) !== nextBoutiqueId);
+
+        if (conflicting) {
+          Alert.alert(
+            'Cart selection',
+            'Please select dresses from the same boutique.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Select this only',
+                onPress: () => selectOnly(id),
+              },
+            ]
+          );
+          return;
+        }
+      }
+    }
+
     toggleSelected(id);
   };
 
@@ -112,7 +139,7 @@ export default function CartScreen() {
         className="px-6 items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <Text className="text-black text-sm font-bold uppercase tracking-[2px]">
+        <Text className="text-black text-[14px] font-[400] uppercase tracking-[2px]">
           Shoping Cart {cartItems.reduce((total, item) => total + item.quantity, 0)}
         </Text>
       </View>

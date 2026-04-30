@@ -112,6 +112,7 @@ function formatBoutiqueCardLocation(location?: string | null): string {
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const screenWidth = Dimensions.get('window').width;
   const showHomeFilters = false;
   const [activeCategory, setActiveCategory] = useState('All');
   const [loading, setLoading] = useState(true);
@@ -599,20 +600,39 @@ export default function DashboardScreen() {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              className="px-5"
-              contentContainerStyle={{ paddingTop: 10, paddingBottom: 14, paddingRight: showHomeFilters ? 64 : 12 }}
+              style={{
+                marginLeft: screenWidth < 400 ? 24 : 0,
+                marginRight: screenWidth < 400 ? 24 : 0,
+              }}
+              contentContainerStyle={{
+                flexGrow: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingTop: 10,
+                paddingBottom: 14,
+                paddingLeft: 0,
+                paddingRight: showHomeFilters ? 64 : 0,
+              }}
             >
-              {CATEGORIES.map((cat) => (
+              {CATEGORIES.map((cat, idx) => (
                 <TouchableOpacity
                   key={cat}
                   onPress={() => {
                     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                     setActiveCategory(cat);
                   }}
-                  className="mr-10 items-center"
+                  activeOpacity={0.85}
+                  style={{
+                    paddingLeft: idx === 0 ? 0 : screenWidth < 400 ? 4 : 8,
+                    paddingRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 4 : 8,
+                    paddingVertical: 6,
+                    marginRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 2 : 12,
+                  }}
                 >
                   <Text
-                    className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#1A1A1A50]'}
+                    numberOfLines={1}
+                    className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#6E6E6E]'}
                     style={{
                       fontFamily: 'Helvetica Neue',
                       fontWeight: '400',

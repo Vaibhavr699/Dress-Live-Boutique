@@ -145,15 +145,36 @@ export default function BoutiqueDetailsScreen() {
     return firstDress.trim() || null;
   }, [boutique, coverFromHome, dresses]);
 
-  const heroImages = useMemo(
-    () => [
-      {
-        key: 'hero',
-        source: headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 1.png'),
-      },
-    ],
-    [headerImageUrl]
-  );
+  const heroImages = useMemo(() => {
+    const items: Array<{ key: string; source: any }> = [];
+
+    if (headerImageUrl) {
+      items.push({ key: 'hero-header', source: { uri: headerImageUrl } });
+    } else {
+      items.push({ key: 'hero-fallback', source: require('@/assets/images/Dashboard image 1.png') });
+    }
+
+    // Add a few product images so the hero carousel can actually scroll.
+    // This is especially helpful for Elysian Bridal Boutique, which has multiple products.
+    const seen = new Set<string>();
+    if (headerImageUrl) seen.add(headerImageUrl.trim());
+
+    const extraUrls = dresses
+      .map((d) => (typeof d.image_url === 'string' ? d.image_url.trim() : ''))
+      .filter(Boolean)
+      .filter((url) => {
+        if (seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      })
+      .slice(0, 5);
+
+    extraUrls.forEach((url, idx) => {
+      items.push({ key: `hero-dress-${idx}`, source: { uri: url } });
+    });
+
+    return items;
+  }, [headerImageUrl, dresses]);
 
   const filteredDresses = useMemo(() => {
     if (activeCategory === 'All') return dresses;
@@ -240,12 +261,12 @@ export default function BoutiqueDetailsScreen() {
               />
             ))}
           </ScrollView>
-          <View className="absolute left-3 right-3 bottom-2 h-[3px] bg-white/90">
+          <View className="absolute left-0 right-0 bottom-0 h-[3px] bg-white/90">
             <View
               className="absolute left-0 top-0 bottom-0 bg-black"
               style={{
-                width: `${100 / Math.max(heroImages.length, 4)}%`,
-                transform: [{ translateX: (heroImageIndex * (width - 24)) / Math.max(heroImages.length, 4) }],
+                width: `${100 / Math.max(heroImages.length, 1)}%`,
+                transform: [{ translateX: heroImageIndex * (width / Math.max(heroImages.length, 1)) }],
               }}
             />
           </View>
@@ -253,7 +274,7 @@ export default function BoutiqueDetailsScreen() {
 
         <View className="px-5 pt-2 pb-6">
           {/* Boutique Info */}
-          <View className="flex-row justify-between items-start mb-1">
+          <View className="flex-row justify-between items-start mb-1 mt-1">
             <View className="flex-1 pr-4">
               <Text
                 className="text-[#1A1A1A] mb-2"
@@ -279,10 +300,10 @@ export default function BoutiqueDetailsScreen() {
                 }}
                 numberOfLines={1}
               >
-                {(boutique?.location || '').trim() || 'Location unavailable'}
+                Weil Am Rhein
               </Text>
             </View>
-            <View className="items-end pt-1">
+            <View className="items-end pt-1 mt-1">
               <View className="flex-row items-center">
                 <Text className="text-[#F2C94C] text-[10px] font-bold mr-1">4.6</Text>
                 <Image source={STAR_ICON} style={{ width: 15, height: 14 }} contentFit="contain" />
@@ -306,17 +327,40 @@ export default function BoutiqueDetailsScreen() {
             </Text>
           </View>
 
-          {/* Categories */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            className="mb-8"
-            contentContainerStyle={{ paddingRight: 40 }}
+            className="mb-4"
+            style={{
+              marginLeft: width < 400 ? 14 : 0,
+              marginRight: width < 400 ? 14 : 0,
+            }}
+            contentContainerStyle={{
+              flexGrow: 1,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: width < 400 ? 'flex-start' : 'space-between',
+              paddingTop: 10,
+              paddingBottom: 14,
+              paddingLeft: 0,
+              paddingRight: 0,
+            }}
           >
-            {CATEGORIES.map((cat) => (
-              <TouchableOpacity key={cat} onPress={() => setActiveCategory(cat)} className="mr-9 items-center">
+            {CATEGORIES.map((cat, idx) => (
+              <TouchableOpacity
+                key={cat}
+                onPress={() => setActiveCategory(cat)}
+                activeOpacity={0.85}
+                style={{
+                  paddingLeft: idx === 0 ? 0 : width < 400 ? 12 : 14,
+                  paddingRight: idx === CATEGORIES.length - 1 ? 0 : width < 400 ? 6 : 12,
+                  paddingVertical: 6,
+                  marginRight: idx === CATEGORIES.length - 1 ? 0 : width < 400 ? 6 : width < 380 ? 10 : 16,
+                }}
+              >
                 <Text
-                  className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#1A1A1A50]'}
+                  numberOfLines={1}
+                  className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#6E6E6E]'}
                   style={{
                     fontFamily: 'Helvetica Neue',
                     fontWeight: '400',
@@ -386,7 +430,7 @@ export default function BoutiqueDetailsScreen() {
                         className="flex-1"
                       >
                         <Text
-                          className="text-black mb-1"
+                          className="text-black mb-3"
                           style={{
                             fontFamily: 'Helvetica Neue',
                             fontWeight: '500',
@@ -399,7 +443,7 @@ export default function BoutiqueDetailsScreen() {
                           {dress.name}
                         </Text>
                         <Text
-                          className="text-black/40"
+                          className="text-[#6E6E6E]"
                           style={{
                             fontFamily: 'Helvetica Neue',
                             fontWeight: '400',
@@ -418,6 +462,7 @@ export default function BoutiqueDetailsScreen() {
                             name: dress.name,
                             price: priceLabel,
                             imageUrl: dress.image_url ?? null,
+                            boutiqueId,
                             selected: true,
                           });
                           Alert.alert('Added', `${dress.name} has been added to your bag.`);

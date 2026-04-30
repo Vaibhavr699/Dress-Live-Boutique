@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions, Modal, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -188,7 +188,7 @@ export default function BookingCalendarScreen() {
   const normalizedDressId = typeof params.dressId === 'string' ? Number(params.dressId) : null;
   const normalizedBookingId = typeof params.bookingId === 'string' ? Number(params.bookingId) : null;
   const normalizedAppointmentType = params.appointmentType === 'in_store' ? 'in_store' : 'video';
-  const selectionSource = params.source === 'cart' ? 'cart' : 'wishlist';
+  const selectionSource = params.source === 'cart' ? 'cart' : params.source === 'product' ? 'product' : 'wishlist';
   const [monthBase] = useState(() => {
     const date = new Date();
     return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -202,6 +202,7 @@ export default function BookingCalendarScreen() {
   const [boutique, setBoutique] = useState<Boutique | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const boutiqueConflictAlertedRef = useRef(false);
   const upsertBookingHistory = useBookingHistoryStore((state) => state.upsert);
   const addNotification = useNotificationStore((s) => s.add);
 
@@ -247,30 +248,43 @@ export default function BookingCalendarScreen() {
   useEffect(() => {
     const loadSelectedDresses = async () => {
       try {
-        const cartDressIds = (selectedCartItems as CartItem[])
-          .map((item) => Number(item.id))
-          .filter((item) => !Number.isNaN(item))
-          .slice(0, 4);
-        const shortlistDressIds =
-          selectionSource === 'cart'
-            ? Promise.resolve(cartDressIds)
-            : isAuthenticated
-              ? api.get('/shortlists/me').then((shortlistResponse) => {
-                  const shortlistItems = Array.isArray(shortlistResponse)
-                    ? (shortlistResponse as ShortlistItem[])
-                    : [];
-                  return shortlistItems.map((item) => item.dress_id);
-                })
-              : Promise.resolve(guestDressIds);
         const directDressId = normalizedDressId;
 
-        const resolvedIds = await shortlistDressIds;
-        const mergedDressIds = Array.from(
-          new Set([
-            ...resolvedIds,
-            ...(directDressId && !Number.isNaN(directDressId) ? [directDressId] : []),
-          ])
-        ).slice(0, 4);
+        let mergedDressIds: number[] = [];
+
+        // If booking is initiated from a product page, always preselect that dress only.
+        // This avoids pulling in wishlist items (possibly from other boutiques) and triggering backend validation errors.
+        if (selectionSource === 'product') {
+          if (directDressId && !Number.isNaN(directDressId)) {
+            mergedDressIds = [directDressId];
+          } else {
+            mergedDressIds = [];
+          }
+        } else {
+          const cartDressIds = (selectedCartItems as CartItem[])
+            .map((item) => Number(item.id))
+            .filter((item) => !Number.isNaN(item))
+            .slice(0, 4);
+
+          const baseIds =
+            selectionSource === 'cart'
+              ? cartDressIds
+              : isAuthenticated
+                ? await api.get('/shortlists/me').then((shortlistResponse) => {
+                    const shortlistItems = Array.isArray(shortlistResponse)
+                      ? (shortlistResponse as ShortlistItem[])
+                      : [];
+                    return shortlistItems.map((item) => item.dress_id);
+                  })
+                : guestDressIds;
+
+          mergedDressIds = Array.from(
+            new Set([
+              ...baseIds,
+              ...(directDressId && !Number.isNaN(directDressId) ? [directDressId] : []),
+            ])
+          ).slice(0, 4);
+        }
 
         setSelectedDressIds(mergedDressIds);
 
@@ -286,6 +300,24 @@ export default function BookingCalendarScreen() {
             })
           );
           const validDresses = dresses.filter(Boolean) as Dress[];
+
+          const uniqueBoutiqueIds = Array.from(
+            new Set(validDresses.map((d) => Number(d.boutique_id)).filter((id) => Number.isFinite(id)))
+          );
+
+          if (uniqueBoutiqueIds.length > 1) {
+            if (!boutiqueConflictAlertedRef.current) {
+              boutiqueConflictAlertedRef.current = true;
+              Alert.alert(
+                'Booking',
+                'All selected dresses must belong to the same boutique. Please update your cart selection and try again.'
+              );
+            }
+            setSelectedDressIds([]);
+            setSelectedDressNames([]);
+            setBoutique(null);
+            return;
+          }
 
           setSelectedDressNames(
             validDresses.map((dress) => dress.name)
@@ -343,9 +375,11 @@ export default function BookingCalendarScreen() {
     if (selectedDressIds.length === 0) {
       Alert.alert(
         'Booking',
-        selectionSource === 'cart'
-          ? 'Select at least one dress in your cart before creating a booking.'
-          : 'Add at least one dress to your wishlist before creating a booking.'
+        selectionSource === 'product'
+          ? 'This dress could not be preselected. Please go back and try again.'
+          : selectionSource === 'cart'
+            ? 'Select at least one dress in your cart before creating a booking.'
+            : 'Add at least one dress to your wishlist before creating a booking.'
       );
       return;
     }

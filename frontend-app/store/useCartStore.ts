@@ -8,6 +8,7 @@ interface CartItem {
   name: string;
   price: string;
   imageUrl?: string | null;
+  boutiqueId?: number | null;
   quantity: number;
   selected: boolean;
 }
@@ -18,6 +19,7 @@ interface CartState {
   removeItem: (id: string) => void;
   updateQuantity: (id: string, quantity: number) => void;
   toggleSelected: (id: string) => void;
+  selectOnly: (id: string) => void;
   clearCart: () => void;
   totalItems: () => number;
 }
@@ -81,6 +83,15 @@ export const useCartStore = create<CartState>()(
           items: get().items.map((i) =>
             i.id === id ? { ...i, selected: !i.selected } : i
           ),
+        });
+      },
+      selectOnly: (id) => {
+        set({
+          items: get().items.map((i) => {
+            if (i.id === id) return { ...i, selected: true };
+            if (!i.selected) return i;
+            return { ...i, selected: false };
+          }),
         });
       },
       clearCart: () => set({ items: [] }),

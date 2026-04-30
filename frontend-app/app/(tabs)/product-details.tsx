@@ -15,6 +15,13 @@ const CART_SMALL_ICON = require('@/assets/svg/cart small.svg');
 const CART_BLACK_ICON = require('@/assets/svg/Cart Black.svg');
 const HEART_ICON = require('@/assets/svg/Heart.svg');
 
+const DUMMY_GALLERY_URLS = [
+  'https://images.unsplash.com/photo-1520962917969-0f8a4c6c4c57?auto=format&fit=crop&w=1600&q=80',
+  'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1600&q=80',
+  'https://images.unsplash.com/photo-1526045478516-99145907023c?auto=format&fit=crop&w=1600&q=80',
+  'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=1600&q=80',
+] as const;
+
 export default function ProductDetailsScreen() {
   const router = useRouter();
   const { id, boutiqueId, coverImageUrl } = useLocalSearchParams<{
@@ -30,6 +37,7 @@ export default function ProductDetailsScreen() {
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [dress, setDress] = useState<any>(null);
+  const [relatedImageUrls, setRelatedImageUrls] = useState<string[]>([]);
   const [isShortlisted, setIsShortlisted] = useState(false);
   const [shortlistLoading, setShortlistLoading] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -45,6 +53,7 @@ export default function ProductDetailsScreen() {
   useEffect(() => {
     if (!id) {
       setDress(null);
+      setRelatedImageUrls([]);
       setIsShortlisted(false);
       setLoading(false);
       return;
@@ -93,33 +102,85 @@ export default function ProductDetailsScreen() {
     };
   }, [id, isAuthenticated]);
 
+  useEffect(() => {
+    const numericBoutiqueId = boutiqueId ? Number(boutiqueId) : NaN;
+    if (!Number.isFinite(numericBoutiqueId)) {
+      setRelatedImageUrls([]);
+      return;
+    }
+
+    let alive = true;
+    (async () => {
+      try {
+        const data = await api.get(`/dresses/?boutique_id=${numericBoutiqueId}&limit=24`);
+        if (!alive) return;
+        const currentUrl = typeof dress?.image_url === 'string' ? dress.image_url.trim() : '';
+        const urls = (Array.isArray(data) ? data : [])
+          .map((d: any) => (typeof d?.image_url === 'string' ? d.image_url.trim() : ''))
+          .filter(Boolean)
+          .filter((url: string) => /^https?:\/\//i.test(url))
+          .filter((url: string) => url !== currentUrl);
+        setRelatedImageUrls(Array.from(new Set(urls)).slice(0, 4));
+      } catch {
+        if (alive) setRelatedImageUrls([]);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [boutiqueId, dress?.image_url]);
+
   const product = useMemo(() => {
     const normalizedPrice =
       typeof dress?.price === 'number' ? `${dress.price.toFixed(0)} EUR` : '$1800';
+
+    const numericBoutiqueId = boutiqueId ? Number(boutiqueId) : NaN;
 
     return {
       id: String(dress?.id ?? 'p-1'),
       name: dress?.name ?? 'Elegant Satin A-Line',
       price: normalizedPrice,
       imageUrl: dress?.image_url ?? null,
+      boutiqueId: Number.isFinite(numericBoutiqueId) ? numericBoutiqueId : null,
       selected: true,
     };
-  }, [dress]);
+  }, [dress, boutiqueId]);
 
   const headerImageUrl = useMemo(() => {
     const img = (dress?.image_url || '').trim();
-    return img || null;
-  }, [dress?.image_url]);
+    if (img) return img;
+    const cover = (typeof coverImageUrl === 'string' ? coverImageUrl : '').trim();
+    return cover || null;
+  }, [dress?.image_url, coverImageUrl]);
 
-  const galleryImages = useMemo(
-    () => [
-      {
-        key: 'primary',
-        source: headerImageUrl ? { uri: headerImageUrl } : require('@/assets/images/Dashboard image 3.png'),
-      },
-    ],
-    [headerImageUrl]
-  );
+  const galleryImages = useMemo(() => {
+    const items: Array<{ key: string; source: any }> = [];
+
+    const primary = (headerImageUrl || '').trim();
+    if (/^https?:\/\//i.test(primary)) {
+      items.push({ key: 'primary', source: { uri: primary } });
+    }
+
+    relatedImageUrls.forEach((url, idx) => {
+      items.push({ key: `related-${idx}`, source: { uri: url } });
+    });
+
+    // Ensure the carousel can always scroll (avoid blank pages).
+    if (items.length < 2) {
+      const used = new Set<string>(items.map((i) => (i?.source?.uri as string | undefined) || '').filter(Boolean));
+      DUMMY_GALLERY_URLS.forEach((url, idx) => {
+        if (used.has(url)) return;
+        items.push({ key: `dummy-${idx}`, source: { uri: url } });
+      });
+    }
+
+    if (items.length === 0) {
+      items.push({ key: 'primary-fallback', source: require('@/assets/images/icon.png') });
+    }
+
+    return items;
+  }, [headerImageUrl, relatedImageUrls]);
 
   const productInfo = [
     { label: 'Dress Price:', value: product.price },
@@ -377,12 +438,12 @@ export default function ProductDetailsScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
-          <View className="absolute left-3 right-3 bottom-2 h-[3px] bg-white/90">
+          <View className="absolute left-0 right-0 bottom-0 h-[3px] bg-white/90">
             <View
               className="absolute left-0 top-0 bottom-0 bg-black"
               style={{
-                width: `${100 / Math.max(galleryImages.length, 4)}%`,
-                transform: [{ translateX: (productImageIndex * (productImageWidth - 24)) / Math.max(galleryImages.length, 4) }],
+                width: `${100 / Math.max(galleryImages.length, 1)}%`,
+                transform: [{ translateX: productImageIndex * (productImageWidth / Math.max(galleryImages.length, 1)) }],
               }}
             />
           </View>
@@ -416,8 +477,8 @@ export default function ProductDetailsScreen() {
         </View>
 
         {/* Product Info Section */}
-        <View className="px-5 py-6">
-          <View className="flex-row justify-between items-start mb-1">
+        <View className="px-5 py-3 mt-1">
+          <View className="flex-row justify-between items-start mb-3">
             <Text 
               className="text-black flex-1 pr-4"
               style={{
@@ -434,41 +495,43 @@ export default function ProductDetailsScreen() {
             <View className="items-end pt-1">
               <View className="flex-row items-center">
                 <Text className="text-[#F2C94C] text-xs font-medium mr-1">4.8</Text>
-                <Image source={STAR_ICON} style={{ width: 15, height: 14 }} contentFit="contain" />
+                <Image source={STAR_ICON} style={{ width: 15, height: 14, marginTop: -4 }} contentFit="contain" />
               </View>
-              <Text className="text-[#1A1A1A]/50 text-[10px] mt-3">EN | DE | FR</Text>
             </View>
           </View>
-          
+
           <View className="flex-row justify-between items-center mb-10">
-            <View>
-              <Text 
-                className="text-black/40 text-[10px] font-light uppercase tracking-[0.5px]"
-                style={{ fontFamily: 'Helvetica Neue' }}
-              >
-                {dress?.colors || 'Visible in customer catalog'}
-              </Text>
-            </View>
+            <Text
+              className="text-black/40 text-[10px] font-light uppercase tracking-[0.5px]"
+              style={{ fontFamily: 'Helvetica Neue', marginTop: -4, flex: 1, paddingRight: 10 }}
+              numberOfLines={1}
+            >
+              {dress?.colors || 'Visible in customer catalog'}
+            </Text>
+            <Text className="text-[#1A1A1A]/50 text-[10px]" style={{ marginTop: -4 }}>
+              EN | DE | FR
+            </Text>
           </View>
 
           {/* Details Grid */}
           <View className="flex-row flex-wrap justify-between">
             {productInfo.map((info, idx) => (
-              <View key={idx} style={{ width: '48%', marginBottom: 30 }}>
+              <View key={idx} style={{ width: '48%', marginBottom: 30 , marginTop: -4}}>
                 <Text
-                  className="text-black mb-1"
+                  className="text-black gap-2"
                   style={{
                     fontFamily: 'Helvetica Neue',
                     fontWeight: '500',
                     fontSize: 14,
                     lineHeight: 14,
                     letterSpacing: 0,
+                    marginBottom: 6,
                   }}
                 >
                   {info.label}
                 </Text>
                 <Text
-                  className="text-black/50"
+                  className="text-black/50 mt-2"
                   style={{
                     fontFamily: 'Helvetica Neue',
                     fontWeight: '300',
@@ -477,7 +540,13 @@ export default function ProductDetailsScreen() {
                     letterSpacing: 0,
                   }}
                 >
-                  {info.value}
+                  {info.label === 'Available Sizes:'
+                    ? String(info.value ?? '')
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean)
+                        .join(', ')
+                    : info.value}
                 </Text>
               </View>
             ))}
@@ -576,6 +645,7 @@ export default function ProductDetailsScreen() {
                   params: {
                     appointmentType: 'in_store',
                     dressId: String(product.id),
+                    source: 'product',
                   },
                 });
               }}
@@ -604,6 +674,7 @@ export default function ProductDetailsScreen() {
                   params: {
                     appointmentType: 'video',
                     dressId: String(product.id),
+                    source: 'product',
                   },
                 });
               }}
