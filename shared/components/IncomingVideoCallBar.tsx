@@ -31,10 +31,12 @@ export function IncomingVideoCallBar({ app }: Props) {
     return null;
   }
 
+  const callerRoleLabel = incoming.callerRole === 'partner' ? 'Boutique consultant' : 'Customer';
+  const title = `${callerRoleLabel} is calling`;
   const subtitle =
     incoming.scheduledFor != null && String(incoming.scheduledFor).trim() !== ''
       ? `Video fitting · ${String(incoming.scheduledFor).trim()}`
-      : 'Video fitting · Tap to join';
+      : 'Video fitting appointment';
 
   const navigateToCall = () => {
     if (app === 'buyer') {
@@ -82,8 +84,8 @@ export function IncomingVideoCallBar({ app }: Props) {
     <View
       style={{
         position: 'absolute',
-        left: 12,
-        right: 12,
+        left: 16,
+        right: 16,
         top: Math.max(insets.top, 10) + 4,
         zIndex: 9999,
         elevation: 12,
@@ -92,52 +94,101 @@ export function IncomingVideoCallBar({ app }: Props) {
     >
       <View
         style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          backgroundColor: '#1A1A1A',
-          borderRadius: 14,
-          paddingVertical: 12,
+          backgroundColor: '#FFFFFF',
+          borderRadius: 24,
+          paddingVertical: 14,
           paddingHorizontal: 14,
+          borderWidth: 1,
+          borderColor: '#EFEFEF',
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.25,
-          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.18,
+          shadowRadius: 18,
         }}
       >
-        <Pressable
-          onPress={handleOpen}
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
-          disabled={busy}
-        >
-          <View
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 20,
-              backgroundColor: '#34C759',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginRight: 12,
-            }}
-          >
-            {busy ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="videocam" size={22} color="#fff" />
-            )}
-          </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+            <Text
+              style={{
+                color: '#000000',
+                fontFamily: 'Helvetica Neue',
+                fontSize: 11,
+                lineHeight: 11,
+                fontWeight: '400',
+                letterSpacing: 0.9,
+                textTransform: 'uppercase',
+              }}
+              numberOfLines={1}
+            >
+              {title}
+            </Text>
+            <Text
+              style={{
+                color: '#000000',
+                fontFamily: 'Helvetica Neue',
+                fontSize: 16,
+                lineHeight: 18,
+                fontWeight: '500',
+                marginTop: 6,
+              }}
+              numberOfLines={1}
+            >
               {incoming.callerDisplayName}
             </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+            <Text
+              style={{
+                color: 'rgba(0,0,0,0.45)',
+                fontFamily: 'Helvetica Neue',
+                fontSize: 12,
+                lineHeight: 16,
+                marginTop: 4,
+              }}
+              numberOfLines={2}
+            >
               {subtitle}
             </Text>
           </View>
-        </Pressable>
-        <Pressable onPress={handleDismiss} hitSlop={12} style={{ padding: 6, marginLeft: 4 }} disabled={busy}>
-          <Ionicons name="close" size={22} color="rgba(255,255,255,0.85)" />
-        </Pressable>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
+            <Pressable
+              onPress={handleDismiss}
+              disabled={busy}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: '#F04438',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 10,
+                opacity: busy ? 0.55 : 1,
+              }}
+              hitSlop={8}
+            >
+              <Ionicons name="close" size={24} color="#FFFFFF" />
+            </Pressable>
+            <Pressable
+              onPress={handleOpen}
+              disabled={busy}
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: 26,
+                backgroundColor: '#34C759',
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: busy ? 0.75 : 1,
+              }}
+              hitSlop={8}
+            >
+              {busy ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Ionicons name="videocam" size={25} color="#FFFFFF" />
+              )}
+            </Pressable>
+          </View>
+        </View>
       </View>
     </View>
   );

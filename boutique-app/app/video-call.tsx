@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import { Image } from 'expo-image';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
 import { buildTryonSwitchPayload } from '@shared/videoCallSignals';
@@ -87,6 +88,7 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   const videoTracks = tracks.filter((t: any) => deps.isTrackReference(t));
   const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
   const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+  const [activeDressId, setActiveDressId] = React.useState<number | null>(bookingDresses[0]?.id ?? null);
   const emptyMainMessage =
     remoteParticipants.length > 0
       ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
@@ -111,42 +113,78 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
         </View>
       ) : null}
 
-      {/* Advisor: switch outfit (signals customer UI; Milestone B adds AI) */}
-      <View className="absolute left-2 right-2 bottom-3 max-h-20">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      {/* Advisor: switch outfit (signals customer UI; live AI renderer consumes this next). */}
+      <View className="absolute left-3 right-3 bottom-3">
+        <View className="bg-white/95 border border-white/70 px-2.5 py-2.5" style={{ borderRadius: 16, maxHeight: 118 }}>
+          <View className="flex-row items-center justify-between mb-2">
+            <View>
+              <Text
+                className="text-black uppercase"
+                style={{ fontFamily: 'Helvetica Neue', fontWeight: '500', fontSize: 10, lineHeight: 10, letterSpacing: 1.2 }}
+              >
+                Live AI Try-On
+              </Text>
+              <Text className="text-black/45 text-[9px] mt-1">Tap a dress to show it on customer</Text>
+            </View>
+            <View className="bg-[#EEF8EE] px-2.5 py-1 rounded-full flex-row items-center">
+              <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+              <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Ready</Text>
+            </View>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {bookingDresses.length === 0 ? (
-            <View className="bg-black/70 px-3 py-2 rounded-md self-center">
-              <Text className="text-white/80 text-[10px]">No dresses on this booking</Text>
+            <View className="bg-[#F6F6F6] px-3 py-3 self-center" style={{ borderRadius: 12 }}>
+              <Text className="text-black/50 text-[10px]">No dresses on this booking</Text>
             </View>
           ) : (
             <View className="flex-row items-center pr-2">
-              {bookingDresses.map((d) => (
-                <TouchableOpacity
-                  key={d.id}
-                  activeOpacity={0.9}
-                  onPress={() => {
-                    if (!room?.localParticipant) return;
-                    try {
-                      const payload = buildTryonSwitchPayload({
-                        bookingId,
-                        dressId: d.id,
-                        dressName: d.name,
-                      });
-                      room.localParticipant.publishData(payload, { reliable: true } as any);
-                    } catch {
-                      // no-op
-                    }
-                  }}
-                  className="bg-black px-3 py-2 mr-2 rounded-md max-w-[140px]"
-                >
-                  <Text className="text-white text-[10px] uppercase tracking-[0.5px]" numberOfLines={1}>
-                    {d.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {bookingDresses.map((d) => {
+                const isActive = activeDressId === d.id;
+                return (
+                  <TouchableOpacity
+                    key={d.id}
+                    activeOpacity={0.9}
+                    onPress={() => {
+                      setActiveDressId(d.id);
+                      if (!room?.localParticipant) return;
+                      try {
+                        const payload = buildTryonSwitchPayload({
+                          bookingId,
+                          dressId: d.id,
+                          dressName: d.name,
+                        });
+                        room.localParticipant.publishData(payload, { reliable: true } as any);
+                      } catch {
+                        // no-op
+                      }
+                    }}
+                    className={`mr-2 overflow-hidden border ${isActive ? 'border-black' : 'border-[#E5E5E5]'}`}
+                    style={{ width: 78, borderRadius: 12, backgroundColor: isActive ? '#FFFFFF' : '#FAFAFA' }}
+                  >
+                    <View className="bg-[#F2F2F2]" style={{ width: '100%', height: 44 }}>
+                      {d.image_url ? (
+                        <Image source={{ uri: d.image_url }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="none" />
+                      ) : (
+                        <View className="flex-1 items-center justify-center">
+                          <Ionicons name="shirt-outline" size={18} color="rgba(0,0,0,0.35)" />
+                        </View>
+                      )}
+                    </View>
+                    <View className="px-2 py-1.5">
+                      <Text className="text-black text-[9px] uppercase tracking-[0.4px]" numberOfLines={1}>
+                        {d.name}
+                      </Text>
+                      <Text className={isActive ? 'text-black text-[8px] mt-1' : 'text-black/35 text-[8px] mt-1'} numberOfLines={1}>
+                        {isActive ? 'Showing now' : 'Tap to switch'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
-        </ScrollView>
+          </ScrollView>
+        </View>
       </View>
     </View>
   );

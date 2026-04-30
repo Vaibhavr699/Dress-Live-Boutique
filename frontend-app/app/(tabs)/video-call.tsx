@@ -63,7 +63,7 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
       ? 'Advisor joined without video. They may need to enable their camera.'
       : 'Waiting for advisor…';
 
-  const [activeDressLabel, setActiveDressLabel] = React.useState<string>('Advisor can switch dresses');
+  const [activeDressLabel, setActiveDressLabel] = React.useState<string>('Waiting for consultant selection');
 
   React.useEffect(() => {
     if (!room) return;
@@ -72,9 +72,7 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
         const raw = new TextDecoder().decode(payload);
         const msg = parseTryonSwitchMessage(raw);
         if (!msg || msg.bookingId !== bookingId) return;
-        setActiveDressLabel(
-          msg.dressName?.trim() ? `Active dress: ${msg.dressName.trim()}` : `Active dress #${msg.dressId}`
-        );
+        setActiveDressLabel(msg.dressName?.trim() ? msg.dressName.trim() : `Dress #${msg.dressId}`);
       } catch {
         // ignore
       }
@@ -104,8 +102,24 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
         </View>
       ) : null}
 
-      <View className="absolute left-4 bottom-4 bg-black/60 px-3 py-2 rounded-full">
-        <Text className="text-white text-[10px]">{activeDressLabel}</Text>
+      <View className="absolute left-4 right-4 bottom-4 bg-white/95 border border-white/70 px-4 py-3" style={{ borderRadius: 18 }}>
+        <View className="flex-row items-center justify-between">
+          <View className="flex-1 mr-3">
+            <Text
+              className="text-black uppercase"
+              style={{ fontFamily: 'Helvetica Neue', fontWeight: '500', fontSize: 10, lineHeight: 10, letterSpacing: 1.2 }}
+            >
+              Live AI Try-On
+            </Text>
+            <Text className="text-black/70 text-[11px] mt-1" numberOfLines={1}>
+              {activeDressLabel}
+            </Text>
+          </View>
+          <View className="bg-[#EEF8EE] px-2.5 py-1 rounded-full flex-row items-center">
+            <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+            <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Selected</Text>
+          </View>
+        </View>
       </View>
     </View>
   );
