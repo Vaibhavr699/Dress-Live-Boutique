@@ -3,8 +3,10 @@ import { View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-nati
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 
 const { width } = Dimensions.get('window');
+const PAYPAL_ICON = require('@/assets/svg/Paypal.svg');
 
 export default function PaymentMethodsScreen() {
   const router = useRouter();
@@ -21,7 +23,7 @@ export default function PaymentMethodsScreen() {
 
   const methods = [
     { id: 'card', label: 'CARD', icon: <Ionicons name="card-outline" size={24} color={selectedMethod === 'card' ? 'black' : 'black'} />, subtitle: 'Card' },
-    { id: 'paypal', label: 'PAYPAL', icon: <FontAwesome5 name="paypal" size={24} color={selectedMethod === 'paypal' ? 'black' : 'black'} />, subtitle: 'PayPal' },
+    { id: 'paypal', label: 'PAYPAL', icon: <Image source={PAYPAL_ICON} style={{ width: 24, height: 24 }} contentFit="contain" />, subtitle: 'PayPal' },
     { id: 'applepay', label: 'APPLE PAY', icon: <Ionicons name="logo-apple" size={24} color={selectedMethod === 'applepay' ? 'black' : 'black'} />, subtitle: 'Apple Pay' },
     { id: 'giftcard', label: 'GIFT CARD', icon: <Ionicons name="gift-outline" size={24} color={selectedMethod === 'giftcard' ? 'black' : 'black'} />, subtitle: 'Gift Card' },
     { id: 'incard', label: 'IN CARD', icon: <Ionicons name="apps-outline" size={24} color={selectedMethod === 'incard' ? 'black' : 'black'} />, subtitle: 'In Card' },

@@ -47,9 +47,9 @@ type Dress = {
 
 const HEADER_TITLE_STYLE = {
   fontFamily: 'Helvetica Neue',
-  fontWeight: '500' as const,
-  fontSize: 12,
-  lineHeight: 12,
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
   letterSpacing: 2,
   color: '#000000',
   textTransform: 'uppercase' as const,
@@ -76,8 +76,8 @@ const ITEM_PRICE_STYLE = {
 export default function WishlistScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const guestDressIds = useShortlistStore((state) => state.dressIds);
+  const isAuthenticated = useAuthStore((s: any) => s.isAuthenticated);
+  const guestDressIds = useShortlistStore((s: any) => s.dressIds);
   const removeGuest = useShortlistStore((state) => state.remove);
   const [wishlistItems, setWishlistItems] = useState<Dress[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,7 +103,7 @@ export default function WishlistScreen() {
       }
 
       const dresses = await Promise.all(
-        resolvedDressIds.map(async (dressId) => {
+        resolvedDressIds.map(async (dressId: number) => {
           try {
             return await api.get(`/dresses/${dressId}`);
           } catch (error) {

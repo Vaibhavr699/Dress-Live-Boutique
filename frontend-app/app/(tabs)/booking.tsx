@@ -134,7 +134,7 @@ export default function BookingScreen() {
         className="px-6 items-center border-b border-[#F0F0F0] pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
-        <Text className="text-black text-sm font-bold uppercase tracking-[2px]">
+        <Text className="text-black text-[14px] font-[400] uppercase tracking-[2px]">
           Booking {bookings.length}
         </Text>
       </View>

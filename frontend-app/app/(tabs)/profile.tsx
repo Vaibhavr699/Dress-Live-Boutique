@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
-import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
+
+const LOGOUT_ICON = require('@/assets/svg/Logout.svg');
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -23,7 +25,7 @@ export default function ProfileScreen() {
     { label: 'ADRESSES', route: '/profile-edit-address' },
     { label: 'MY MEASUREMENTS', route: '/profile-my-measurements' },
     { label: 'PAYMENT METHODS', route: '/profile-payment-methods' },
-    { label: 'BOOKING HISTORY', route: '/booking-history' },
+    // { label: 'BOOKING HISTORY', route: '/booking-history' },
   ];
 
   const handleLogout = () => {
@@ -51,26 +53,18 @@ export default function ProfileScreen() {
       exiting={FadeOut.duration(220)}
     >
       {/* Header */}
-      <View 
-        className="px-6 items-center border-b border-[#F0F0F0] pb-4" 
+      <View
+        className="px-6 items-center border-b border-[#F0F0F0] pb-4"
         style={{ paddingTop: insets.top + 10 }}
       >
-        <Text
-          className="text-black"
-          style={{
-            fontFamily: 'Helvetica Neue',
-            fontWeight: '400',
-            fontSize: 14,
-            lineHeight: 14,
-            letterSpacing: 0,
-            textAlign: 'center',
-          }}
-        >
-          Profile Details
-        </Text>
+        <Text className="text-black text-[14px] font-[400] uppercase tracking-[2px]">Profile Details</Text>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} className="flex-1">
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerStyle={{ paddingBottom: Math.max(24, insets.bottom + 24) }}
+      >
         {!isAuthenticated ? (
           <View className="px-8 pt-14">
             <Text className="text-black text-[16px] font-medium mb-3">Welcome</Text>
@@ -156,7 +150,7 @@ export default function ProfileScreen() {
             </View>
 
             {/* Menu List */}
-            <View className="px-8">
+            <View className="px-8 mt-2">
           {menuItems.map((item, idx) => (
             <TouchableOpacity 
               key={idx}
@@ -169,7 +163,7 @@ export default function ProfileScreen() {
               className="py-5 flex-row justify-between items-center bg-white"
             >
               <Text
-                className="text-black/30 uppercase"
+                className="text-[#000000] uppercase"
                 style={{
                   fontFamily: 'Helvetica Neue',
                   fontWeight: '300',
@@ -203,7 +197,7 @@ export default function ProfileScreen() {
           
           <View className="mb-6">
             <Text
-              className="text-black/30 uppercase mb-1"
+              className="text-[#6E6E6E] uppercase mb-1"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
@@ -215,7 +209,7 @@ export default function ProfileScreen() {
               Email
             </Text>
             <Text
-              className="text-black"
+              className="text-black mt-2"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
@@ -228,9 +222,9 @@ export default function ProfileScreen() {
             </Text>
           </View>
 
-          <View className="mb-8">
+          <View className="mb-8 mt-2">
             <Text
-              className="text-black/30 uppercase mb-1"
+              className="text-[#6E6E6E] uppercase mb-1"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
@@ -242,7 +236,7 @@ export default function ProfileScreen() {
               Phone Number
             </Text>
             <Text
-              className="text-black"
+              className="text-black mt-2"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
@@ -265,7 +259,7 @@ export default function ProfileScreen() {
             className="py-5 flex-row justify-between items-center"
           >
             <Text
-              className="text-black/30 uppercase"
+              className="text-[#000000] uppercase"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
@@ -290,7 +284,7 @@ export default function ProfileScreen() {
             className="py-5 border-t border-[#F0F0F0] flex-row justify-between items-center"
           >
             <Text
-              className="text-black/30 uppercase"
+              className="text-[#000000] uppercase"
               style={{
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
@@ -306,24 +300,33 @@ export default function ProfileScreen() {
 
         </View>
 
-        <View className="h-24" />
-          </>
-        )}
-      </ScrollView>
-
-      <View className="px-8 pb-10">
-        {isAuthenticated ? (
+        <View className="mt-10">
           <TouchableOpacity
             onPress={handleLogout}
             disabled={isLoggingOut}
-            className="flex-row items-center"
+            className="flex-row items-center px-8"
             activeOpacity={0.7}
           >
-            <MaterialCommunityIcons name="logout" size={18} color="#FF3B30" />
-            <Text className="text-[#FF3B30] text-[12px] font-bold ml-3">Logout</Text>
+            <Image source={LOGOUT_ICON} style={{ width: 14, height: 14, tintColor: '#D32F2F' }} contentFit="contain" />
+            <Text
+              style={{
+                color: '#D32F2F',
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '400',
+                fontSize: 14,
+                lineHeight: 15,
+                letterSpacing: 0,
+                textAlign: 'center',
+                marginLeft: 12,
+              }}
+            >
+              Logout
+            </Text>
           </TouchableOpacity>
-        ) : null}
-      </View>
+        </View>
+          </>
+        )}
+      </ScrollView>
 
       {isLoggingOut ? (
         <Animated.View
