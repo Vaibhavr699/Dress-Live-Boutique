@@ -105,7 +105,7 @@ export default function CatalogScreen() {
                 fontFamily: 'Helvetica Neue',
                 fontSize: 18,
                 fontWeight: '500',
-                lineHeight: 18,
+                lineHeight: 22,
                 textAlign: 'center',
               }}
             >
@@ -114,7 +114,7 @@ export default function CatalogScreen() {
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => router.push('/add-dress')}
-              style={{ width: 133, height: 48, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 125, height: 46, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' }}
             >
               <Text style={{ color: '#FFFFFF', fontFamily: 'Helvetica Neue', fontSize: 14, fontWeight: '500', letterSpacing: 0.56, textTransform: 'uppercase' }}>
                 Add Dress
@@ -235,13 +235,7 @@ export default function CatalogScreen() {
                         ${typeof dress.price === 'number' ? dress.price.toFixed(0) : dress.price}
                       </Text>
                     </Text>
-                    {dress.is_ai_enabled ? (
-                      <Text className="text-[10px] text-black/35 mt-1 leading-4">
-                        {dress.ai_model_url
-                          ? 'Separate garment asset uploaded for stronger try-on previews.'
-                          : 'Using the catalog image as the current AI try-on asset.'}
-                      </Text>
-                    ) : null}
+                    
                   </View>
 
                   <View style={{ flexDirection: 'row', gap: 14, marginTop: 40 }}>

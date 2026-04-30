@@ -7,6 +7,8 @@ import { Image } from 'expo-image';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
 
+const LOGOUT_ICON = require('../../assets/svg/Logout.svg');
+
 const MENU_ITEMS = [
   { label: 'Business Adresse', route: '/edit-address' },
   { label: 'Payment Methods', route: '/payment-methods' },
@@ -95,7 +97,7 @@ export default function ProfileScreen() {
     <SafeAreaView className="flex-1 bg-white">
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: Math.max(24, insets.bottom + 24) }}
       >
         <View className="px-5 items-center mb-6">
           <Text className="text-[16px] text-black" style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}>
@@ -193,25 +195,29 @@ export default function ProfileScreen() {
                     <Ionicons name="chevron-forward" size={16} color="#1A1A1A" />
                   </TouchableOpacity>
                 ))}
+
+                <View className="mt-10">
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      logout();
+                      router.replace('/landing');
+                    }}
+                    className="flex-row items-center"
+                  >
+                    <Image
+                      source={LOGOUT_ICON}
+                      style={{ width: 18, height: 18, tintColor: '#FF3B30' }}
+                      contentFit="contain"
+                    />
+                    <Text className="text-[14px] text-[#FF3B30] ml-2">Logout</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             )}
           </View>
         </View>
       </ScrollView>
-
-      <View className="px-5 pb-8">
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => {
-            logout();
-            router.replace('/landing');
-          }}
-          className="flex-row items-center"
-        >
-          <Ionicons name="log-out-outline" size={18} color="#FF3B30" />
-          <Text className="text-[14px] text-[#FF3B30] ml-2">Logout</Text>
-        </TouchableOpacity>
-      </View>
     </SafeAreaView>
   );
 }

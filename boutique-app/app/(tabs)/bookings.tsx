@@ -51,6 +51,20 @@ type Booking = {
   } | null;
 };
 
+const isValidBooking = (value: any): value is Booking => {
+  if (!value || typeof value !== 'object') return false;
+  const idOk = typeof value.id === 'number' && Number.isFinite(value.id) && value.id > 0;
+  const typeOk = value.appointment_type === 'video' || value.appointment_type === 'in_store';
+  const statusOk =
+    value.status === 'requested' ||
+    value.status === 'accepted' ||
+    value.status === 'rejected' ||
+    value.status === 'rescheduled' ||
+    value.status === 'completed';
+  const scheduledOk = typeof value.scheduled_for === 'string' && value.scheduled_for.trim().length > 0;
+  return idOk && typeOk && statusOk && scheduledOk;
+};
+
 function DetailRow({
   label,
   icon,
@@ -61,11 +75,17 @@ function DetailRow({
   text: string;
 }) {
   return (
-    <View className="mb-4">
-      {label ? <Text className="text-[11px] text-black/70 mb-3">{label}</Text> : null}
+    <View className="mb-6">
+      {label ? <Text className="text-[14px] text-black/60 mb-5">{label}</Text> : null}
       <View className="flex-row items-center">
-        <Ionicons name={icon} size={18} color="#1A1A1A" />
-        <Text className="ml-3 text-[11px] text-black/85">{text}</Text>
+        {icon === 'calendar-outline' ? (
+          <SvgXml xml={CALENDAR_BOOKING_SVG} width={20} height={20} />
+        ) : icon === 'globe-outline' ? (
+          <SvgXml xml={LANGUAGES_SVG} width={20} height={20} />
+        ) : (
+          <Ionicons name={icon} size={20} color="#1A1A1A" />
+        )}
+        <Text className="ml-4 text-[12px] text-black/85">{text}</Text>
       </View>
     </View>
   );
@@ -86,7 +106,7 @@ export default function BookingsScreen() {
   const loadBookings = useCallback(async () => {
     try {
       const data = await api.get('/bookings/partner');
-      const next = Array.isArray(data) ? (data as Booking[]) : [];
+      const next = Array.isArray(data) ? (data as any[]).filter(isValidBooking) : [];
       setBookings(next);
       setActionError(null);
     } catch (error) {
@@ -156,6 +176,9 @@ export default function BookingsScreen() {
       setBookings((current) =>
         current.map((booking) => (booking.id === bookingId ? updatedBooking : booking))
       );
+      if (payload.status) {
+        Alert.alert('Booking updated', `Status set to ${statusLabel(updatedBooking.status)}.`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not update booking.';
       setActionError(message);
@@ -487,7 +510,7 @@ export default function BookingsScreen() {
                         activeOpacity={0.9}
                         onPress={() => setSelectedBookingId(booking.id)}
                         className={`border bg-white ${isSelected ? 'border-[#1A1A1A]' : 'border-[#CFCFCF]'}`}
-                        style={{ height: 244 }}
+                        style={{ height: 310 }}
                       >
                         <View className="px-5 pt-5 pb-4" style={{ flex: 1 }}>
                           <View className="flex-row items-end">
@@ -517,7 +540,7 @@ export default function BookingsScreen() {
                           </View>
 
                           <View className="mt-6">
-                            <Text className="text-[12px] text-black/60 mb-1">Date & Time:</Text>
+                            <Text className="text-[14px] text-black/60 mb-5">Date & Time:</Text>
                             <View className="flex-row items-center">
                               <SvgXml xml={CALENDAR_BOOKING_SVG} width={20} height={20} />
                               <Text className="ml-4 text-[12px] text-black/85">{booking.scheduled_for}</Text>
@@ -525,7 +548,7 @@ export default function BookingsScreen() {
                           </View>
 
                           <View className="mt-6">
-                            <Text className="text-[12px] text-black/60 mb-1">Languages</Text>
+                            <Text className="text-[14px] text-black/60 mb-5">Languages</Text>
                             <View className="flex-row items-center">
                               <SvgXml xml={LANGUAGES_SVG} width={20} height={20} />
                               <Text className="ml-4 text-[12px] text-black/85">{booking.language}</Text>
@@ -577,7 +600,10 @@ export default function BookingsScreen() {
                         />
                       </View>
                       <View className="flex-1">
-                        <Text className="text-[15px] text-black">
+                        <Text
+                          className="text-[16px] text-black"
+                          style={{ fontFamily: 'Helvetica Neue', fontWeight: '500', lineHeight: 16 }}
+                        >
                           {selectedBooking.appointment_type === 'video' ? 'Video Call Appointment' : 'In-Store Appointment'}
                         </Text>
                         <Text className="text-[11px] text-black/45 mt-1">
@@ -596,27 +622,27 @@ export default function BookingsScreen() {
                       />
                     ) : null}
 
-                    <View className="mt-2 pt-4 border-t border-[#EFEFEF]">
-                      <Text className="text-[11px] text-black/70 mb-2">
+                    <View className="mt-6 pt-4 border-t border-[#EFEFEF]">
+                      <Text className="text-[14px] text-black/60 mb-5">
                         Buyer Contact
                       </Text>
-                      <Text className="text-[11px] text-black/60 leading-5">
+                      <Text className="text-[12px] text-black/60 leading-5">
                         {selectedBooking.customer?.email || 'No email available'}
                       </Text>
                     </View>
 
-                    <View className="mt-2 pt-4 border-t border-[#EFEFEF]">
-                      <Text className="text-[11px] text-black/70 mb-2">
+                    <View className="mt-6 pt-4 border-t border-[#EFEFEF]">
+                      <Text className="text-[14px] text-black/60 mb-5">
                         Dresses
                       </Text>
-                      <Text className="text-[11px] text-black/60 leading-5">{dressSummary(selectedBooking)}</Text>
+                      <Text className="text-[12px] text-black/60 leading-5">{dressSummary(selectedBooking)}</Text>
                     </View>
 
-                    <View className="mt-2 pt-4 border-t border-[#EFEFEF]">
-                      <Text className="text-[11px] text-black/70 mb-2">
+                    <View className="mt-6 pt-4 border-t border-[#EFEFEF]">
+                      <Text className="text-[14px] text-black/60 mb-5">
                         Notes
                       </Text>
-                      <Text className="text-[11px] text-black/60 leading-5">
+                      <Text className="text-[12px] text-black/60 leading-5">
                         {selectedBooking.notes || 'No internal notes have been added yet.'}
                       </Text>
                     </View>
@@ -624,17 +650,41 @@ export default function BookingsScreen() {
                     <View className="mt-4 flex-row">
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        disabled={updatingBookingId === selectedBooking.id || isBookingLocked(selectedBooking)}
+                        disabled={
+                          updatingBookingId === selectedBooking.id ||
+                          isBookingLocked(selectedBooking) ||
+                          selectedBooking.status === 'accepted'
+                        }
                         onPress={() => updateBooking(selectedBooking.id, { status: 'accepted' })}
                         className="flex-1 border border-[#1A1A1A] py-4 items-center justify-center mr-1"
+                        style={{
+                          opacity:
+                            updatingBookingId === selectedBooking.id ||
+                            isBookingLocked(selectedBooking) ||
+                            selectedBooking.status === 'accepted'
+                              ? 0.4
+                              : 1,
+                        }}
                       >
                         <Text className="text-[10px] text-black/80">Accept</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         activeOpacity={0.85}
-                        disabled={updatingBookingId === selectedBooking.id || isBookingLocked(selectedBooking)}
+                        disabled={
+                          updatingBookingId === selectedBooking.id ||
+                          isBookingLocked(selectedBooking) ||
+                          selectedBooking.status === 'rejected'
+                        }
                         onPress={() => updateBooking(selectedBooking.id, { status: 'rejected' })}
                         className="flex-1 bg-[#C9491A] py-4 items-center justify-center ml-1"
+                        style={{
+                          opacity:
+                            updatingBookingId === selectedBooking.id ||
+                            isBookingLocked(selectedBooking) ||
+                            selectedBooking.status === 'rejected'
+                              ? 0.4
+                              : 1,
+                        }}
                       >
                         <Text className="text-[10px] text-white">Reject</Text>
                       </TouchableOpacity>

@@ -102,7 +102,7 @@ export default function TeamScreen() {
           <View className="px-5">
           <View className="flex-row items-center justify-between mb-6">
             <Text
-              className="text-[16px] text-black"
+              className="text-[18px] text-black"
               style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
             >
               All Team Members
@@ -114,7 +114,7 @@ export default function TeamScreen() {
                 onPress={() => router.push('/team-invite')}
                 className="bg-black px-6 py-4 mr-3"
               >
-                <Text className="text-[11px] uppercase tracking-[1px] text-white">Add Member</Text>
+                <Text className="text-[14px] uppercase tracking-[1px] text-white">Add Member</Text>
               </TouchableOpacity>
               {menuOpen ? (
                 <View
