@@ -21,13 +21,11 @@ function toJpegDataUrl(base64: string) {
   return `data:image/jpeg;base64,${base64}`;
 }
 
-type SavedTestingImage = {
+type SavedPhoto = {
   uri: string;
   dataUrl: string;
 };
 
-let cachedSelfieImage: SavedTestingImage | null = null;
-let cachedFullBodyImage: SavedTestingImage | null = null;
 
 export default function AITryOnScreen() {
   const router = useRouter();
@@ -49,8 +47,6 @@ export default function AITryOnScreen() {
   const [dress, setDress] = useState<Dress | null>(null);
   const [dressLoading, setDressLoading] = useState(false);
   const [selectedDressImageIndex, setSelectedDressImageIndex] = useState(0);
-  const [savedSelfie, setSavedSelfie] = useState<SavedTestingImage | null>(cachedSelfieImage);
-  const [savedFullBody, setSavedFullBody] = useState<SavedTestingImage | null>(cachedFullBodyImage);
 
   const normalizedDressId = useMemo(() => {
     const raw = typeof params.dressId === 'string' ? Number(params.dressId) : NaN;
@@ -185,7 +181,7 @@ export default function AITryOnScreen() {
     setRenderedUri(res.image_data_url);
   }, [normalizedDressId, selfieDataUrl]);
 
-  const processFullBodyCandidate = useCallback(async (candidate: SavedTestingImage) => {
+  const processFullBodyCandidate = useCallback(async (candidate: SavedPhoto) => {
     setFullBodyUri(candidate.uri);
     setValidating(true);
     setRendering(false);
@@ -203,8 +199,6 @@ export default function AITryOnScreen() {
         return;
       }
 
-      cachedFullBodyImage = candidate;
-      setSavedFullBody(candidate);
       setValidating(false);
       setRendering(true);
       setStep(7);
@@ -250,7 +244,7 @@ export default function AITryOnScreen() {
     return {
       uri: asset.uri,
       dataUrl: toJpegDataUrl(asset.base64),
-    } satisfies SavedTestingImage;
+    } satisfies SavedPhoto;
   }, []);
 
   useEffect(() => {
@@ -315,11 +309,9 @@ export default function AITryOnScreen() {
           Alert.alert('AI Try On', 'Could not capture the selfie. Please try again.');
           return;
         }
-        setSelfieUri(pic.uri);
         const candidate = { uri: pic.uri, dataUrl: toJpegDataUrl(pic.base64) };
+        setSelfieUri(pic.uri);
         setSelfieDataUrl(candidate.dataUrl);
-        cachedSelfieImage = candidate;
-        setSavedSelfie(candidate);
         setStep(4);
         return;
       }
@@ -340,27 +332,12 @@ export default function AITryOnScreen() {
     if (currentStep.id === 3) {
       setSelfieUri(picked.uri);
       setSelfieDataUrl(picked.dataUrl);
-      cachedSelfieImage = picked;
-      setSavedSelfie(picked);
       setStep(4);
       return;
     }
 
     if (currentStep.id === 5) {
       await processFullBodyCandidate(picked);
-    }
-  };
-
-  const handleUseSavedTestingPhoto = async () => {
-    if (currentStep.id === 3 && savedSelfie) {
-      setSelfieUri(savedSelfie.uri);
-      setSelfieDataUrl(savedSelfie.dataUrl);
-      setStep(4);
-      return;
-    }
-
-    if (currentStep.id === 5 && savedFullBody) {
-      await processFullBodyCandidate(savedFullBody);
     }
   };
 
@@ -567,21 +544,6 @@ export default function AITryOnScreen() {
                     <Text className="text-black text-[10px] font-bold uppercase tracking-[1px]">Choose from gallery</Text>
                   </TouchableOpacity>
 
-                  {((currentStep.id === 3 && savedSelfie) || (currentStep.id === 5 && savedFullBody)) ? (
-                    <TouchableOpacity
-                      onPress={handleUseSavedTestingPhoto}
-                      activeOpacity={0.85}
-                      className="border border-black/15 py-3 items-center bg-black/[0.03]"
-                    >
-                      <Text className="text-black text-[10px] font-medium uppercase tracking-[1px]">
-                        {currentStep.id === 3 ? 'Use saved selfie' : 'Use saved full-body photo'}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-
-                  <Text className="text-black/35 text-[10px] text-center mt-3 leading-4">
-                    Testing shortcut: reuse saved images instead of capturing again.
-                  </Text>
                 </View>
               </View>
             )}
