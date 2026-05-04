@@ -149,6 +149,38 @@ def _runpod_tryon_enabled() -> bool:
     return bool((settings.RUNPOD_API_KEY or "").strip() and (settings.RUNPOD_TRYON_ENDPOINT_ID or "").strip())
 
 
+def _resize_image_bytes_for_tryon(image_bytes: bytes, max_side: int = 768) -> bytes:
+    """Downscale to max_side px on the longest dimension before sending to RunPod.
+
+    A full phone photo is 3–5 MB as base64 which can push the RunPod API payload
+    over its practical limit. Resizing to 768 px keeps it under 200 KB while
+    preserving enough detail for garment overlay.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except Exception:
+        return image_bytes
+
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return image_bytes
+
+    h, w = img.shape[:2]
+    if max(h, w) <= max_side:
+        return image_bytes
+
+    scale = max_side / max(h, w)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, 82])
+    if not ok:
+        return image_bytes
+    return buf.tobytes()
+
+
 def _render_tryon_via_runpod(
     *,
     dress_id: int,
@@ -163,6 +195,10 @@ def _render_tryon_via_runpod(
     if not endpoint_id or not api_key:
         raise HTTPException(status_code=500, detail="RunPod AI try-on is not configured.")
 
+    # Resize full-body frame to ≤768 px before base64-encoding to keep the
+    # RunPod JSON payload well under the API's practical size limit (~10 MB).
+    resized_full_body = _resize_image_bytes_for_tryon(full_body_image_bytes, max_side=768)
+
     request_body = {
         "input": {
             "task": "virtual-tryon",
@@ -170,7 +206,7 @@ def _render_tryon_via_runpod(
             "dress_name": dress_name or "",
             "garment_source_url": garment_url,
             "garment_image_data_url": _encode_image_bytes_data_url(garment_image_bytes, "image/png"),
-            "full_body_image_data_url": _encode_image_bytes_data_url(full_body_image_bytes, "image/jpeg"),
+            "full_body_image_data_url": _encode_image_bytes_data_url(resized_full_body, "image/jpeg"),
             "selfie_image_data_url": (
                 _encode_image_bytes_data_url(selfie_image_bytes, "image/jpeg") if selfie_image_bytes else None
             ),

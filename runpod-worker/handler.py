@@ -40,7 +40,7 @@ def _load_garment_image(payload: dict[str, Any]) -> Image.Image:
 
     garment_source_url = (payload.get("garment_source_url") or "").strip()
     if not garment_source_url:
-        raise ValueError("Garment image is required.")
+        raise ValueError("Garment image is required (garment_image_data_url or garment_source_url).")
 
     response = requests.get(garment_source_url, timeout=30)
     response.raise_for_status()
@@ -107,8 +107,15 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
     if payload.get("task") != "virtual-tryon":
         return {"error": "Unsupported task. Expected 'virtual-tryon'."}
 
+    full_body_data_url = payload.get("full_body_image_data_url")
+    if not isinstance(full_body_data_url, str) or not full_body_data_url.strip():
+        received_keys = list(payload.keys())
+        return {
+            "error": f"Missing required field: full_body_image_data_url. Received keys: {received_keys}"
+        }
+
     try:
-        full_body_image = _load_image_from_data_url(payload["full_body_image_data_url"])
+        full_body_image = _load_image_from_data_url(full_body_data_url)
         garment_image = _load_garment_image(payload)
         result_image, details = _compose_preview(full_body_image, garment_image)
 

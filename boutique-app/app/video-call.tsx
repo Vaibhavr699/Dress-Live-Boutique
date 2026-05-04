@@ -32,6 +32,7 @@ type LiveKitDeps = {
   isTrackReference: any;
   useRoomContext: any;
   useRemoteParticipants: any;
+  useLocalParticipant: any;
   Track: any;
   AudioSession: any;
 };
@@ -59,6 +60,7 @@ function loadLiveKitDeps(): LiveKitDeps | null {
       isTrackReference,
       useRoomContext,
       useRemoteParticipants,
+      useLocalParticipant,
     } = livekitMod;
     return {
       LiveKitRoom,
@@ -67,6 +69,7 @@ function loadLiveKitDeps(): LiveKitDeps | null {
       isTrackReference,
       useRoomContext,
       useRemoteParticipants,
+      useLocalParticipant,
       Track,
       AudioSession: livekitMod?.AudioSession,
     };
@@ -84,20 +87,54 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   const { deps, bookingDresses, bookingId, frameHeight } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
-  const tracks = deps.useTracks([deps.Track.Source.Camera]);
+
+  // Remote camera track (customer video)
+  const tracks = deps.useTracks([deps.Track.Source.Camera], { onlySubscribed: false });
   const videoTracks = tracks.filter((t: any) => deps.isTrackReference(t));
   const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
-  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+
+  // Local camera track — use useLocalParticipant directly to avoid useTracks race
+  // condition where the local publication briefly loses its track during renegotiation.
+  const { localParticipant } = deps.useLocalParticipant();
+  const localCamPub = localParticipant
+    ? [...localParticipant.trackPublications.values()].find(
+        (p: any) => p.source === deps.Track.Source.Camera && p.track
+      ) ?? null
+    : null;
+  const local = localCamPub && localParticipant
+    ? { participant: localParticipant, publication: localCamPub, source: deps.Track.Source.Camera }
+    : null;
+
+  const isRoomConnected = room?.state === 'connected';
   const [activeDressId, setActiveDressId] = React.useState<number | null>(bookingDresses[0]?.id ?? null);
   const emptyMainMessage =
     remoteParticipants.length > 0
       ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
       : 'Waiting for customer…';
 
+  // Re-send the active dress signal whenever the customer joins so they get
+  // the current selection even if they connected after the advisor tapped.
+  React.useEffect(() => {
+    if (!room?.localParticipant || !activeDressId) return;
+    const activeDress = bookingDresses.find((d) => d.id === activeDressId);
+    const sendCurrent = () => {
+      try {
+        const payload = buildTryonSwitchPayload({
+          bookingId,
+          dressId: activeDressId,
+          dressName: activeDress?.name ?? null,
+        });
+        room.localParticipant.publishData(payload, { reliable: true } as any);
+      } catch { /* no-op */ }
+    };
+    room.on('participantConnected', sendCurrent);
+    return () => { room.off('participantConnected', sendCurrent); };
+  }, [room, activeDressId, bookingDresses, bookingId]);
+
   return (
     <View style={{ width: '100%', height: frameHeight }}>
       {remote ? (
-        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} />
+        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} zOrder={0} />
       ) : (
         <View className="bg-black w-full items-center justify-center px-6" style={{ height: frameHeight }}>
           <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
@@ -109,7 +146,7 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
           className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
           style={{ width: 112, height: 152, borderRadius: 18 }}
         >
-          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
+          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} zOrder={1} />
         </View>
       ) : (
         <View
@@ -134,10 +171,17 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
               </Text>
               <Text className="text-black/45 text-[9px] mt-1">Tap a dress to show it on customer</Text>
             </View>
-            <View className="bg-[#EEF8EE] px-2.5 py-1 rounded-full flex-row items-center">
-              <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
-              <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Ready</Text>
-            </View>
+            {isRoomConnected ? (
+              <View className="bg-[#EEF8EE] px-2.5 py-1 rounded-full flex-row items-center">
+                <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+                <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Ready</Text>
+              </View>
+            ) : (
+              <View className="bg-[#FFF4EC] px-2.5 py-1 rounded-full flex-row items-center">
+                <View className="w-1.5 h-1.5 rounded-full bg-[#C9491A] mr-1.5" />
+                <Text className="text-[#C9491A] text-[8px] uppercase tracking-[0.6px]">Connecting</Text>
+              </View>
+            )}
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {bookingDresses.length === 0 ? (
@@ -154,7 +198,7 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
                     activeOpacity={0.9}
                     onPress={() => {
                       setActiveDressId(d.id);
-                      if (!room?.localParticipant) return;
+                      if (!isRoomConnected || !room?.localParticipant) return;
                       try {
                         const payload = buildTryonSwitchPayload({
                           bookingId,

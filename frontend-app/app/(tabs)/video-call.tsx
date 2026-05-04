@@ -29,6 +29,7 @@ type LiveKitDeps = {
   isTrackReference: any;
   useRoomContext: any;
   useRemoteParticipants: any;
+  useLocalParticipant: any;
   Track: any;
   AudioSession: any;
 };
@@ -49,9 +50,9 @@ function loadLiveKitDeps(): LiveKitDeps | null {
     ) {
       return null;
     }
-    const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, useRemoteParticipants } = livekitMod;
+    const { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, useRemoteParticipants, useLocalParticipant } = livekitMod;
     const AudioSession = livekitMod?.AudioSession;
-    return { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, useRemoteParticipants, Track, AudioSession };
+    return { LiveKitRoom, useTracks, VideoTrack, isTrackReference, useRoomContext, useRemoteParticipants, useLocalParticipant, Track, AudioSession };
   } catch {
     return null;
   }
@@ -64,14 +65,29 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
   bookingId: number;
   frameHeight: number;
   onDressSwitch: (dressId: number, dressName: string | null) => void;
+  tryOnOverlayUri: string | null;
+  tryOnLoading: boolean;
 }) {
-  const { deps, bookingId, frameHeight, onDressSwitch } = props;
+  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
-  const tracks = deps.useTracks([deps.Track.Source.Camera]);
+
+  // Remote camera track (advisor video)
+  const tracks = deps.useTracks([deps.Track.Source.Camera], { onlySubscribed: false });
   const videoTracks = tracks.filter((t: any) => deps.isTrackReference(t));
   const remote = videoTracks.find((t: any) => !t.participant?.isLocal) ?? null;
-  const local = videoTracks.find((t: any) => !!t.participant?.isLocal) ?? null;
+
+  // Local camera track — use useLocalParticipant directly to avoid useTracks race
+  // condition where the local publication briefly loses its track during renegotiation.
+  const { localParticipant } = deps.useLocalParticipant();
+  const localCamPub = localParticipant
+    ? [...localParticipant.trackPublications.values()].find(
+        (p: any) => p.source === deps.Track.Source.Camera && p.track
+      ) ?? null
+    : null;
+  const local = localCamPub && localParticipant
+    ? { participant: localParticipant, publication: localCamPub, source: deps.Track.Source.Camera }
+    : null;
   const emptyMainMessage =
     remoteParticipants.length > 0
       ? 'Advisor joined without video. They may need to enable their camera.'
@@ -100,19 +116,68 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
   return (
     <View style={{ width: '100%', height: frameHeight }}>
       {remote ? (
-        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} />
+        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} zOrder={0} />
       ) : (
         <View className="flex-1 items-center justify-center px-8">
           <Text className="text-white/60 text-[12px] text-center leading-5">{emptyMainMessage}</Text>
         </View>
       )}
 
+      {/* Live try-on overlay — covers main video with AI dressed result */}
+      {tryOnOverlayUri ? (
+        <View
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          pointerEvents="none"
+        >
+          <Image
+            source={{ uri: tryOnOverlayUri }}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+          />
+          <View
+            style={{
+              position: 'absolute',
+              top: 10,
+              left: 10,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderRadius: 20,
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}
+          >
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4EA35D', marginRight: 6 }} />
+            <Text style={{ color: 'white', fontSize: 9, letterSpacing: 0.5 }}>AI Try-On</Text>
+          </View>
+        </View>
+      ) : tryOnLoading ? (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          pointerEvents="none"
+        >
+          <ActivityIndicator color="white" size="large" />
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 10 }}>
+            Applying dress…
+          </Text>
+        </View>
+      ) : null}
+
       {local ? (
         <View
           className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
           style={{ width: 112, height: 152, borderRadius: 18 }}
         >
-          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
+          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} zOrder={1} />
         </View>
       ) : null}
 
@@ -164,6 +229,7 @@ export default function VideoCallScreen() {
   const [tryOnPhotoDataUrl, setTryOnPhotoDataUrl] = useState<string | null>(null);
   const [tryOnResultUri, setTryOnResultUri] = useState<string | null>(null);
   const [tryOnLoading, setTryOnLoading] = useState(false);
+  const [tryOnError, setTryOnError] = useState<string | null>(null);
   const [tryOnDressName, setTryOnDressName] = useState<string | null>(null);
   const [tryOnActiveDressId, setTryOnActiveDressId] = useState<number | null>(null);
   const [photoCapturing, setPhotoCapturing] = useState(false);
@@ -297,15 +363,21 @@ export default function VideoCallScreen() {
 
     setTryOnLoading(true);
     setTryOnResultUri(null);
+    setTryOnError(null);
     try {
       const res = await api.post('/ai/live-tryon-frame', {
         booking_id: bId,
         dress_id: dressId,
         frame_data_url: photo,
       }) as { image_data_url?: string | null };
-      if (res?.image_data_url) setTryOnResultUri(res.image_data_url);
-    } catch {
-      // silently fail — the dress label badge in the video still updates
+      if (res?.image_data_url) {
+        setTryOnResultUri(res.image_data_url);
+      } else {
+        setTryOnError('No result returned. Please try again.');
+      }
+    } catch (err: any) {
+      const msg = err?.detail || err?.message || 'Try-on failed. Please try again.';
+      setTryOnError(typeof msg === 'string' ? msg : 'Try-on failed. Please try again.');
     } finally {
       setTryOnLoading(false);
     }
@@ -497,6 +569,8 @@ export default function VideoCallScreen() {
                       bookingId={bookingId}
                       frameHeight={videoFrameHeight}
                       onDressSwitch={stableOnDressSwitch}
+                      tryOnOverlayUri={tryOnResultUri}
+                      tryOnLoading={tryOnLoading}
                     />
                   </deps.LiveKitRoom>
                 );
@@ -747,46 +821,58 @@ export default function VideoCallScreen() {
                     </TouchableOpacity>
                   </View>
                 ) : tryOnLoading ? (
-                  /* Generating */
-                  <View className="items-center py-10">
-                    <ActivityIndicator color="#1A1A1A" size="large" />
-                    <Text className="text-black/60 text-[12px] mt-4 text-center font-medium">
-                      {tryOnDressName ? `Trying on ${tryOnDressName}…` : 'Generating your try-on…'}
-                    </Text>
-                    <Text className="text-black/35 text-[10px] mt-1 text-center">
-                      AI is applying the dress to your photo
+                  /* Generating — spinner shown on video overlay; panel shows brief status */
+                  <View className="flex-row items-center py-3">
+                    <ActivityIndicator color="#1A1A1A" size="small" />
+                    <Text className="text-black/55 text-[11px] ml-3">
+                      {tryOnDressName ? `Applying ${tryOnDressName}…` : 'Generating try-on…'}
                     </Text>
                   </View>
+                ) : tryOnError ? (
+                  /* Try-on failed — show reason + retry */
+                  <View className="items-center py-8">
+                    <View className="w-12 h-12 rounded-full bg-[#FFF4EC] items-center justify-center mb-4">
+                      <Feather name="alert-circle" size={22} color="#C9491A" />
+                    </View>
+                    <Text className="text-black/70 text-[12px] text-center font-medium mb-1">
+                      Try-on could not generate
+                    </Text>
+                    <Text className="text-black/45 text-[10px] text-center leading-4 px-4 mb-5">
+                      {tryOnError}
+                    </Text>
+                    {tryOnActiveDressId ? (
+                      <TouchableOpacity
+                        onPress={() => void generateTryOn(tryOnActiveDressId)}
+                        disabled={tryOnLoading}
+                        activeOpacity={0.85}
+                        className="flex-row items-center gap-2 border border-black/20 px-4 py-2.5 rounded-sm"
+                      >
+                        <Feather name="refresh-cw" size={12} color="#555" />
+                        <Text className="text-black/60 text-[10px] uppercase tracking-[1px]">Retry</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                 ) : tryOnResultUri ? (
-                  /* Result ready */
-                  <View>
-                    <View className="overflow-hidden rounded-xl border border-black/5">
-                      <Image
-                        source={{ uri: tryOnResultUri }}
-                        style={{ width: '100%', height: 380 }}
-                        contentFit="contain"
-                      />
+                  /* Result shown on video overlay — compact status in panel */
+                  <View className="flex-row items-center justify-between py-2">
+                    <View className="flex-row items-center bg-[#EEF8EE] px-3 py-1.5 rounded-full">
+                      <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+                      <Text className="text-[#4EA35D] text-[9px] uppercase tracking-[0.6px]">
+                        Showing on video
+                      </Text>
                     </View>
-                    <View className="flex-row items-center justify-between mt-4">
-                      <View className="flex-row items-center bg-[#EEF8EE] px-2.5 py-1 rounded-full">
-                        <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
-                        <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">
-                          Preview ready
+                    {tryOnActiveDressId ? (
+                      <TouchableOpacity
+                        onPress={() => void generateTryOn(tryOnActiveDressId)}
+                        disabled={tryOnLoading}
+                        className="flex-row items-center gap-1.5 border border-black/15 px-3 py-1.5 rounded-full"
+                      >
+                        <Feather name="refresh-cw" size={11} color="#555" />
+                        <Text className="text-black/55 text-[9px] uppercase tracking-[0.8px]">
+                          Refresh
                         </Text>
-                      </View>
-                      {tryOnActiveDressId ? (
-                        <TouchableOpacity
-                          onPress={() => void generateTryOn(tryOnActiveDressId)}
-                          disabled={tryOnLoading}
-                          className="flex-row items-center gap-1"
-                        >
-                          <Feather name="refresh-cw" size={11} color="#999" />
-                          <Text className="text-black/40 text-[10px] uppercase tracking-[0.8px]">
-                            Refresh
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                 ) : (
                   /* Photo set but no dress selected yet */
