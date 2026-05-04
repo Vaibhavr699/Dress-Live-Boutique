@@ -14,6 +14,27 @@ const PLUS_ICON = require('@/assets/svg/plus.svg');
 const STAR_ICON = require('@/assets/svg/Star.svg');
 const CATEGORIES = ['All', 'Abendkleider', 'Hochzeitskleider', 'Add-Ons'];
 
+function formatPriceWithSpaces(price: number): string {
+  return Math.round(price).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+function formatBoutiqueStateCountry(location?: string | null): string {
+  const parts = (location || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length < 2) return (location || '').trim() || 'Location unavailable';
+
+  const country = parts[parts.length - 1];
+  const region = [...parts.slice(0, -1)]
+    .reverse()
+    .map((part) => part.replace(/^\d{4,6}\s*/, '').trim())
+    .find((part) => part && !/^\d+$/.test(part));
+
+  return region ? `${region}, ${country}` : country;
+}
+
 type Boutique = {
   id: number;
   name?: string | null;
@@ -189,8 +210,8 @@ export default function BoutiqueDetailsScreen() {
   }, [activeCategory, dresses]);
 
   const heroImageHeight = useMemo(() => {
-    const referenceHeight = (width * 265) / 428;
-    return Math.max(210, Math.min(referenceHeight, 320));
+    const referenceHeight = (width * 300) / 428;
+    return Math.max(235, Math.min(referenceHeight, 350));
   }, [width]);
 
   const dressCardWidth = useMemo(() => Math.max((width - 55) / 2, 145), [width]);
@@ -229,17 +250,8 @@ export default function BoutiqueDetailsScreen() {
     <View className="flex-1 bg-white">
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100, paddingTop: insets.top }}
+        contentContainerStyle={{ paddingBottom: 100 }}
       >
-        <View className="px-5 pt-3 pb-3">
-          <TouchableOpacity
-            onPress={() => router.back()}
-            className="w-10 h-10 items-start justify-center"
-          >
-            <Ionicons name="arrow-back" size={20} color="black" />
-          </TouchableOpacity>
-        </View>
-
         {/* Header Image */}
         <View className="w-full" style={{ height: heroImageHeight }}>
           <ScrollView
@@ -261,6 +273,14 @@ export default function BoutiqueDetailsScreen() {
               />
             ))}
           </ScrollView>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            className="absolute left-5 w-10 h-10 items-center justify-center rounded-full"
+            style={{ top: insets.top + 12, backgroundColor: 'rgba(255,255,255,0.86)' }}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="arrow-back" size={20} color="black" />
+          </TouchableOpacity>
           <View className="absolute left-0 right-0 bottom-0 h-[3px] bg-white/90">
             <View
               className="absolute left-0 top-0 bottom-0 bg-black"
@@ -274,24 +294,26 @@ export default function BoutiqueDetailsScreen() {
 
         <View className="px-5 pt-2 pb-6">
           {/* Boutique Info */}
-          <View className="flex-row justify-between items-start mb-1 mt-1">
+          <View className="flex-row justify-between items-start mb-1 mt-2">
             <View className="flex-1 pr-4">
               <Text
-                className="text-[#1A1A1A] mb-2"
+                className="mb-2"
                 style={{
+                  color: '#000000',
                   fontFamily: 'Helvetica Neue',
-                  fontWeight: '500',
+                  fontWeight: '600',
                   fontSize: 24,
                   lineHeight: 24,
-                  letterSpacing: 2,
+                  letterSpacing: 0,
                 }}
                 numberOfLines={1}
               >
                 {(boutique?.name || '').trim() || 'Boutique'}
               </Text>
               <Text
-                className="text-[#1A1A1A]/55 mt-1"
+                className="mt-1"
                 style={{
+                  color: '#6E6E6E',
                   fontFamily: 'Helvetica Neue',
                   fontWeight: '400',
                   fontSize: 12,
@@ -300,7 +322,7 @@ export default function BoutiqueDetailsScreen() {
                 }}
                 numberOfLines={1}
               >
-                Weil Am Rhein
+                {formatBoutiqueStateCountry(boutique?.location)}
               </Text>
             </View>
             <View className="items-end pt-1 mt-1">
@@ -332,8 +354,8 @@ export default function BoutiqueDetailsScreen() {
             showsHorizontalScrollIndicator={false}
             className="mb-4"
             style={{
-              marginLeft: width < 400 ? 14 : 0,
-              marginRight: width < 400 ? 14 : 0,
+              marginLeft: width < 400 ? 4 : 0,
+              marginRight: width < 400 ? 4 : 0,
             }}
             contentContainerStyle={{
               flexGrow: 1,
@@ -352,7 +374,7 @@ export default function BoutiqueDetailsScreen() {
                 onPress={() => setActiveCategory(cat)}
                 activeOpacity={0.85}
                 style={{
-                  paddingLeft: idx === 0 ? 0 : width < 400 ? 12 : 14,
+                  paddingLeft: idx === 0 ? 0 : width < 400 ? 10 : 14,
                   paddingRight: idx === CATEGORIES.length - 1 ? 0 : width < 400 ? 6 : 12,
                   paddingVertical: 6,
                   marginRight: idx === CATEGORIES.length - 1 ? 0 : width < 400 ? 6 : width < 380 ? 10 : 16,
@@ -390,7 +412,7 @@ export default function BoutiqueDetailsScreen() {
             <View className="flex-row flex-wrap justify-between">
               {filteredDresses.map((dress) => {
                 const priceLabel =
-                  typeof dress.price === 'number' ? `${dress.price.toFixed(0)} EUR` : `${dress.price} EUR`;
+                  typeof dress.price === 'number' ? `${formatPriceWithSpaces(dress.price)} €` : `${dress.price} €`;
                 const imageSource = dress.image_url
                   ? { uri: dress.image_url }
                   : require('@/assets/images/Dashboard image 3.png');
@@ -435,7 +457,7 @@ export default function BoutiqueDetailsScreen() {
                             fontFamily: 'Helvetica Neue',
                             fontWeight: '500',
                             fontSize: 14,
-                            lineHeight: 14,
+                            lineHeight: 18,
                             letterSpacing: 0,
                           }}
                           numberOfLines={1}

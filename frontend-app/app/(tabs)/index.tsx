@@ -531,7 +531,7 @@ export default function DashboardScreen() {
           </TouchableOpacity> */}
         </View>
 
-        <View style={{ paddingTop: 4, paddingBottom: 10 }}>
+        <View style={{ paddingTop: 4, paddingBottom: 4 }}>
           <View
             style={{
               borderTopWidth: 1,
@@ -556,9 +556,12 @@ export default function DashboardScreen() {
                 lineHeight: 12,
                 letterSpacing: 0.72,
                 width: '100%',
+                height: 62,
                 paddingHorizontal: 0,
                 paddingVertical: 0,
                 textAlign: 'center',
+                textAlignVertical: 'center',
+                includeFontPadding: false,
               }}
               autoCapitalize="none"
               autoCorrect={false}
@@ -567,12 +570,13 @@ export default function DashboardScreen() {
           </View>
         </View>
       </View>
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={handleFetchCurrentLocation}
-        className="flex-row items-center justify-center px-5"
-        style={{ minHeight: 36, marginTop: 10, marginBottom: 10 }}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={handleFetchCurrentLocation}
+          className="flex-row items-center justify-center px-5"
+          style={{ minHeight: 36, marginTop: 4, marginBottom: 10 }}
+        >
           <Image source={MARKER_ICON} style={{ width: 17, height: 17 }} contentFit="contain" />
           {locationLoading ? (
             <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
@@ -591,9 +595,8 @@ export default function DashboardScreen() {
               {currentLocationLabel}
             </Text>
           )}
-      </TouchableOpacity>
+        </TouchableOpacity>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {/* Categories Tab Bar */}
         <View>
           <View className="relative">
@@ -609,7 +612,7 @@ export default function DashboardScreen() {
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                paddingTop: 10,
+                paddingTop: 4,
                 paddingBottom: 14,
                 paddingLeft: 0,
                 paddingRight: showHomeFilters ? 64 : 0,
@@ -715,15 +718,17 @@ export default function DashboardScreen() {
                   }
                   activeOpacity={0.85}
                 >
-                  <View className="flex-row items-center justify-between mb-1">
+                  <View className="flex-row items-center justify-between mb-2 ">
                     <Text
-                      className="text-[#1A1A1A] flex-1 pr-3 mb-1.5"
+                      className="flex-1 pr-3 mb-1.5"
                       style={{
-                        fontFamily: 'Helvetica Neue',
-                        fontWeight: '500',
+                        color: '#000000',
+                        fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
+                        fontWeight: '700',
                         fontSize: 14,
                         lineHeight: 14,
                         letterSpacing: 2,
+                        includeFontPadding: false,
                       }}
                       numberOfLines={1}
                     >
@@ -732,13 +737,14 @@ export default function DashboardScreen() {
                     <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
                   </View>
                   <Text
-                    className="text-[#1A1A1A]/60"
                     style={{
-                      fontFamily: 'Helvetica Neue',
-                      fontWeight: '400',
+                      color: '#6E6E6E',
+                      fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
+                      fontWeight: '600',
                       fontSize: 14,
                       lineHeight: 14,
                       letterSpacing: 0,
+                      includeFontPadding: false,
                     }}
                     numberOfLines={1}
                   >

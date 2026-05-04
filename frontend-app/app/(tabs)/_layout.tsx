@@ -220,6 +220,7 @@ export default function TabLayout() {
         name="ai-try-on"
         options={{
           href: null,
+          tabBarStyle: { display: 'none' },
         }}
       />
 

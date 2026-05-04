@@ -222,7 +222,7 @@ export default function LoginScreen() {
                   fontFamily: 'Helvetica Neue',
                   fontSize: 14,
                   fontWeight: '300',
-                  lineHeight: 16,
+                  lineHeight: 18,
                   letterSpacing: 0
                 }}
               >

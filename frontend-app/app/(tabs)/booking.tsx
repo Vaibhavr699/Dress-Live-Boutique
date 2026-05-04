@@ -29,6 +29,12 @@ type Booking = {
   boutique?: { name?: string | null; location?: string | null } | null;
 };
 
+function formatBookingRef(id: number) {
+  const n = Number(id);
+  const safe = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return `DL-BOOK-${String(safe).padStart(6, '0')}`;
+}
+
 export default function BookingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -148,11 +154,32 @@ export default function BookingScreen() {
           <View className="mb-8 opacity-20">
             <Image source={NO_BOOKING_ICON} style={{ width: 64, height: 64 }} />
           </View>
-          <Text className="text-black text-sm font-medium uppercase tracking-[2px] mb-2 text-center">
+          <Text
+            className="mb-2 uppercase"
+            style={{
+              color: '#000000',
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 0.56,
+              textAlign: 'center',
+            }}
+          >
             Sign in required
           </Text>
-          <Text className="text-black/40 text-[10px] text-center font-light leading-4 px-6">
-            Log in with your buyer account to see your bookings and start video calls.
+          <Text
+            className="text-center px-6"
+            style={{
+              color: '#6E6E6E',
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 0,
+            }}
+          >
+            Log in to your account to see your bookings and start video calls.
           </Text>
           <TouchableOpacity onPress={() => router.push('/login')} className="mt-10 border-b border-black pb-1">
             <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Sign in</Text>
@@ -198,7 +225,7 @@ export default function BookingScreen() {
           {bookings.map((booking) => (
             <View key={booking.id} className="px-5 mb-10">
               <Text className="text-black text-[14px] font-[400] uppercase mb-5 tracking-[0px]">
-                {booking.appointment_type === 'video' ? 'VIDEO CALL BOOKED' : 'STORE VISIT BOOKED'} | {booking.id}
+                {booking.appointment_type === 'video' ? 'VIDEO CALL BOOKED' : 'STORE VISIT BOOKED'}
               </Text>
               
               <View className="border border-black rounded-sm" style={{ height: 256, position: 'relative' }}>

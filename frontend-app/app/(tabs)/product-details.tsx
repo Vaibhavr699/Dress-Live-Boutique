@@ -22,6 +22,10 @@ const DUMMY_GALLERY_URLS = [
   'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=1600&q=80',
 ] as const;
 
+function formatPriceWithSpaces(price: number): string {
+  return Math.round(price).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
 export default function ProductDetailsScreen() {
   const router = useRouter();
   const { id, boutiqueId, coverImageUrl } = useLocalSearchParams<{
@@ -133,7 +137,7 @@ export default function ProductDetailsScreen() {
 
   const product = useMemo(() => {
     const normalizedPrice =
-      typeof dress?.price === 'number' ? `${dress.price.toFixed(0)} EUR` : '$1800';
+      typeof dress?.price === 'number' ? `${formatPriceWithSpaces(dress.price)} €` : '1 800 €';
 
     const numericBoutiqueId = boutiqueId ? Number(boutiqueId) : NaN;
 
@@ -384,38 +388,6 @@ export default function ProductDetailsScreen() {
   return (
     <View className="flex-1 bg-white">
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-        <View
-          className="flex-row items-center justify-between px-5"
-          style={{ paddingTop: insets.top + 12, paddingBottom: 10 }}
-        >
-          <TouchableOpacity
-            onPress={handleBack}
-            className="w-8 h-8 items-start justify-center"
-          >
-            <Ionicons name="arrow-back" size={22} color="black" />
-          </TouchableOpacity>
-
-          <View className="flex-row items-center gap-5">
-            <TouchableOpacity
-              onPress={() => router.push('/(tabs)/cart')}
-              className="w-8 h-8 items-center justify-center"
-            >
-              <Image source={CART_BLACK_ICON} style={{ width: 16, height: 15 }} contentFit="contain" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleToggleWishlist}
-              disabled={shortlistLoading}
-              className="w-8 h-8 items-center justify-center"
-            >
-              {isShortlisted ? (
-                <Ionicons name="heart" size={18} color="#FF3B30" />
-              ) : (
-                <Image source={HEART_ICON} style={{ width: 14, height: 13 }} contentFit="contain" />
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* Header Image Section */}
         <View className="relative w-full" style={{ height: productImageHeight }}>
           <ScrollView
@@ -438,6 +410,43 @@ export default function ProductDetailsScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+          <View
+            className="absolute left-0 right-0 flex-row items-center justify-between px-5"
+            style={{ top: insets.top + 12 }}
+          >
+            <TouchableOpacity
+              onPress={handleBack}
+              className="w-10 h-10 items-center justify-center rounded-full"
+              style={{ backgroundColor: 'rgba(255,255,255,0.86)' }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="arrow-back" size={22} color="black" />
+            </TouchableOpacity>
+
+            <View className="flex-row items-center" style={{ gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => router.push('/(tabs)/cart')}
+                className="w-10 h-10 items-center justify-center rounded-full"
+                style={{ backgroundColor: 'rgba(255,255,255,0.86)' }}
+                activeOpacity={0.85}
+              >
+                <Image source={CART_BLACK_ICON} style={{ width: 16, height: 15 }} contentFit="contain" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleToggleWishlist}
+                disabled={shortlistLoading}
+                className="w-10 h-10 items-center justify-center rounded-full"
+                style={{ backgroundColor: 'rgba(255,255,255,0.86)' }}
+                activeOpacity={0.85}
+              >
+                {isShortlisted ? (
+                  <Ionicons name="heart" size={18} color="#FF3B30" />
+                ) : (
+                  <Image source={HEART_ICON} style={{ width: 14, height: 13 }} contentFit="contain" />
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
           <View className="absolute left-0 right-0 bottom-0 h-[3px] bg-white/90">
             <View
               className="absolute left-0 top-0 bottom-0 bg-black"
@@ -483,9 +492,9 @@ export default function ProductDetailsScreen() {
               className="text-black flex-1 pr-4"
               style={{
                 fontFamily: 'Helvetica Neue',
-                fontWeight: '500',
+                fontWeight: '600',
                 fontSize: 24,
-                lineHeight: 24,
+                lineHeight: 22,
                 letterSpacing: 0,
               }}
               numberOfLines={1}
