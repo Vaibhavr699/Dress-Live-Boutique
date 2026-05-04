@@ -5,6 +5,44 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 
+const RESET_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 24,
+  lineHeight: 24,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const RESET_DESCRIPTION_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#1A1A1A',
+};
+
+const INPUT_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0.72,
+  textTransform: 'uppercase' as const,
+  color: 'rgba(26,26,26,0.5)',
+};
+
+const BUTTON_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+  color: '#FFFFFF',
+};
+
 export default function ForgotPasswordScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -20,17 +58,14 @@ export default function ForgotPasswordScreen() {
 
     setLoading(true);
     try {
-      // API call to request reset code (TBD on backend)
-      // For now we'll simulate success
-      setTimeout(() => {
-        setLoading(false);
-        router.push({
-          pathname: '/otp-verify',
-          params: { email }
-        });
-      }, 1000);
+      await api.post('/users/password-reset/otp', { email: email.trim().toLowerCase() });
+      router.push({
+        pathname: '/otp-verify',
+        params: { email: email.trim().toLowerCase() },
+      });
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to send reset link');
+    } finally {
       setLoading(false);
     }
   };
@@ -54,25 +89,13 @@ export default function ForgotPasswordScreen() {
             {/* Title Section */}
             <View className="mb-12">
               <Text 
-                className="text-black mb-2"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 24,
-                  fontWeight: '500',
-                  lineHeight: 32,
-                  letterSpacing: -0.5
-                }}
+                className="mb-2"
+                style={RESET_TITLE_STYLE}
               >
                 Forgot account password
               </Text>
               <Text 
-                className="text-[#1A1A1A] opacity-60"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 14,
-                  fontWeight: '400',
-                  lineHeight: 20
-                }}
+                style={RESET_DESCRIPTION_STYLE}
               >
                 Please enter your email to reset the password.
               </Text>
@@ -81,14 +104,8 @@ export default function ForgotPasswordScreen() {
             {/* Input Field */}
             <View className="mb-12 border-b border-[#E0E0E0] pb-2">
               <Text 
-                className="text-[#1A1A1A]/50 uppercase mb-1"
-                style={{ 
-                  fontFamily: 'Helvetica Neue',
-                  fontSize: 12,
-                  fontWeight: '300',
-                  lineHeight: 12,
-                  letterSpacing: 0.72
-                }}
+                className="mb-1"
+                style={INPUT_HEADING_STYLE}
               >
                 WRITE ACCOUNT EMAIL *
               </Text>
@@ -114,8 +131,7 @@ export default function ForgotPasswordScreen() {
                 <ActivityIndicator color="white" />
               ) : (
                 <Text 
-                  className="text-white text-sm font-bold tracking-[2px] uppercase"
-                  style={{ fontFamily: 'Helvetica Neue' }}
+                  style={BUTTON_TEXT_STYLE}
                 >
                   RESET PASSWORD?
                 </Text>

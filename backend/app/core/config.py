@@ -27,8 +27,24 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = None
     EMAIL_FROM: str = "Dress Live <no-reply@dresslive.app>"
 
+    LIVEKIT_URL: Optional[str] = None
+    LIVEKIT_API_KEY: Optional[str] = None
+    LIVEKIT_API_SECRET: Optional[str] = None
+    # Access token TTL for video rooms (minutes). Fittings often run 30–60+ minutes.
+    LIVEKIT_TOKEN_TTL_MINUTES: int = 90
+
+    RUNPOD_API_KEY: Optional[str] = None
+    RUNPOD_TRYON_ENDPOINT_ID: Optional[str] = None
+    RUNPOD_TRYON_TIMEOUT_SECONDS: int = 90
+
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
+        # Some deployments accidentally set SUPABASE_URL to a Postgres connection string.
+        # Normalize it back to the expected HTTPS Supabase project URL.
+        if self.SUPABASE_URL and isinstance(self.SUPABASE_URL, str) and self.SUPABASE_URL.startswith("postgres"):
+            if self.POSTGRES_SERVER.endswith(".supabase.co"):
+                self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"
+
         if self.SQLALCHEMY_DATABASE_URI:
             if not self.SUPABASE_URL and self.POSTGRES_SERVER.endswith(".supabase.co"):
                 self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"

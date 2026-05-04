@@ -3,7 +3,7 @@ import { useAuthStore } from '../store/useAuthStore';
 
 const API_PATH = '/api/v1';
 const API_PORT = '8000';
-const FALLBACK_API_URL = 'http://192.168.29.254:8000/api/v1';
+const FALLBACK_API_URL = 'http://localhost:8000/api/v1';
 
 function normalizeBaseUrl(url: string) {
   const raw = url.trim();
@@ -56,6 +56,14 @@ function getBaseUrl() {
 }
 
 const BASE_URL = getBaseUrl();
+const IS_WEB_RUNTIME = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+type ApiErrorMeta = Error & {
+  status?: number;
+  detail?: string;
+  endpoint?: string;
+  debugMessage?: string;
+};
 
 async function parseResponseBody(response: Response) {
   const contentType = response.headers.get('content-type') ?? '';
@@ -67,17 +75,162 @@ async function parseResponseBody(response: Response) {
   return response.text();
 }
 
-function createApiError(error: any) {
-  const message = typeof error?.message === 'string' ? error.message : '';
+function parseRawResponseBody(raw: string, contentType: string) {
+  if ((contentType || '').includes('application/json')) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
 
-  // In React Native, fetch failures often hide the actual root cause (e.g. cleartext policy),
-  // so preserve the original message to make debugging possible on device.
-  if (message.includes('Network request failed') || message.includes('Failed to fetch')) {
-    const details = message ? ` (${message})` : '';
-    return new Error(`Cannot reach the API server at ${BASE_URL}.${details}`);
+function extractServerDetail(payload: unknown) {
+  if (typeof payload === 'string') return payload.trim();
+  if (!payload || typeof payload !== 'object') return '';
+
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === 'string') return detail.trim();
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (typeof first === 'string') return first.trim();
+    if (first && typeof first === 'object' && typeof (first as { msg?: unknown }).msg === 'string') {
+      return String((first as { msg?: unknown }).msg).trim();
+    }
   }
 
-  return error;
+  return '';
+}
+
+function attachApiMeta(error: Error, meta: Omit<ApiErrorMeta, keyof Error>) {
+  return Object.assign(error, meta);
+}
+
+function getFriendlyErrorMessage(params: {
+  status?: number;
+  detail?: string;
+  endpoint?: string;
+  fallbackMessage?: string;
+}) {
+  const detail = (params.detail || '').trim();
+  const normalized = detail.toLowerCase();
+  const endpoint = params.endpoint || '';
+  const status = params.status;
+
+  if (endpoint === '/login/access-token') {
+    return 'Incorrect email or password.';
+  }
+  if (normalized.includes('already exists') && normalized.includes('email')) {
+    return 'This email is already in use.';
+  }
+  if (normalized.includes('already exists')) {
+    return 'This information is already in use.';
+  }
+  if (normalized.includes('maximum of 4 dresses')) {
+    return 'You can save up to 4 dresses.';
+  }
+  if (normalized.includes('incorrect verification code')) {
+    return 'The verification code is incorrect.';
+  }
+  if (normalized.includes('invalid email') || normalized.includes('invalid')) {
+    return 'Please check your details and try again.';
+  }
+  if (endpoint.includes('profile-image') || endpoint.includes('header-image') || endpoint.includes('logo-image') || endpoint.includes('interior-image')) {
+    return 'We could not upload the image. Please try again.';
+  }
+
+  if (status === 401) return 'Your session has expired. Please log in again.';
+  if (status === 403) return 'You do not have permission to do this.';
+  if (status === 404) return "We couldn't find what you were looking for.";
+  if (status === 409) return 'This information is already in use.';
+  if (status === 422) return 'Please check your details and try again.';
+  if (status === 400) return 'Please review your details and try again.';
+  if (typeof status === 'number' && status >= 500) {
+    return 'Something went wrong. Please try again.';
+  }
+
+  return params.fallbackMessage || 'Something went wrong. Please try again.';
+}
+
+function createHttpError(status: number, payload: unknown, endpoint: string, fallbackMessage: string) {
+  const detail = extractServerDetail(payload);
+  return attachApiMeta(new Error(getFriendlyErrorMessage({ status, detail, endpoint, fallbackMessage })), {
+    status,
+    detail,
+    endpoint,
+    debugMessage: detail || fallbackMessage,
+  });
+}
+
+function createApiError(error: any) {
+  if (error instanceof Error && ('status' in error || 'detail' in error || 'endpoint' in error)) {
+    return error as ApiErrorMeta;
+  }
+
+  const message = typeof error?.message === 'string' ? error.message : '';
+
+  if (message.includes('Network request failed') || message.includes('Failed to fetch')) {
+    return attachApiMeta(new Error("We couldn't connect right now. Please try again."), {
+      debugMessage: message || 'Network request failed',
+    });
+  }
+
+  return attachApiMeta(new Error('Something went wrong. Please try again.'), {
+    debugMessage: message || String(error ?? 'Unknown error'),
+  });
+}
+
+function logApiError(method: string, endpoint: string, apiError: ApiErrorMeta, rawError: unknown) {
+  console.error(`API ${method} Error [${endpoint}] (${BASE_URL}):`, {
+    publicMessage: apiError.message,
+    status: apiError.status ?? null,
+    detail: apiError.detail ?? null,
+    debugMessage: apiError.debugMessage ?? null,
+    rawError,
+  });
+}
+
+async function postMultipartNative(endpoint: string, formData: FormData, options: any = {}) {
+  const authHeader = api.getHeaders()['Authorization'];
+
+  return await new Promise<any>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE_URL}${endpoint}`);
+
+    const headers = {
+      ...(authHeader ? { Authorization: authHeader } : {}),
+      ...(options.headers || {}),
+    } as Record<string, string>;
+
+    Object.entries(headers).forEach(([key, value]) => {
+      if (typeof value === 'string' && value.trim()) {
+        xhr.setRequestHeader(key, value);
+      }
+    });
+
+    xhr.onload = () => {
+      const contentType = xhr.getResponseHeader('content-type') ?? '';
+      const payload = parseRawResponseBody(xhr.responseText ?? '', contentType);
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+        return;
+      }
+
+      reject(createHttpError(xhr.status, payload, endpoint, 'Upload failed.'));
+    };
+
+    xhr.onerror = () => {
+      reject(new TypeError('Network request failed'));
+    };
+
+    xhr.ontimeout = () => {
+      reject(new TypeError('Network request failed'));
+    };
+
+    xhr.send(formData);
+  });
 }
 
 export const api = {
@@ -104,13 +257,13 @@ export const api = {
       const data = await parseResponseBody(response);
 
       if (!response.ok) {
-        throw new Error((typeof data === 'object' && data?.detail) || 'Something went wrong');
+        throw createHttpError(response.status, data, endpoint, 'Something went wrong. Please try again.');
       }
 
       return data;
     } catch (error: any) {
       const apiError = createApiError(error);
-      console.error(`API POST Error [${endpoint}] (${BASE_URL}):`, apiError);
+      logApiError('POST', endpoint, apiError, error);
       throw apiError;
     }
   },
@@ -129,13 +282,13 @@ export const api = {
       const data = await parseResponseBody(response);
 
       if (!response.ok) {
-        throw new Error((typeof data === 'object' && data?.detail) || 'Something went wrong');
+        throw createHttpError(response.status, data, endpoint, 'Something went wrong. Please try again.');
       }
 
       return data;
     } catch (error: any) {
       const apiError = createApiError(error);
-      console.error(`API PUT Error [${endpoint}] (${BASE_URL}):`, apiError);
+      logApiError('PUT', endpoint, apiError, error);
       throw apiError;
     }
   },
@@ -156,19 +309,23 @@ export const api = {
       const data = await parseResponseBody(response);
 
       if (!response.ok) {
-        throw new Error((typeof data === 'object' && data?.detail) || 'Login failed');
+        throw createHttpError(response.status, data, endpoint, 'Login failed.');
       }
 
       return data;
     } catch (error: any) {
       const apiError = createApiError(error);
-      console.error(`API POST Form Error [${endpoint}] (${BASE_URL}):`, apiError);
+      logApiError('POST Form', endpoint, apiError, error);
       throw apiError;
     }
   },
 
   async postMultipart(endpoint: string, formData: FormData, options: any = {}) {
     try {
+      if (!IS_WEB_RUNTIME && typeof XMLHttpRequest !== 'undefined') {
+        return await postMultipartNative(endpoint, formData, options);
+      }
+
       const authHeader = this.getHeaders()['Authorization'];
       const response = await fetch(`${BASE_URL}${endpoint}`, {
         method: 'POST',
@@ -182,13 +339,13 @@ export const api = {
       const data = await parseResponseBody(response);
 
       if (!response.ok) {
-        throw new Error((typeof data === 'object' && data?.detail) || 'Upload failed');
+        throw createHttpError(response.status, data, endpoint, 'Upload failed.');
       }
 
       return data;
     } catch (error: any) {
       const apiError = createApiError(error);
-      console.error(`API POST Multipart Error [${endpoint}] (${BASE_URL}):`, apiError);
+      logApiError('POST Multipart', endpoint, apiError, error);
       throw apiError;
     }
   },
@@ -206,13 +363,13 @@ export const api = {
       const data = await parseResponseBody(response);
 
       if (!response.ok) {
-        throw new Error((typeof data === 'object' && data?.detail) || 'Failed to fetch data');
+        throw createHttpError(response.status, data, endpoint, 'Failed to load data.');
       }
 
       return data;
     } catch (error: any) {
       const apiError = createApiError(error);
-      console.error(`API GET Error [${endpoint}] (${BASE_URL}):`, apiError);
+      logApiError('GET', endpoint, apiError, error);
       throw apiError;
     }
   },
@@ -231,13 +388,13 @@ export const api = {
       const data = await parseResponseBody(response);
 
       if (!response.ok) {
-        throw new Error((typeof data === 'object' && data?.detail) || 'Failed to delete data');
+        throw createHttpError(response.status, data, endpoint, 'Could not remove the item.');
       }
 
       return data;
     } catch (error: any) {
       const apiError = createApiError(error);
-      console.error(`API DELETE Error [${endpoint}] (${BASE_URL}):`, apiError);
+      logApiError('DELETE', endpoint, apiError, error);
       throw apiError;
     }
   },

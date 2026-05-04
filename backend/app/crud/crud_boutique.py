@@ -19,6 +19,8 @@ class CRUDBoutique:
             location=obj_in.location,
             logo_url=obj_in.logo_url,
             header_image_url=obj_in.header_image_url,
+            interior_image_url=obj_in.interior_image_url,
+            availability_schedule=obj_in.availability_schedule,
             is_visible_to_customers=(
                 True if obj_in.is_visible_to_customers is None else obj_in.is_visible_to_customers
             ),

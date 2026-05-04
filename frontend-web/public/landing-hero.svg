@@ -1,0 +1,28 @@
+<svg width="1600" height="1000" viewBox="0 0 1600 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="1600" height="1000" fill="#111111"/>
+<rect opacity="0.85" x="72" y="72" width="1456" height="856" rx="48" fill="url(#paint0_linear_hero)"/>
+<circle cx="1337" cy="231" r="158" fill="#D9B98A" fill-opacity="0.22"/>
+<circle cx="320" cy="778" r="210" fill="#FFF7EE" fill-opacity="0.08"/>
+<path d="M1098 227C1098 178.399 1137.4 139 1186 139H1326C1374.6 139 1414 178.399 1414 227V756H1098V227Z" fill="#1E1E1E"/>
+<rect x="1150" y="215" width="213" height="480" rx="28" fill="#F5EDE2"/>
+<path d="M1257.56 295C1309.17 295 1351 336.83 1351 388.44V665H1164V388.44C1164 336.83 1205.83 295 1257.56 295Z" fill="#D7B88A"/>
+<path d="M1256.5 327C1289.36 327 1316 353.644 1316 386.5V665H1197V386.5C1197 353.644 1223.64 327 1256.5 327Z" fill="#FFF9F1"/>
+<path d="M327 275C327 222.533 369.533 180 422 180H747V756H422C369.533 756 327 713.467 327 661V275Z" fill="#FFF9F1" fill-opacity="0.88"/>
+<path d="M392 266H690V670H392V266Z" fill="#EFE4D4"/>
+<path d="M521 316C579.542 316 627 363.458 627 422V670H415V422C415 363.458 462.458 316 521 316Z" fill="#111111"/>
+<path d="M541 316C599.542 316 647 363.458 647 422V670H435V422C435 363.458 482.458 316 541 316Z" fill="#CBA67A"/>
+<path d="M554 337C597.63 337 633 372.37 633 416V670H475V416C475 372.37 510.37 337 554 337Z" fill="#F9F3EA"/>
+<rect x="811" y="251" width="221" height="93" rx="24" fill="#FFF9F1" fill-opacity="0.94"/>
+<rect x="844" y="286" width="104" height="8" rx="4" fill="#111111" fill-opacity="0.18"/>
+<rect x="844" y="307" width="147" height="8" rx="4" fill="#111111" fill-opacity="0.12"/>
+<rect x="811" y="375" width="184" height="242" rx="32" fill="#111111" fill-opacity="0.42"/>
+<path d="M856 433C856 390.026 890.87 355 933.844 355C976.818 355 1011.69 390.026 1011.69 433V617H856V433Z" fill="#FFF9F1" fill-opacity="0.95"/>
+<path d="M884 453C884 425.386 906.386 403 934 403C961.614 403 984 425.386 984 453V617H884V453Z" fill="#D8B98A"/>
+<defs>
+<linearGradient id="paint0_linear_hero" x1="183" y1="72" x2="1400" y2="928" gradientUnits="userSpaceOnUse">
+<stop stop-color="#171717"/>
+<stop offset="0.55" stop-color="#262626"/>
+<stop offset="1" stop-color="#131313"/>
+</linearGradient>
+</defs>
+</svg>

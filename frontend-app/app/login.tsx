@@ -88,13 +88,6 @@ export default function LoginScreen() {
     <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <SafeAreaView className="flex-1 px-8 pb-12">
-          {/* Back Button */}
-          <View className="flex-row justify-between items-center mb-8">
-            <TouchableOpacity onPress={() => router.back()} className="-ml-2">
-              <Ionicons name="chevron-back" size={24} color="#1A1A1A" />
-            </TouchableOpacity>
-          </View>
-
           {/* Dress Live Title */}
           <Text 
             className="text-black text-center mb-20"
@@ -102,7 +95,7 @@ export default function LoginScreen() {
               fontFamily: 'Helvetica Neue',
               fontSize: 28,
               fontWeight: '400',
-              lineHeight: 28,
+              lineHeight: 30,
               letterSpacing: 0
             }}
           >
@@ -111,13 +104,13 @@ export default function LoginScreen() {
 
           {/* Section Header */}
           <Text 
-            className="text-[#1A1A1A] uppercase mb-12 opacity-70"
+            className="text-[#232323] uppercase mb-12 opacity-70"
             style={{ 
               fontFamily: 'Helvetica Neue',
-              fontSize: 12,
-              fontWeight: '300',
-              lineHeight: 12,
-              letterSpacing: 0.72
+              fontSize: 16,
+              fontWeight: '400',
+              lineHeight: 24,
+              letterSpacing: 0
             }}
           >
             Add Your Log In Info
@@ -132,7 +125,7 @@ export default function LoginScreen() {
                   fontFamily: 'Helvetica Neue',
                   fontSize: 12,
                   fontWeight: '300',
-                  lineHeight: 12,
+                  lineHeight: 14,
                   letterSpacing: 0.72
                 }}
               >
@@ -154,7 +147,7 @@ export default function LoginScreen() {
                   fontFamily: 'Helvetica Neue',
                   fontSize: 12,
                   fontWeight: '300',
-                  lineHeight: 12,
+                  lineHeight: 14,
                   letterSpacing: 0.72
                 }}
               >
@@ -178,7 +171,8 @@ export default function LoginScreen() {
           {/* Forgot Password Link */}
           <TouchableOpacity 
             onPress={() => router.push('/forgot-password')}
-            className="items-end mb-16"
+            className="items-end mb-14"
+            style={{ marginTop: -2 }}
           >
             <Text 
               className="text-[#1A1A1A] opacity-60"
@@ -186,7 +180,9 @@ export default function LoginScreen() {
                 fontFamily: 'Helvetica Neue',
                 fontSize: 12,
                 fontWeight: '300',
-                lineHeight: 12
+              lineHeight: 14,
+                letterSpacing: 0,
+              paddingBottom: 1
               }}
             >
               Forgot your password?
@@ -198,7 +194,15 @@ export default function LoginScreen() {
             activeOpacity={0.9}
             onPress={handleLogin}
             disabled={loading}
-            className="bg-[#1A1A1A] py-6 items-center mb-10"
+            className="bg-[#1A1A1A] items-center justify-center mb-10"
+            style={{
+              width: '100%',
+              height: 48,
+              paddingTop: 4,
+              paddingRight: 24,
+              paddingBottom: 4,
+              paddingLeft: 24,
+            }}
           >
             {loading ? (
               <ActivityIndicator color="white" />
@@ -225,12 +229,12 @@ export default function LoginScreen() {
             </Text>
             <TouchableOpacity onPress={() => router.replace('/signup')}>
               <Text 
-                className="text-[#1A1A1A] font-bold"
+                className="text-[#1A1A1A]"
                 style={{ 
                   fontFamily: 'Helvetica Neue',
                   fontSize: 14,
                   fontWeight: '300',
-                  lineHeight: 14,
+                  lineHeight: 18,
                   letterSpacing: 0
                 }}
               >

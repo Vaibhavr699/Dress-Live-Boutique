@@ -3,6 +3,7 @@ import React from 'react';
 import { View, StyleSheet, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { useCartStore } from '@/store/useCartStore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const HOME_ICON = require('../../assets/svg/Home.svg');
 const CART_ICON = require('../../assets/svg/Cart.svg');
@@ -68,9 +69,11 @@ const CustomLabel = ({ title, focused }: { title: string, focused: boolean }) =>
 );
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
   const cartCount = useCartStore((state) =>
     state.items.reduce((total, item) => total + item.quantity, 0)
   );
+  const bottomInset = Math.max(insets.bottom, 8);
 
   return (
     <Tabs
@@ -79,9 +82,9 @@ export default function TabLayout() {
         tabBarInactiveTintColor: '#1A1A1A50',
         headerShown: false,
         tabBarStyle: {
-          height: 85,
-          paddingBottom: 25,
-          paddingTop: 12,
+          height: 62 + bottomInset,
+          paddingBottom: bottomInset,
+          paddingTop: 8,
           backgroundColor: '#FFF',
           borderTopWidth: 1,
           borderTopColor: '#F0F0F0',
@@ -89,6 +92,7 @@ export default function TabLayout() {
         tabBarItemStyle: {
           justifyContent: 'center',
           alignItems: 'center',
+          paddingVertical: 0,
         }
       }}>
       <Tabs.Screen
@@ -216,6 +220,7 @@ export default function TabLayout() {
         name="ai-try-on"
         options={{
           href: null,
+          tabBarStyle: { display: 'none' },
         }}
       />
 

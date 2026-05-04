@@ -1,103 +1,179 @@
 import React, { useMemo, useState } from 'react';
-import {
-  View,
-  Text,
-  SafeAreaView,
-  TouchableOpacity,
-  TextInput,
-  Modal,
-  Pressable,
-} from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuthStore } from '@shared/store/useAuthStore';
+import { api } from '@shared/api/api';
+import { Image } from 'expo-image';
+
+const ERROR_ICON = require('../assets/svg/diamond-exclamation.svg');
 
 export default function SecurityPasswordVerifyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ email?: string }>();
-  const email = params.email || 'example@gmail.com';
-
+  const { newPassword, email } = useLocalSearchParams<{ newPassword?: string; email?: string }>();
+  const { setUser } = useAuthStore();
   const [code, setCode] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-  const [showWrongCodeModal, setShowWrongCodeModal] = useState(false);
+  const [errorVisible, setErrorVisible] = useState(false);
+  const [fieldError, setFieldError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const showRequiredError = useMemo(() => submitted && !code.trim(), [submitted, code]);
+  const normalizedCode = useMemo(() => (code || '').replace(/\D/g, '').trim(), [code]);
 
-  const handleVerify = () => {
-    setSubmitted(true);
-
-    if (!code.trim()) {
+  const handleVerify = async () => {
+    if (!normalizedCode) {
+      setFieldError('This field is mandatory');
+      return;
+    }
+    if (normalizedCode.length !== 4) {
+      setFieldError('Enter the 4-digit code.');
       return;
     }
 
-    if (code.trim() !== '9090') {
-      setShowWrongCodeModal(true);
+    if (!newPassword || newPassword.trim().length < 8) {
+      setErrorVisible(true);
       return;
     }
 
-    router.replace('/(tabs)/profile');
+    setLoading(true);
+    try {
+      const updatedUser = await api.put('/users/me/password/otp', { code: normalizedCode, new_password: newPassword });
+      setUser(updatedUser);
+      router.replace('/(tabs)/profile');
+    } catch (error) {
+      setFieldError(error instanceof Error ? error.message : 'Could not update your password.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    try {
+      await api.post('/users/me/password/otp', { email: typeof email === 'string' ? email : undefined });
+      Alert.alert('Verification Code', 'A new code has been sent to your email.');
+    } catch (error) {
+      Alert.alert('OTP Failed', error instanceof Error ? error.message : 'Could not resend verification code.');
+    }
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
-        <TouchableOpacity onPress={() => router.back()} className="mb-10">
-          <Ionicons name="arrow-back" size={18} color="black" />
+    <View className="flex-1 bg-white">
+      <View className="px-6 flex-row items-center pb-4" style={{ paddingTop: insets.top + 10 }}>
+        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+          <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
+      </View>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-4">
+      <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
+        <Text
+          className="text-black mb-4"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
           Confirm New Password
         </Text>
-        <Text className="text-[11px] text-black/55 leading-6 mb-10">
-          Please enter the code sent to{'\n'}
-          <Text className="text-black">{email}</Text>
+        <Text
+          className="text-black mb-10"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '300',
+            fontSize: 14,
+            lineHeight: 18,
+            letterSpacing: 0,
+            opacity: 0.6,
+          }}
+        >
+          Please enter the 4-digit code sent to {typeof email === 'string' && email.length > 0 ? email : 'your email'}.
         </Text>
 
-        <View>
-          <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">
+        <View className="mb-6">
+          <Text
+            className="text-black/40 uppercase mb-2"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 0.72,
+            }}
+          >
             Verification Code
           </Text>
           <TextInput
             value={code}
-            onChangeText={setCode}
+            onChangeText={(t) => {
+              setCode(t);
+              setFieldError('');
+            }}
+            placeholder="Enter 4-digit code"
+            className="border-b text-black"
+            style={{
+              paddingVertical: 0,
+              height: 28,
+              borderBottomColor: fieldError ? '#FF3B30' : '#F0F0F0',
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 0.84,
+            }}
             keyboardType="number-pad"
-            className="pb-2 text-[12px] text-black"
-            style={{ borderBottomWidth: 1, borderBottomColor: showRequiredError ? '#FF3B30' : '#ECECEC' }}
           />
-          {showRequiredError ? (
+          {fieldError ? (
             <View className="flex-row items-center mt-2">
-              <Ionicons name="alert-circle-outline" size={14} color="#FF3B30" />
-              <Text className="text-[10px] text-[#FF3B30] ml-1">This field is mandatory</Text>
+              <Image source={ERROR_ICON} style={{ width: 12, height: 12, marginRight: 6 }} contentFit="contain" />
+              <Text className="text-[#FF3B30] text-[10px]">{fieldError}</Text>
             </View>
           ) : null}
         </View>
 
+        <TouchableOpacity onPress={handleResend} disabled={loading} className="mb-6">
+          <Text
+            className="text-black underline"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 11,
+              lineHeight: 11,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
+            Resend code
+          </Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={handleVerify}
-          className="bg-black py-4 items-center justify-center mt-12"
+          disabled={loading}
+          className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
+          style={{ marginTop: 240 }}
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">Verify</Text>
+          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">{loading ? 'Updating...' : 'Verify'}</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
 
-      <Modal visible={showWrongCodeModal} transparent animationType="fade" onRequestClose={() => setShowWrongCodeModal(false)}>
-        <Pressable className="flex-1 bg-black/25 justify-center px-8" onPress={() => setShowWrongCodeModal(false)}>
-          <Pressable className="border border-[#1A1A1A] bg-white px-8 py-8" onPress={() => {}}>
-            <Text className="text-[12px] text-black/75 leading-6 mb-8">
-              Something seems to have gone wrong.{'\n'}Please try again later.
+      <Modal visible={errorVisible} transparent animationType="fade">
+        <View className="flex-1 bg-black/50 items-center justify-center px-10">
+          <View className="bg-white w-full p-10 rounded-sm items-center">
+            <Text className="text-black/70 text-[12px] text-center leading-5 mb-10 px-4">
+              Something seems to have gone wrong. Please try again later.
             </Text>
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => setShowWrongCodeModal(false)}
-              className="border border-[#1A1A1A] py-4 items-center justify-center"
-            >
-              <Text className="text-[11px] uppercase tracking-[1px] text-black">Accept</Text>
+
+            <TouchableOpacity onPress={() => setErrorVisible(false)} className="w-full border border-black/10 py-4 items-center">
+              <Text className="text-black text-[12px] font-bold uppercase tracking-[1px]">Accept</Text>
             </TouchableOpacity>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }

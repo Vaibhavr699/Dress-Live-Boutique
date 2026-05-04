@@ -6,6 +6,9 @@
   "build": {
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique.onrender.com"
+      },
       "android": {
         "buildType": "apk"
       },
@@ -14,7 +17,10 @@
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique.onrender.com"
+      }
     }
   }
 }

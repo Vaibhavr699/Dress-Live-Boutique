@@ -4,6 +4,35 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
+const TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '200' as const,
+  fontSize: 16,
+  lineHeight: 16,
+  letterSpacing: 2,
+  textTransform: 'uppercase' as const,
+  color: '#000000',
+};
+
+const DESCRIPTION_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '200' as const,
+  fontSize: 14,
+  lineHeight: 24,
+  letterSpacing: 0,
+  color: '#6E6E6E',
+};
+
+const INPUT_HEADER_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0.72, // ~6% of 12
+  textTransform: 'uppercase' as const,
+  color: '#6E6E6E',
+};
+
 function AddressField({
   label,
   value,
@@ -15,7 +44,7 @@ function AddressField({
 }) {
   return (
     <View className="mb-5">
-      <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">{label}</Text>
+      <Text style={[INPUT_HEADER_STYLE, { marginBottom: 8 }]}>{label}</Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
@@ -41,8 +70,8 @@ export default function EditAddressScreen() {
           <Ionicons name="arrow-back" size={18} color="black" />
         </TouchableOpacity>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-8">Edit Address</Text>
-        <Text className="text-[11px] text-black/45 leading-8 mb-8">
+        <Text style={[TITLE_STYLE, { marginBottom: 32 }]}>Edit Address</Text>
+        <Text style={[DESCRIPTION_STYLE, { marginBottom: 32 }]}>
           To complete your order, you must first enter your account information. You can update it at any time from your account.
         </Text>
 

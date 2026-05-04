@@ -1,122 +1,101 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useEffect } from 'react';
+import { View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@shared/store/useAuthStore';
-import { theme } from '@shared/theme/theme';
 
-const { width } = Dimensions.get('window');
+const PANEL_1 = require('../assets/images/boutique-hero-bg.png');
+const PANEL_2 = require('../assets/images/boutique-experience.png');
+const PANEL_3 = require('../assets/images/avatar.png');
 
 export default function BoutiqueLandingPage() {
-  const [isSplashVisible, setIsSplashVisible] = useState(true);
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { isAuthenticated } = useAuthStore();
+  const { width, height } = useWindowDimensions();
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsSplashVisible(false);
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
+    if (isAuthenticated) {
+      router.replace('/(tabs)');
+    }
+  }, [isAuthenticated, router]);
 
-  if (isSplashVisible) {
-    return (
-      <View className="flex-1 bg-white items-center justify-center px-8">
-        <Text 
-          className="text-black text-center uppercase"
-          style={{ 
-            fontFamily: 'PlayfairDisplay-SemiBold',
-            fontSize: width * 0.12,
-            letterSpacing: -1
-          }}
-        >
-          Dress Live
-        </Text>
-        <Text className="text-black/40 text-xs tracking-[4px] uppercase mt-2 font-medium">
-          Partner Portal
-        </Text>
-      </View>
-    );
-  }
+  // Baseline design: card 390x200 with ~20px side padding.
+  const horizontalPadding = 20;
+  const cardWidth = Math.max(0, width - horizontalPadding * 2);
+  const widthScale = cardWidth / 390;
+  const idealCardHeight = 200 * widthScale;
+
+  const topPadding = insets.top + 20;
+  const bottomPadding = insets.bottom + 20;
+  const availableHeight = height - topPadding - bottomPadding;
+
+  const brandBlockHeight = 34 + 10;
+  const buttonsBlockHeight = 52 + 16 + 52;
+  const outerGaps = 18 + 16;
+  const remainingForCards = Math.max(0, availableHeight - brandBlockHeight - buttonsBlockHeight - outerGaps);
+  const maxCardHeightToFitAll = remainingForCards / 3;
+
+  const cardHeight = Math.max(96, Math.min(idealCardHeight, maxCardHeightToFitAll));
 
   return (
-    <View className="flex-1 bg-white">
-      <ScrollView 
-        showsVerticalScrollIndicator={false} 
-        contentContainerStyle={{ flexGrow: 1, paddingTop: insets.top + 20, paddingBottom: insets.bottom + 40 }}
-      >
-        {/* Hero Section */}
-        <View className="px-6 mb-12">
-            <Text 
-                className="text-black text-4xl mb-4"
-                style={{ fontFamily: 'PlayfairDisplay-SemiBold' }}
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        paddingTop: topPadding,
+        paddingBottom: bottomPadding,
+        paddingHorizontal: horizontalPadding,
+      }}
+    >
+      <View style={{ flex: 1 }}>
+        {/* Cards / panels (non-scroll) */}
+        <View style={{ gap: 12 }}>
+        <Image source={PANEL_1} style={{ width: cardWidth, height: cardHeight, borderRadius: 2 }} contentFit="cover" />
+        <Image source={PANEL_2} style={{ width: cardWidth, height: cardHeight, borderRadius: 2 }} contentFit="cover" />
+        <View style={{ width: cardWidth, height: cardHeight, borderRadius: 2, overflow: 'hidden', backgroundColor: '#f3f4f6' }}>
+          <Image source={PANEL_3} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+          <View style={{ position: 'absolute', top: 14, left: 14, right: 14, alignItems: 'center' }}>
+            <Text
+              style={{
+                color: '#000000',
+                fontFamily: 'PlayfairDisplay-SemiBold',
+                fontSize: Math.min(34, Math.max(24, cardWidth * 0.09)),
+                lineHeight: Math.min(34, Math.max(24, cardWidth * 0.09)),
+                textAlign: 'center',
+              }}
+              numberOfLines={1}
             >
-                Empower Your{"\n"}Boutique with AI
+              Dress Live
             </Text>
-            <Text className="text-black/50 text-sm leading-6 pr-12">
-                Manage your catalog, host live video fittings, and connect with brides worldwide using our state-of-the-art AI Try-On technology.
-            </Text>
-        </View>
-
-        {/* Action Image */}
-        <View className="px-6 mb-12">
-          <View className="w-full aspect-[4/3] rounded-3xl overflow-hidden bg-gray-100 shadow-xl">
-            <Image 
-                source={require('../assets/images/Dashboard image 1.png')} 
-                style={{ width: '100%', height: '100%' }}
-                contentFit="cover"
-            />
           </View>
         </View>
-
-        {/* Features Preview */}
-        <View className="px-6 mb-12">
-            <View className="flex-row items-center mb-8">
-                <View className="w-10 h-10 rounded-full bg-black items-center justify-center mr-4">
-                    <Text className="text-white text-xs">01</Text>
-                </View>
-                <View className="flex-1">
-                    <Text className="text-black font-bold text-sm tracking-wider uppercase mb-1">Live Hosting</Text>
-                    <Text className="text-black/40 text-xs">Switch dresses live during video calls</Text>
-                </View>
-            </View>
-
-            <View className="flex-row items-center">
-                <View className="w-10 h-10 rounded-full bg-black items-center justify-center mr-4">
-                    <Text className="text-white text-xs">02</Text>
-                </View>
-                <View className="flex-1">
-                    <Text className="text-black font-bold text-sm tracking-wider uppercase mb-1">Catalog Management</Text>
-                    <Text className="text-black/40 text-xs">Upload photos to activate AI Try-On</Text>
-                </View>
-            </View>
         </View>
 
-        {/* Buttons */}
-        <View className="px-6 gap-4">
-          <TouchableOpacity 
+        {/* Center content */}
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingTop: 8 }}>
+          <TouchableOpacity
             activeOpacity={0.9}
-            onPress={() => router.push(isAuthenticated ? '/(tabs)' : '/login')}
-            className="w-full bg-black py-5 rounded-sm items-center justify-center"
+            onPress={() => router.push('/signup')}
+            style={{ width: '100%', backgroundColor: '#000000', paddingVertical: 18, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Text className="text-white text-[12px] font-bold tracking-[3px] uppercase">
-                {isAuthenticated ? "Enter Dashboard" : "Partner Login"}
+            <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700', letterSpacing: 3, textTransform: 'uppercase' }}>
+              Get Started
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             activeOpacity={0.7}
-            onPress={() => {}}
-            className="w-full border border-black py-5 rounded-sm items-center justify-center"
+            onPress={() => router.push('/login')}
+            style={{ width: '100%', borderWidth: 1, borderColor: '#000000', paddingVertical: 18, alignItems: 'center', justifyContent: 'center' }}
           >
-            <Text className="text-black text-[12px] font-bold tracking-[3px] uppercase">
-                Register Boutique
+            <Text style={{ color: '#000000', fontSize: 12, fontWeight: '700', letterSpacing: 3, textTransform: 'uppercase', textAlign: 'center' }}>
+              You have already account? Log In
             </Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      </View>
     </View>
   );
 }

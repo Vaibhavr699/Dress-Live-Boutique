@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert, GestureResponderEvent, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -9,24 +9,55 @@ import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 
+const STAR_ICON = require('@/assets/svg/Star.svg');
+const BOOKING_SMALL_ICON = require('@/assets/svg/booking_small.svg');
+const CART_SMALL_ICON = require('@/assets/svg/cart small.svg');
+const CART_BLACK_ICON = require('@/assets/svg/Cart Black.svg');
+const HEART_ICON = require('@/assets/svg/Heart.svg');
+
+const DUMMY_GALLERY_URLS = [
+  'https://images.unsplash.com/photo-1520962917969-0f8a4c6c4c57?auto=format&fit=crop&w=1600&q=80',
+  'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1600&q=80',
+  'https://images.unsplash.com/photo-1526045478516-99145907023c?auto=format&fit=crop&w=1600&q=80',
+  'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=1600&q=80',
+] as const;
+
+function formatPriceWithSpaces(price: number): string {
+  return Math.round(price).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
 export default function ProductDetailsScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, boutiqueId, coverImageUrl } = useLocalSearchParams<{
+    id?: string;
+    boutiqueId?: string;
+    coverImageUrl?: string;
+  }>();
   const insets = useSafeAreaInsets();
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const guestDressIds = useShortlistStore((state) => state.dressIds);
-  const toggleGuest = useShortlistStore((state) => state.toggle);
+  const { width } = useWindowDimensions();
+  const isAuthenticated = useAuthStore((state: any) => state.isAuthenticated);
+  const toggleGuest = useShortlistStore((state: any) => state.toggle);
   const [optionModalVisible, setOptionModalVisible] = useState(false);
+  const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [dress, setDress] = useState<any>(null);
+  const [relatedImageUrls, setRelatedImageUrls] = useState<string[]>([]);
   const [isShortlisted, setIsShortlisted] = useState(false);
   const [shortlistLoading, setShortlistLoading] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [productImageIndex, setProductImageIndex] = useState(0);
+  const [viewerZoom, setViewerZoom] = useState(1);
+  const [viewerOffset, setViewerOffset] = useState({ x: 0, y: 0 });
+  const pinchStateRef = useRef<{ initialDistance: number; initialZoom: number } | null>(null);
+  const panStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const lastTapAtRef = useRef(0);
 
   const { addItem } = useCartStore();
 
   useEffect(() => {
     if (!id) {
       setDress(null);
+      setRelatedImageUrls([]);
       setIsShortlisted(false);
       setLoading(false);
       return;
@@ -55,7 +86,7 @@ export default function ProductDetailsScreen() {
               : false
           );
         } else {
-          setIsShortlisted(guestDressIds.includes(Number(id)));
+          setIsShortlisted(useShortlistStore.getState().dressIds.includes(Number(id)));
         }
       } catch (error) {
         if (isActive) {
@@ -73,20 +104,87 @@ export default function ProductDetailsScreen() {
     return () => {
       isActive = false;
     };
-  }, [guestDressIds, id, isAuthenticated]);
+  }, [id, isAuthenticated]);
+
+  useEffect(() => {
+    const numericBoutiqueId = boutiqueId ? Number(boutiqueId) : NaN;
+    if (!Number.isFinite(numericBoutiqueId)) {
+      setRelatedImageUrls([]);
+      return;
+    }
+
+    let alive = true;
+    (async () => {
+      try {
+        const data = await api.get(`/dresses/?boutique_id=${numericBoutiqueId}&limit=24`);
+        if (!alive) return;
+        const currentUrl = typeof dress?.image_url === 'string' ? dress.image_url.trim() : '';
+        const urls = (Array.isArray(data) ? data : [])
+          .map((d: any) => (typeof d?.image_url === 'string' ? d.image_url.trim() : ''))
+          .filter(Boolean)
+          .filter((url: string) => /^https?:\/\//i.test(url))
+          .filter((url: string) => url !== currentUrl);
+        setRelatedImageUrls(Array.from(new Set(urls)).slice(0, 4));
+      } catch {
+        if (alive) setRelatedImageUrls([]);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [boutiqueId, dress?.image_url]);
 
   const product = useMemo(() => {
     const normalizedPrice =
-      typeof dress?.price === 'number' ? `${dress.price.toFixed(0)} EUR` : '$1800';
+      typeof dress?.price === 'number' ? `${formatPriceWithSpaces(dress.price)} €` : '1 800 €';
+
+    const numericBoutiqueId = boutiqueId ? Number(boutiqueId) : NaN;
 
     return {
       id: String(dress?.id ?? 'p-1'),
       name: dress?.name ?? 'Elegant Satin A-Line',
       price: normalizedPrice,
       imageUrl: dress?.image_url ?? null,
+      boutiqueId: Number.isFinite(numericBoutiqueId) ? numericBoutiqueId : null,
       selected: true,
     };
-  }, [dress]);
+  }, [dress, boutiqueId]);
+
+  const headerImageUrl = useMemo(() => {
+    const img = (dress?.image_url || '').trim();
+    if (img) return img;
+    const cover = (typeof coverImageUrl === 'string' ? coverImageUrl : '').trim();
+    return cover || null;
+  }, [dress?.image_url, coverImageUrl]);
+
+  const galleryImages = useMemo(() => {
+    const items: Array<{ key: string; source: any }> = [];
+
+    const primary = (headerImageUrl || '').trim();
+    if (/^https?:\/\//i.test(primary)) {
+      items.push({ key: 'primary', source: { uri: primary } });
+    }
+
+    relatedImageUrls.forEach((url, idx) => {
+      items.push({ key: `related-${idx}`, source: { uri: url } });
+    });
+
+    // Ensure the carousel can always scroll (avoid blank pages).
+    if (items.length < 2) {
+      const used = new Set<string>(items.map((i) => (i?.source?.uri as string | undefined) || '').filter(Boolean));
+      DUMMY_GALLERY_URLS.forEach((url, idx) => {
+        if (used.has(url)) return;
+        items.push({ key: `dummy-${idx}`, source: { uri: url } });
+      });
+    }
+
+    if (items.length === 0) {
+      items.push({ key: 'primary-fallback', source: require('@/assets/images/icon.png') });
+    }
+
+    return items;
+  }, [headerImageUrl, relatedImageUrls]);
 
   const productInfo = [
     { label: 'Dress Price:', value: product.price },
@@ -95,6 +193,9 @@ export default function ProductDetailsScreen() {
     { label: 'Dress Status:', value: dress?.is_ai_enabled === false ? 'Preview Only' : 'Available' },
   ];
 
+  const productImageWidth = width;
+  const productImageHeight = (productImageWidth * 347) / 430;
+
 
   const handleToggleWishlist = async () => {
     if (!dress?.id) {
@@ -102,25 +203,27 @@ export default function ProductDetailsScreen() {
     }
 
     if (!isAuthenticated) {
+      const wasShortlisted = isShortlisted;
       const result = toggleGuest(Number(dress.id));
       if (!result.ok) {
         Alert.alert('Selection', 'You can select a maximum of 4 dresses.');
         return;
       }
-      setIsShortlisted((prev) => !prev);
+      setIsShortlisted(!wasShortlisted);
       return;
     }
 
+    const wasShortlisted = isShortlisted;
+    setIsShortlisted(!wasShortlisted);
     setShortlistLoading(true);
     try {
-      if (isShortlisted) {
+      if (wasShortlisted) {
         await api.delete(`/shortlists/me/${dress.id}`);
-        setIsShortlisted(false);
       } else {
         await api.post('/shortlists/me', { dress_id: dress.id });
-        setIsShortlisted(true);
       }
     } catch (error) {
+      setIsShortlisted(wasShortlisted);
       Alert.alert('Selection', error instanceof Error ? error.message : 'Could not update selection.');
     } finally {
       setShortlistLoading(false);
@@ -136,141 +239,380 @@ export default function ProductDetailsScreen() {
     );
   };
 
+  const handleBack = () => {
+    if (boutiqueId) {
+      router.replace({
+        pathname: '/(tabs)/boutique-details',
+        params: {
+          boutiqueId,
+          coverImageUrl: typeof coverImageUrl === 'string' ? coverImageUrl : undefined,
+        },
+      });
+      return;
+    }
+
+    router.back();
+  };
+
+  const openImageViewer = (index = 0) => {
+    setViewerIndex(index);
+    setViewerZoom(1);
+    setImageViewerVisible(true);
+  };
+
+  const closeImageViewer = () => {
+    setImageViewerVisible(false);
+    setViewerZoom(1);
+    setViewerOffset({ x: 0, y: 0 });
+    setViewerIndex(0);
+  };
+
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+  const getTouchDistance = (touches: readonly { pageX: number; pageY: number }[]) => {
+    if (touches.length < 2) return 0;
+    const [first, second] = touches;
+    const dx = second.pageX - first.pageX;
+    const dy = second.pageY - first.pageY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const resetViewerTransform = () => {
+    setViewerZoom(1);
+    setViewerOffset({ x: 0, y: 0 });
+    pinchStateRef.current = null;
+    panStateRef.current = null;
+  };
+
+  const handleViewerTouchStart = (event: GestureResponderEvent) => {
+    const touches = event.nativeEvent.touches;
+
+    if (touches.length === 2) {
+      pinchStateRef.current = {
+        initialDistance: getTouchDistance(touches),
+        initialZoom: viewerZoom,
+      };
+      panStateRef.current = null;
+      return;
+    }
+
+    if (touches.length !== 1) return;
+
+    const now = Date.now();
+    if (now - lastTapAtRef.current < 260) {
+      if (viewerZoom > 1.05) {
+        resetViewerTransform();
+      } else {
+        setViewerZoom(2);
+        setViewerOffset({ x: 0, y: 0 });
+      }
+      lastTapAtRef.current = 0;
+      return;
+    }
+
+    lastTapAtRef.current = now;
+
+    if (viewerZoom > 1.05) {
+      panStateRef.current = {
+        startX: touches[0].pageX,
+        startY: touches[0].pageY,
+        originX: viewerOffset.x,
+        originY: viewerOffset.y,
+      };
+    }
+  };
+
+  const handleViewerTouchMove = (event: GestureResponderEvent) => {
+    const touches = event.nativeEvent.touches;
+
+    if (touches.length === 2 && pinchStateRef.current) {
+      const distance = getTouchDistance(touches);
+      const baseDistance = pinchStateRef.current.initialDistance || distance || 1;
+      const nextZoom = clamp((distance / baseDistance) * pinchStateRef.current.initialZoom, 1, 3);
+      setViewerZoom(nextZoom);
+      if (nextZoom <= 1.05) {
+        setViewerOffset({ x: 0, y: 0 });
+      }
+      return;
+    }
+
+    if (touches.length === 1 && viewerZoom > 1.05 && panStateRef.current) {
+      const dx = touches[0].pageX - panStateRef.current.startX;
+      const dy = touches[0].pageY - panStateRef.current.startY;
+      const maxOffset = (viewerZoom - 1) * 140;
+      setViewerOffset({
+        x: clamp(panStateRef.current.originX + dx, -maxOffset, maxOffset),
+        y: clamp(panStateRef.current.originY + dy, -maxOffset, maxOffset),
+      });
+    }
+  };
+
+  const handleViewerTouchEnd = () => {
+    pinchStateRef.current = null;
+    panStateRef.current = null;
+    if (viewerZoom <= 1.05) {
+      setViewerZoom(1);
+      setViewerOffset({ x: 0, y: 0 });
+    }
+  };
+
+  if (loading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-white" style={{ paddingTop: insets.top }}>
+        <ActivityIndicator color="#1A1A1A" />
+        <Text className="text-[#1A1A1A]/50 text-[12px] mt-4" style={{ fontFamily: 'Helvetica Neue' }}>
+          Loading dress...
+        </Text>
+      </View>
+    );
+  }
+
+  if (!dress) {
+    return (
+      <View className="flex-1 bg-white" style={{ paddingTop: insets.top }}>
+        <View className="px-6 pt-3">
+          <TouchableOpacity onPress={handleBack} className="w-10 h-10 items-start justify-center">
+            <Ionicons name="arrow-back" size={22} color="black" />
+          </TouchableOpacity>
+        </View>
+        <View className="flex-1 items-center justify-center px-8">
+          <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">Dress unavailable</Text>
+          <Text className="text-[#1A1A1A]/45 text-[12px] text-center leading-5">
+            We could not load this dress right now. Please try again.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-white">
-      {loading ? (
-        <View className="flex-1 items-center justify-center bg-white">
-          <ActivityIndicator color="#1A1A1A" />
-        </View>
-      ) : (
-        <>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Header Image Section */}
-        <View className="relative w-full aspect-[1/1.1]">
-          <Image 
-            key={product.id}
-            source={product.imageUrl ? { uri: product.imageUrl } : require('@/assets/images/Dashboard image 3.png')} 
-            style={{ width: '100%', height: '100%' }}
-            contentFit="cover"
-          />
-          
-          {/* Top Buttons */}
-          <View 
-            className="absolute left-6 right-6 flex-row justify-between"
-            style={{ top: insets.top + 10 }}
+        <View className="relative w-full" style={{ height: productImageHeight }}>
+          <ScrollView
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(event) => {
+              const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(productImageWidth, 1));
+              setProductImageIndex(nextIndex);
+            }}
+            scrollEventThrottle={16}
           >
-            <TouchableOpacity 
-              onPress={() => router.back()}
-              className="w-10 h-10 items-center justify-center bg-white/20 rounded-full"
-            >
-              <Ionicons name="arrow-back" size={24} color="black" />
-            </TouchableOpacity>
-            
-            <View className="flex-row gap-4">
-              <TouchableOpacity 
-                onPress={() => router.push('/(tabs)/cart')}
-                className="w-10 h-10 items-center justify-center bg-white/20 rounded-full"
-              >
-                <Feather name="shopping-cart" size={20} color="black" />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                onPress={handleToggleWishlist}
-                disabled={shortlistLoading}
-                className="w-10 h-10 items-center justify-center bg-white/20 rounded-full"
-              >
-                <Ionicons 
-                  name={isShortlisted ? "heart" : "heart-outline"} 
-                  size={22} 
-                  color={isShortlisted ? "#FF3B30" : "black"} 
+            {galleryImages.map((image, index) => (
+              <TouchableOpacity key={image.key} activeOpacity={0.92} onPress={() => openImageViewer(index)}>
+                <Image
+                  source={image.source}
+                  style={{ width: productImageWidth, height: productImageHeight }}
+                  contentFit="cover"
                 />
               </TouchableOpacity>
-            </View>
+            ))}
+          </ScrollView>
+          <View
+            className="absolute left-0 right-0 flex-row items-center justify-between px-5"
+            style={{ top: insets.top + 12 }}
+          >
+            <TouchableOpacity
+              onPress={handleBack}
+              className="w-10 h-10 items-center justify-center rounded-full"
+              style={{ backgroundColor: 'rgba(255,255,255,0.86)' }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="arrow-back" size={22} color="black" />
+            </TouchableOpacity>
 
+            <View className="flex-row items-center" style={{ gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => router.push('/(tabs)/cart')}
+                className="w-10 h-10 items-center justify-center rounded-full"
+                style={{ backgroundColor: 'rgba(255,255,255,0.86)' }}
+                activeOpacity={0.85}
+              >
+                <Image source={CART_BLACK_ICON} style={{ width: 16, height: 15 }} contentFit="contain" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleToggleWishlist}
+                disabled={shortlistLoading}
+                className="w-10 h-10 items-center justify-center rounded-full"
+                style={{ backgroundColor: 'rgba(255,255,255,0.86)' }}
+                activeOpacity={0.85}
+              >
+                {isShortlisted ? (
+                  <Ionicons name="heart" size={18} color="#FF3B30" />
+                ) : (
+                  <Image source={HEART_ICON} style={{ width: 14, height: 13 }} contentFit="contain" />
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View className="absolute left-0 right-0 bottom-0 h-[3px] bg-white/90">
+            <View
+              className="absolute left-0 top-0 bottom-0 bg-black"
+              style={{
+                width: `${100 / Math.max(galleryImages.length, 1)}%`,
+                transform: [{ translateX: productImageIndex * (productImageWidth / Math.max(galleryImages.length, 1)) }],
+              }}
+            />
           </View>
 
           {/* AI Try On Button Overlay */}
-          <View className="absolute bottom-6 right-6">
-            <TouchableOpacity 
-              onPress={() => router.push('/(tabs)/ai-try-on')}
-              className="bg-white/80 px-4 py-2 rounded-lg flex-row items-center border border-black/10"
-              activeOpacity={0.8}
-            >
-
-              <Image 
-                source={require('@/assets/svg/AI try on logo.svg')}
-                style={{ width: 16, height: 16, marginRight: 4 }}
-                contentFit="contain"
-              />
-              <Text className="text-black text-xs font-medium uppercase tracking-[0.5px]">AI Try On</Text>
-
-            </TouchableOpacity>
-          </View>
+          {dress?.is_ai_enabled === false ? null : (
+            <View className="absolute bottom-4 right-5">
+              <TouchableOpacity 
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/ai-try-on',
+                    params: {
+                      dressId: String(product.id),
+                      source: 'product-details',
+                    },
+                  })
+                }
+                className="bg-white/80 flex-row items-center justify-center border border-black/10"
+                style={{ width: 72, height: 25 }}
+                activeOpacity={0.8}
+              >
+                <Image 
+                  source={require('@/assets/svg/AI try on logo.svg')}
+                  style={{ width: 12, height: 12, marginRight: 3 }}
+                  contentFit="contain"
+                />
+                <Text className="text-black text-[10px] font-medium tracking-[0.2px]">AI Try On</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Product Info Section */}
-        <View className="px-8 pt-8">
-          <View className="flex-row justify-between items-start mb-1">
+        <View className="px-5 py-3 mt-1">
+          <View className="flex-row justify-between items-start mb-3">
             <Text 
-              className="text-black text-2xl font-medium"
-              style={{ fontFamily: 'Helvetica Neue' }}
+              className="text-black flex-1 pr-4"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '600',
+                fontSize: 24,
+                lineHeight: 22,
+                letterSpacing: 0,
+              }}
+              numberOfLines={1}
             >
               {product.name}
             </Text>
-            <View className="flex-row items-center">
-              <Text className="text-black text-xs font-medium mr-1">4.8</Text>
-              <Ionicons name="star" size={14} color="#FFD700" />
+            <View className="items-end pt-1">
+              <View className="flex-row items-center">
+                <Text className="text-[#F2C94C] text-xs font-medium mr-1">4.8</Text>
+                <Image source={STAR_ICON} style={{ width: 15, height: 14, marginTop: -4 }} contentFit="contain" />
+              </View>
             </View>
           </View>
-          
+
           <View className="flex-row justify-between items-center mb-10">
-            <View>
-              <Text 
-                className="text-black/40 text-[12px] font-light mb-1"
-                style={{ fontFamily: 'Helvetica Neue' }}
-              >
-                {dress?.description || 'Partner catalog dress'}
-              </Text>
-              <Text 
-                className="text-black/40 text-[10px] font-light uppercase tracking-[0.5px]"
-                style={{ fontFamily: 'Helvetica Neue' }}
-              >
-                {dress?.colors || 'Visible in customer catalog'}
-              </Text>
-            </View>
+            <Text
+              className="text-black/40 text-[10px] font-light uppercase tracking-[0.5px]"
+              style={{ fontFamily: 'Helvetica Neue', marginTop: -4, flex: 1, paddingRight: 10 }}
+              numberOfLines={1}
+            >
+              {dress?.colors || 'Visible in customer catalog'}
+            </Text>
+            <Text className="text-[#1A1A1A]/50 text-[10px]" style={{ marginTop: -4 }}>
+              EN | DE | FR
+            </Text>
           </View>
 
           {/* Details Grid */}
           <View className="flex-row flex-wrap justify-between">
             {productInfo.map((info, idx) => (
-              <View key={idx} style={{ width: '48%', marginBottom: 30 }}>
-                <Text className="text-black text-[12px] font-bold mb-1">{info.label}</Text>
-                <Text className="text-black/50 text-[12px] font-light">{info.value}</Text>
+              <View key={idx} style={{ width: '48%', marginBottom: 30 , marginTop: -4}}>
+                <Text
+                  className="text-black gap-2"
+                  style={{
+                    fontFamily: 'Helvetica Neue',
+                    fontWeight: '500',
+                    fontSize: 14,
+                    lineHeight: 14,
+                    letterSpacing: 0,
+                    marginBottom: 6,
+                  }}
+                >
+                  {info.label}
+                </Text>
+                <Text
+                  className="text-black/50 mt-2"
+                  style={{
+                    fontFamily: 'Helvetica Neue',
+                    fontWeight: '300',
+                    fontSize: 12,
+                    lineHeight: 12,
+                    letterSpacing: 0,
+                  }}
+                >
+                  {info.label === 'Available Sizes:'
+                    ? String(info.value ?? '')
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean)
+                        .join(', ')
+                    : info.value}
+                </Text>
               </View>
             ))}
           </View>
+
+          <View className="mt-2">
+            <Text
+              className="text-black mb-4"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '500',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0,
+              }}
+            >
+              Dress Description:
+            </Text>
+            <Text
+              className="text-black/40"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 20,
+                letterSpacing: 0,
+              }}
+            >
+              {dress?.description || 'No description available for this dress.'}
+            </Text>
+          </View>
+
         </View>
       </ScrollView>
 
       {/* Footer Buttons */}
       <View 
-        className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 border-t border-[#F5F5F5] flex-row justify-between items-center"
+        className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 flex-row justify-between items-center"
         style={{ paddingBottom: insets.bottom + 10 }}
       >
         <TouchableOpacity 
           onPress={() => setOptionModalVisible(true)}
           activeOpacity={0.8}
-          className="flex-1 mr-4 border border-black py-4 items-center flex-row justify-center"
+          className="flex-1 mr-4 border border-black items-center flex-row justify-center"
+          style={{ height: 48 }}
         >
-          <Ionicons name="calendar-outline" size={18} color="black" style={{ marginRight: 8 }} />
+          <Image source={BOOKING_SMALL_ICON} style={{ width: 21, height: 21, marginRight: 8 }} contentFit="contain" />
           <Text className="text-black text-[12px] font-bold tracking-[2px] uppercase">Booking</Text>
         </TouchableOpacity>
         
         <TouchableOpacity 
           activeOpacity={0.9}
           onPress={handleAddToCart}
-          className="flex-1 bg-black py-4 items-center flex-row justify-center"
+          className="flex-1 bg-black items-center flex-row justify-center"
+          style={{ height: 48 }}
         >
-          <Ionicons name="cart-outline" size={18} color="white" style={{ marginRight: 8 }} />
+          <Image source={CART_SMALL_ICON} style={{ width: 18, height: 18, marginRight: 8 }} contentFit="contain" />
           <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Add to Cart</Text>
         </TouchableOpacity>
 
@@ -284,11 +626,22 @@ export default function ProductDetailsScreen() {
         onRequestClose={() => setOptionModalVisible(false)}
       >
         <Pressable 
-          className="flex-1 bg-black/40 items-center justify-center px-8"
+          className="flex-1 items-center justify-center px-8"
+          style={{ backgroundColor: 'rgba(255,255,255,0.72)' }}
           onPress={() => setOptionModalVisible(false)}
         >
-          <Pressable className="bg-white w-full p-8 items-center rounded-sm">
-            <Text className="text-[#1A1A1A] text-sm text-center mb-10 font-[300]">
+          <Pressable className="bg-white w-full p-8 items-center rounded-sm border border-black">
+            <Text
+              className="text-[#1A1A1A] text-left mb-10"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '400',
+                fontSize: 12,
+                lineHeight: 18,
+                letterSpacing: 0.48,
+                alignSelf: 'stretch',
+              }}
+            >
               Choose the option that suits you best.
             </Text>
             
@@ -301,12 +654,24 @@ export default function ProductDetailsScreen() {
                   params: {
                     appointmentType: 'in_store',
                     dressId: String(product.id),
+                    source: 'product',
                   },
                 });
               }}
-              className="w-full border border-[#E0E0E0] py-4 items-center mb-4"
+              className="w-full border border-black py-4 items-center mb-4"
             >
-              <Text className="text-[#1A1A1A] text-[12px] font-medium tracking-[1.5px] uppercase">In Store Visit</Text>
+              <Text
+                className="text-[#1A1A1A] uppercase"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 14,
+                  letterSpacing: 0.56,
+                }}
+              >
+                In Store Visit
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity 
@@ -318,20 +683,95 @@ export default function ProductDetailsScreen() {
                   params: {
                     appointmentType: 'video',
                     dressId: String(product.id),
+                    source: 'product',
                   },
                 });
               }}
-              className="w-full border border-[#E0E0E0] py-4 items-center"
+              className="w-full border border-black py-4 items-center"
             >
-              <Text className="text-[#1A1A1A] text-[12px] font-medium tracking-[1.5px] uppercase">Video Call</Text>
+              <Text
+                className="text-[#1A1A1A] uppercase"
+                style={{
+                  fontFamily: 'Helvetica Neue',
+                  fontWeight: '300',
+                  fontSize: 14,
+                  lineHeight: 14,
+                  letterSpacing: 0.56,
+                }}
+              >
+                Video Call
+              </Text>
             </TouchableOpacity>
 
 
           </Pressable>
         </Pressable>
       </Modal>
-        </>
-      )}
+
+      {/* Full-screen image viewer */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={imageViewerVisible}
+        onRequestClose={closeImageViewer}
+      >
+        <View className="flex-1 bg-black">
+          <View
+            className="absolute left-0 right-0 z-20 flex-row items-center justify-between px-6"
+            style={{ top: insets.top + 12 }}
+          >
+            <View className="bg-white/15 px-3 py-2 rounded-full">
+              <Text className="text-white text-[12px]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                {viewerIndex + 1} / {galleryImages.length}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={closeImageViewer}
+              activeOpacity={0.8}
+              className="w-10 h-10 rounded-full bg-white/15 items-center justify-center"
+            >
+              <Ionicons name="close" size={24} color="white" />
+            </TouchableOpacity>
+          </View>
+
+          <View className="flex-1 items-center justify-center px-4">
+            <View
+              className="w-full items-center justify-center"
+              onTouchStart={handleViewerTouchStart}
+              onTouchMove={handleViewerTouchMove}
+              onTouchEnd={handleViewerTouchEnd}
+              onTouchCancel={handleViewerTouchEnd}
+            >
+              <Image
+                source={galleryImages[viewerIndex]?.source}
+                style={{
+                  width: '100%',
+                  height: '78%',
+                  transform: [
+                    { translateX: viewerOffset.x },
+                    { translateY: viewerOffset.y },
+                    { scale: viewerZoom },
+                  ],
+                }}
+                contentFit="contain"
+              />
+            </View>
+          </View>
+
+          <View className="absolute bottom-0 left-0 right-0 px-6" style={{ paddingBottom: insets.bottom + 24 }}>
+            <View className="items-center mb-4">
+              <Text className="text-white/80 text-[11px]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '400' }}>
+                Pinch or double-tap to zoom. Drag to move the image.
+              </Text>
+            </View>
+            <View className="items-center">
+              <Text className="text-white text-[12px]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}>
+                {`${viewerZoom.toFixed(1)}x`}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

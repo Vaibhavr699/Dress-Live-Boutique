@@ -12,3 +12,7 @@ python-dotenv
 pytest
 httpx
 email-validator
+livekit-api
+mediapipe
+opencv-python-headless
+numpy

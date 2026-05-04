@@ -93,7 +93,7 @@ export default function SignupScreen() {
                 fontFamily: 'Helvetica Neue',
                 fontSize: 28,
                 fontWeight: '400',
-                lineHeight: 28,
+                lineHeight: 30,
                 letterSpacing: 0
               }}
             >
@@ -107,7 +107,7 @@ export default function SignupScreen() {
                 fontFamily: 'Helvetica Neue',
                 fontSize: 12,
                 fontWeight: '300',
-                lineHeight: 12,
+                lineHeight: 14,
                 letterSpacing: 0.72
               }}
             >
@@ -159,7 +159,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -180,7 +180,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -202,7 +202,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -223,7 +223,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -250,7 +250,7 @@ export default function SignupScreen() {
                     fontFamily: 'Helvetica Neue',
                     fontSize: 12,
                     fontWeight: '300',
-                    lineHeight: 12,
+                    lineHeight: 14,
                     letterSpacing: 0.72
                   }}
                 >
@@ -291,17 +291,18 @@ export default function SignupScreen() {
               onPress={() => router.replace('/login')}
               className="mt-6 items-center"
             >
-              <Text 
-                className="text-[#1A1A1A]/60"
+              <Text
                 style={{ 
+                  color: 'rgba(26,26,26,0.6)',
                   fontFamily: 'Helvetica Neue',
-                  fontSize: 14,
                   fontWeight: '300',
-                  lineHeight: 10,
-                  letterSpacing: 0
+                  fontSize: 14,
+                  lineHeight: 18,
+                  letterSpacing: 0,
                 }}
               >
-                You Already have account? <Text className="font-bold border-b border-[#1A1A1A]">Log In</Text>
+                You Already have an account?{'   '}
+                <Text className="border-b border-[#1A1A1A]">Log In</Text>
               </Text>
             </TouchableOpacity>
           </SafeAreaView>

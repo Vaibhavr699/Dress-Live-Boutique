@@ -43,6 +43,16 @@ class DeleteAccountPayload(BaseModel):
     email: Optional[str] = None
 
 
+class PasswordResetOtpSendPayload(BaseModel):
+    email: str
+
+
+class PasswordResetConfirmPayload(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
 def _ensure_supabase_storage_config() -> None:
     if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
         raise HTTPException(
@@ -107,6 +117,25 @@ async def create_user(
                     detail="Partner registrations require boutique_info with a name.",
                 )
 
+        # Partner signup from boutique-app sends phone/address inside boutique_info only.
+        # UserCreate reads top-level phone/address, so copy them before validation.
+        boutique_info_raw = body.get("boutique_info")
+        if isinstance(boutique_info_raw, dict):
+
+            def _strip_str(value: Any) -> str:
+                if value is None:
+                    return ""
+                return str(value).strip()
+
+            if not _strip_str(body.get("phone")) and _strip_str(boutique_info_raw.get("phone")):
+                body["phone"] = _strip_str(boutique_info_raw.get("phone"))
+            if not _strip_str(body.get("address")) and _strip_str(boutique_info_raw.get("address")):
+                body["address"] = _strip_str(boutique_info_raw.get("address"))
+            if not _strip_str(boutique_info_raw.get("location")) and _strip_str(
+                boutique_info_raw.get("address")
+            ):
+                boutique_info_raw["location"] = _strip_str(boutique_info_raw.get("address"))
+
         print(f"DEBUG: Parsed JSON: {body}")
         user_in = UserCreate(**body)
     except Exception as e:
@@ -137,6 +166,109 @@ async def create_user(
         user_in.boutique_id = boutique.id
 
     user = crud_user.create(db, obj_in=user_in)
+
+    # Send a welcome email (best-effort).
+    try:
+        if user.email and (user.role or "").strip().lower() == "buyer":
+            greeting = (user.full_name or "").strip() or "there"
+            await send_email(
+                to_email=user.email,
+                subject="Welcome to Dress Live",
+                text=(
+                    f"Hi {greeting},\n\n"
+                    "Welcome to Dress Live. You can now browse boutiques, shortlist dresses, and book fittings.\n\n"
+                    "If you didn’t create this account, you can ignore this email.\n\n"
+                    "— Dress Live"
+                ),
+            )
+    except Exception:
+        # Don't block signup if email fails.
+        pass
+    return user
+
+
+@router.post("/password-reset/otp")
+async def send_password_reset_otp(
+    payload: PasswordResetOtpSendPayload,
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """
+    Send a 6-digit OTP to the user's email for password reset.
+    This endpoint is unauthenticated (forgot password).
+    """
+    email = (payload.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email.")
+
+    user = crud_user.get_by_email(db, email=email)
+    # Always return success to avoid user enumeration.
+    if not user:
+        return {"success": True, "expires_in_seconds": 600}
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+    crud_user.update(
+        db,
+        db_obj=user,
+        obj_in={
+            "password_otp_hash": _hash_otp(code),
+            "password_otp_expires_at": expires_at.isoformat(),
+        },
+    )
+
+    await send_email(
+        to_email=user.email,
+        subject="Your Dress Live password reset code",
+        text=(
+            f"Your password reset code is {code}.\n\n"
+            "It expires in 10 minutes. If you didn’t request this, you can ignore this email."
+        ),
+    )
+
+    return {"success": True, "expires_in_seconds": 600}
+
+
+@router.put("/password-reset/confirm", response_model=UserSchema)
+async def confirm_password_reset(
+    payload: PasswordResetConfirmPayload,
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """
+    Verify a 6-digit OTP and set a new password (forgot password).
+    """
+    email = (payload.email or "").strip().lower()
+    code = _normalize_otp(payload.code)
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email.")
+    if len(code) != 6:
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+    if not payload.new_password or len(payload.new_password.strip()) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters.")
+
+    user = crud_user.get_by_email(db, email=email)
+    if not user or not user.password_otp_hash or not user.password_otp_expires_at:
+        raise HTTPException(status_code=400, detail="Verification code is invalid. Please resend the code.")
+
+    try:
+        expires_at = datetime.fromisoformat(user.password_otp_expires_at)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Verification code is invalid. Please resend the code.")
+
+    if datetime.utcnow() > expires_at:
+        raise HTTPException(status_code=400, detail="Verification code expired. Please resend the code.")
+    if _hash_otp(code) != user.password_otp_hash:
+        raise HTTPException(status_code=400, detail="Incorrect verification code.")
+
+    user = crud_user.update(
+        db,
+        db_obj=user,
+        obj_in={
+            "password": payload.new_password,
+            "password_otp_hash": None,
+            "password_otp_expires_at": None,
+        },
+    )
     return user
 
 @router.get("/me", response_model=UserSchema)
@@ -165,6 +297,17 @@ async def update_user_me(
     body.pop("is_active", None)
     body.pop("is_superuser", None)
     body.pop("password", None)
+    next_email = body.get("email")
+    if isinstance(next_email, str):
+        normalized_email = next_email.strip().lower()
+        body["email"] = normalized_email
+        if normalized_email and normalized_email != (current_user.email or "").strip().lower():
+            existing = crud_user.get_by_email(db, email=normalized_email)
+            if existing and existing.id != current_user.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The user with this email already exists in the system.",
+                )
     user_in = UserUpdate(**body)
     user = crud_user.update(db, db_obj=current_user, obj_in=user_in)
     return user

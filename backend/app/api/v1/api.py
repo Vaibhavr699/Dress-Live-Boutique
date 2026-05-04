@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, users, boutiques, dresses, shortlists, bookings
+from app.api.v1.endpoints import auth, users, boutiques, dresses, shortlists, bookings, video_calls, ai
 
 api_router = APIRouter()
 api_router.include_router(auth.router, tags=["login"])
@@ -8,3 +8,5 @@ api_router.include_router(boutiques.router, prefix="/boutiques", tags=["boutique
 api_router.include_router(dresses.router, prefix="/dresses", tags=["dresses"])
 api_router.include_router(shortlists.router, prefix="/shortlists", tags=["shortlists"])
 api_router.include_router(bookings.router, prefix="/bookings", tags=["bookings"])
+api_router.include_router(video_calls.router, prefix="/video-calls", tags=["video-calls"])
+api_router.include_router(ai.router, prefix="/ai", tags=["ai"])

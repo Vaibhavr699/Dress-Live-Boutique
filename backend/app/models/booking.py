@@ -17,6 +17,8 @@ class Booking(Base):
     selected_dress_ids = Column(Text, nullable=False)
     appointment_fee = Column(Float, nullable=False, default=0.0)
     is_paid = Column(Boolean, nullable=False, default=False)
+    video_ring_at = Column(DateTime(timezone=True), nullable=True)
+    video_ring_from_user_id = Column(Integer, ForeignKey("user.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -25,5 +27,6 @@ class Booking(Base):
         onupdate=func.now(),
     )
 
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])
+    video_ring_from_user = relationship("User", foreign_keys=[video_ring_from_user_id])
     boutique = relationship("Boutique")

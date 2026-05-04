@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Image as RNImage } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
+
+const PAYMENT_LOGOS = require('@/assets/svg/Group 1171277496.svg');
+const ERROR_ICON = require('@/assets/svg/diamond-exclamation.svg');
 
 export default function PaymentDetailsScreen() {
   const router = useRouter();
@@ -29,32 +33,66 @@ export default function PaymentDetailsScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8" contentContainerStyle={{ paddingBottom: 150 }}>
-        <Text className="text-black text-[12px] font-bold uppercase mb-10 tracking-[1px] opacity-40">Complete Payment Details</Text>
+        <Text
+          className="text-black mb-10"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 18,
+            lineHeight: 18,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
+          Complete Payment Details
+        </Text>
         
         {/* Logos Placeholder */}
-        <View className="flex-row gap-4 mb-10 items-center">
-           <Text className="text-blue-800 font-bold italic text-base">stripe</Text>
-           <Text className="text-blue-900 font-bold italic text-base">VISA</Text>
-           <Text className="text-orange-500 font-bold italic text-base">amazon</Text>
-           <View className="w-6 h-4 bg-red-500 rounded-full opacity-40 ml-2" />
+        <View className="mb-10">
+          <Image source={PAYMENT_LOGOS} style={{ width: 240, height: 28 }} contentFit="contain" />
         </View>
 
         {fields.map((field) => (
           <View key={field.id} className="mb-8">
-            <Text className="text-black/30 text-[9px] font-bold uppercase mb-2 tracking-[0.5px]">{field.label} *</Text>
+            <Text
+              className="text-black/40 uppercase mb-2"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.72,
+              }}
+            >
+              {field.label}{' '}
+              <Text style={{ color: '#FF3B30' }}>*</Text>
+            </Text>
             <TextInput 
               placeholder={field.placeholder}
-              className={`border-b border-[#F0F0F0] py-2 text-black text-sm ${showErrors ? 'border-red-500' : ''}`}
+              className="border-b text-black"
+              style={{
+                paddingVertical: 0,
+                height: 28,
+                borderBottomColor: showErrors ? '#FF3B30' : '#F0F0F0',
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0.84,
+              }}
             />
             {showErrors && (
               <View className="flex-row items-center mt-2">
-                <Ionicons name="alert-circle" size={10} color="#FF3B30" className="mr-1" />
-                <Text className="text-[#FF3B30] text-[10px] ml-1">This field is required.</Text>
+                <Image source={ERROR_ICON} style={{ width: 12, height: 12, marginRight: 6 }} contentFit="contain" />
+                <Text className="text-[#FF3B30] text-[10px]">This field is required.</Text>
               </View>
             )}
             {field.hasHelp && (
               <TouchableOpacity onPress={() => setShowErrors(true)} className="mt-2">
-                <Text className="text-black/30 text-[10px] italic">What is the security code?</Text>
+                <View className="flex-row items-center">
+                  <Image source={ERROR_ICON} style={{ width: 12, height: 12, marginRight: 6 }} contentFit="contain" />
+                  <Text className="text-[#FF3B30] text-[10px]">What is the security code?</Text>
+                </View>
               </TouchableOpacity>
             )}
           </View>

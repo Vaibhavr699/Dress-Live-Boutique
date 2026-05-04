@@ -1,10 +1,13 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { View, Text, TouchableOpacity, SafeAreaView, ActivityIndicator } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 type StoreHoursState = 'empty' | 'configured';
+type ScheduleItem = { day: string; value: string };
 
 const DEFAULT_BUSINESS_HOURS = [
   { day: 'Monday', value: 'Open 09:00 AM To 05:00 PM' },
@@ -19,11 +22,46 @@ const DEFAULT_BUSINESS_HOURS = [
 export default function StoreOpeningHoursScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ state?: StoreHoursState; schedule?: string }>();
-  const state = (params.state as StoreHoursState) || 'configured';
-  const schedule = params.schedule
-    ? (JSON.parse(params.schedule) as { day: string; value: string }[])
-    : DEFAULT_BUSINESS_HOURS;
+  const user = useAuthStore((s: any) => s.user);
+  const [loading, setLoading] = useState(true);
+  const [schedule, setSchedule] = useState<ScheduleItem[]>(DEFAULT_BUSINESS_HOURS);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      (async () => {
+        try {
+          if (!user?.boutique_id) {
+            if (active) setSchedule(DEFAULT_BUSINESS_HOURS);
+            return;
+          }
+          const boutique = await api.get(`/boutiques/${user.boutique_id}`);
+          if (!active) return;
+          const raw = typeof boutique?.availability_schedule === 'string'
+            ? boutique.availability_schedule
+            : '';
+          if (raw.trim()) {
+            try {
+              const parsed = JSON.parse(raw) as ScheduleItem[];
+              setSchedule(Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_BUSINESS_HOURS);
+            } catch {
+              setSchedule(DEFAULT_BUSINESS_HOURS);
+            }
+          } else {
+            setSchedule(DEFAULT_BUSINESS_HOURS);
+          }
+        } catch {
+          if (active) setSchedule(DEFAULT_BUSINESS_HOURS);
+        } finally {
+          if (active) setLoading(false);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, [user?.boutique_id])
+  );
+  const state: StoreHoursState = schedule.length > 0 ? 'configured' : 'empty';
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -38,7 +76,17 @@ export default function StoreOpeningHoursScreen() {
         >
           Set Store Opening Hours
         </Text>
-        <Text className="text-[10px] text-black/45 leading-4 mb-6">
+        <Text
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '400',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 0,
+            color: '#6E6E6E',
+            marginBottom: 24,
+          }}
+        >
           {state === 'configured'
             ? 'Each shop can invite their consultant and availabilities'
             : 'Each shop can invite their consultant and availabilities'}
@@ -55,7 +103,12 @@ export default function StoreOpeningHoursScreen() {
             Let customers know when you are available
           </Text>
 
-          {state === 'configured' ? (
+          {loading ? (
+            <View className="py-16 items-center">
+              <ActivityIndicator color="#1A1A1A" />
+              <Text className="text-[11px] text-black/45 mt-3">Loading availability…</Text>
+            </View>
+          ) : state === 'configured' ? (
             <>
               <View className="flex-row justify-between items-center mb-4">
                 <View>
@@ -65,7 +118,7 @@ export default function StoreOpeningHoursScreen() {
                   >
                     Business Hours
                   </Text>
-                  <Text className="text-[10px] text-black/45">Always Open</Text>
+                  <Text className="text-[10px] text-black/45">Customer booking slots follow these hours</Text>
                 </View>
                 <TouchableOpacity
                   activeOpacity={0.85}
@@ -85,9 +138,37 @@ export default function StoreOpeningHoursScreen() {
 
               <View className="border-t border-[#ECECEC] pt-5">
                 {schedule.map((item) => (
-                  <View key={item.day} className="flex-row justify-between items-center mb-2">
-                    <Text className="text-[11px] text-black">{item.day}</Text>
-                    <Text className="text-[11px] text-black/45">{item.value}</Text>
+                  <View
+                    key={item.day}
+                    className="flex-row justify-between items-center"
+                    style={{ paddingVertical: 6, marginBottom: 6 }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '400',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 0,
+                        color: '#000000',
+                        paddingBottom:2,
+                      }}
+                    >
+                      {item.day}
+                    </Text>
+                    <Text
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '400',
+                        fontSize: 14,
+                        lineHeight: 14,
+                        letterSpacing: 0,
+                        color: '#6E6E6E',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {item.value}
+                    </Text>
                   </View>
                 ))}
               </View>

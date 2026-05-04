@@ -1,143 +1,122 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity, TextInput } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Image } from 'expo-image';
 
-type FieldKey = 'cardNumber' | 'expiration' | 'cardholderName' | 'securityCode';
+const PAYMENT_LOGOS = require('../assets/svg/Group 1171277496.svg');
+const ERROR_ICON = require('../assets/svg/diamond-exclamation.svg');
 
-function PaymentField({
-  label,
-  value,
-  onChangeText,
-  showError,
-  keyboardType,
-}: {
-  label: string;
-  value: string;
-  onChangeText: (text: string) => void;
-  showError: boolean;
-  keyboardType?: 'default' | 'number-pad';
-}) {
-  return (
-    <View className="mb-5">
-      <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={keyboardType}
-        className="pb-2 text-[12px] text-black"
-        style={{ borderBottomWidth: 1, borderBottomColor: showError ? '#FF3B30' : '#ECECEC' }}
-      />
-      {showError ? (
-        <View className="flex-row items-center mt-2">
-          <Ionicons name="alert-circle-outline" size={14} color="#FF3B30" />
-          <Text className="text-[10px] text-[#FF3B30] ml-1">This field is required.</Text>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-export default function PaymentMethodDetailsScreen() {
+export default function PaymentDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ method?: string }>();
+  const [showErrors, setShowErrors] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const [cardNumber, setCardNumber] = useState('');
-  const [expiration, setExpiration] = useState('');
-  const [cardholderName, setCardholderName] = useState('');
-  const [securityCode, setSecurityCode] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-
-  const errors = useMemo<Record<FieldKey, boolean>>(
-    () => ({
-      cardNumber: submitted && !cardNumber.trim(),
-      expiration: submitted && !expiration.trim(),
-      cardholderName: submitted && !cardholderName.trim(),
-      securityCode: submitted && !securityCode.trim(),
-    }),
-    [submitted, cardNumber, expiration, cardholderName, securityCode]
-  );
-
-  const hasErrors = Object.values(errors).some(Boolean);
-  const selectedMethod = params.method || 'paypal';
+  const fields = [
+    { id: 'cardNumber', label: 'Card Number', placeholder: '**** **** **** ****' },
+    { id: 'expiry', label: 'Expiration (MM/YY)', placeholder: 'MM/YY' },
+    { id: 'cardholder', label: 'Cardholder Name', placeholder: 'Name' },
+    { id: 'cvv', label: 'Security Code (CVV)', placeholder: '***', hasHelp: true },
+  ];
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
-        <TouchableOpacity onPress={() => router.back()} className="mb-10">
-          <Ionicons name="arrow-back" size={18} color="black" />
+    <View className="flex-1 bg-white">
+      {/* Header */}
+      <View className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" style={{ paddingTop: insets.top + 10 }}>
+        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+          <Ionicons name="arrow-back" size={24} color="black" />
         </TouchableOpacity>
+      </View>
 
-        <Text className="text-[13px] uppercase tracking-[2px] text-black/70 mb-10">
+      <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8" contentContainerStyle={{ paddingBottom: 150 }}>
+        <Text
+          className="text-black mb-10"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 18,
+            lineHeight: 18,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
           Complete Payment Details
         </Text>
 
-        <View className="flex-row items-center mb-10">
-          <Text className="text-[18px] text-[#635BFF] mr-3" style={{ fontFamily: 'Helvetica Neue', fontWeight: '700' }}>
-            stripe
-          </Text>
-          <Text className="text-[16px] text-[#1A4DFF] mr-3" style={{ fontFamily: 'Helvetica Neue', fontWeight: '700' }}>
-            VISA
-          </Text>
-          <Text className="text-[16px] text-[#1A73E8] mr-3" style={{ fontFamily: 'Helvetica Neue', fontWeight: '700' }}>
-            amazon
-          </Text>
-          <Text className="text-[16px] text-[#EA4335]" style={{ fontFamily: 'Helvetica Neue', fontWeight: '700' }}>
-            MC
-          </Text>
+        <View className="mb-10">
+          <Image source={PAYMENT_LOGOS} style={{ width: 240, height: 28 }} contentFit="contain" />
         </View>
 
-        <PaymentField
-          label="Card Number *"
-          value={cardNumber}
-          onChangeText={setCardNumber}
-          showError={errors.cardNumber}
-          keyboardType="number-pad"
-        />
-        <PaymentField
-          label="Expiration (MM/YY) *"
-          value={expiration}
-          onChangeText={setExpiration}
-          showError={errors.expiration}
-        />
-        <PaymentField
-          label="Cardholder Name *"
-          value={cardholderName}
-          onChangeText={setCardholderName}
-          showError={errors.cardholderName}
-        />
-        <PaymentField
-          label="Security Code (CVV) *"
-          value={securityCode}
-          onChangeText={setSecurityCode}
-          showError={errors.securityCode}
-          keyboardType="number-pad"
-        />
-
-        {errors.securityCode ? (
-          <View className="flex-row items-center -mt-2">
-            <Ionicons name="alert-circle-outline" size={14} color="#FF3B30" />
-            <Text className="text-[10px] text-[#FF3B30] ml-1">What is the security code?</Text>
+        {fields.map((field) => (
+          <View key={field.id} className="mb-8">
+            <Text
+              className="text-black/40 uppercase mb-2"
+              style={{
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 12,
+                lineHeight: 12,
+                letterSpacing: 0.72,
+              }}
+            >
+              {field.label} <Text style={{ color: '#FF3B30' }}>*</Text>
+            </Text>
+            <TextInput
+              placeholder={field.placeholder}
+              className="border-b text-black"
+              style={{
+                paddingVertical: 0,
+                height: 28,
+                borderBottomColor: showErrors ? '#FF3B30' : '#F0F0F0',
+                fontFamily: 'Helvetica Neue',
+                fontWeight: '300',
+                fontSize: 14,
+                lineHeight: 14,
+                letterSpacing: 0.84,
+              }}
+            />
+            {showErrors && (
+              <View className="flex-row items-center mt-2">
+                <Image source={ERROR_ICON} style={{ width: 12, height: 12, marginRight: 6 }} contentFit="contain" />
+                <Text className="text-[#FF3B30] text-[10px]">This field is required.</Text>
+              </View>
+            )}
+            {field.hasHelp && (
+              <TouchableOpacity onPress={() => setShowErrors(true)} className="mt-2">
+                <View className="flex-row items-center">
+                  <Image source={ERROR_ICON} style={{ width: 12, height: 12, marginRight: 6 }} contentFit="contain" />
+                  <Text className="text-[#FF3B30] text-[10px]">What is the security code?</Text>
+                </View>
+              </TouchableOpacity>
+            )}
           </View>
-        ) : null}
+        ))}
+      </ScrollView>
 
+      <View className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 pb-8 border-t border-[#F5F5F5]" style={{ paddingBottom: 30 }}>
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => {
-            setSubmitted(true);
-            if (!hasErrors && cardNumber.trim() && expiration.trim() && cardholderName.trim() && securityCode.trim()) {
-              router.back();
+          onPress={async () => {
+            setShowErrors(true);
+            if (submitting) return;
+            setSubmitting(true);
+            try {
+              await new Promise((r) => setTimeout(r, 400));
+            } finally {
+              setSubmitting(false);
             }
           }}
-          className="bg-black py-4 items-center justify-center mt-auto mb-10"
+          className="w-full bg-black py-4 items-center justify-center"
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">
-            {selectedMethod === 'paypal' ? 'Payment Authorized' : 'Payment Authorized'}
-          </Text>
+          {submitting ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Payment Authorized</Text>
+          )}
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }

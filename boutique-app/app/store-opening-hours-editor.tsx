@@ -1,8 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { api } from '@shared/api/api';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const TIME_OPTIONS = [
@@ -23,9 +26,12 @@ type DaySchedule = {
   close: string;
 };
 
+const TOGGLE_ON_ICON = require('../assets/svg/Toggle.svg');
+
 export default function StoreOpeningHoursEditorScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const user = useAuthStore((s: any) => s.user);
   const params = useLocalSearchParams<{ schedule?: string }>();
   const parsedSchedule = params.schedule
     ? (JSON.parse(params.schedule) as { day: string; value: string }[])
@@ -58,6 +64,7 @@ export default function StoreOpeningHoursEditorScreen() {
     ),
   });
   const [activePicker, setActivePicker] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const summaryItems = useMemo(
     () =>
@@ -70,6 +77,24 @@ export default function StoreOpeningHoursEditorScreen() {
       }),
     [daySchedules]
   );
+
+  const handleSave = async () => {
+    if (!user?.boutique_id) {
+      Alert.alert('Availability', 'Boutique profile not found.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/boutiques/${user.boutique_id}`, {
+        availability_schedule: JSON.stringify(summaryItems),
+      });
+      router.replace('/store-opening-hours');
+    } catch (error) {
+      Alert.alert('Availability', error instanceof Error ? error.message : 'Could not save availability.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-white">
@@ -84,7 +109,17 @@ export default function StoreOpeningHoursEditorScreen() {
         >
           Set Store Opening Hours
         </Text>
-        <Text className="text-[10px] text-black/45 leading-4 mb-6">
+        <Text
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '400',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 0,
+            color: '#6E6E6E',
+            marginBottom: 24,
+          }}
+        >
           Let customers know when you are available
         </Text>
 
@@ -102,12 +137,19 @@ export default function StoreOpeningHoursEditorScreen() {
               return (
                 <View
                   key={day}
-                  className="mb-6"
+                  className="mb-8"
                   style={{ zIndex: activePicker?.startsWith(day) ? 100 : DAYS.length - index }}
                 >
                   <Text
-                    className="text-[12px] text-black uppercase mb-2"
-                    style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '400',
+                      fontSize: 14,
+                      lineHeight: 14,
+                      letterSpacing: 0,
+                      color: '#000000',
+                      marginBottom: 8,
+                    }}
                   >
                     {day}
                   </Text>
@@ -126,7 +168,18 @@ export default function StoreOpeningHoursEditorScreen() {
                             }
                             className="border-b border-[#ECECEC] pb-2 flex-row items-center justify-between"
                           >
-                            <Text className="text-[12px] text-black/70">{schedule.open}</Text>
+                        <Text
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '400',
+                            fontSize: 14,
+                            lineHeight: 14,
+                            letterSpacing: 0,
+                            color: '#6E6E6E',
+                          }}
+                        >
+                          {schedule.open}
+                        </Text>
                             <Ionicons
                               name={activePicker === openKey ? 'chevron-up' : 'chevron-down'}
                               size={13}
@@ -188,7 +241,18 @@ export default function StoreOpeningHoursEditorScreen() {
                             }
                             className="border-b border-[#ECECEC] pb-2 flex-row items-center justify-between"
                           >
-                            <Text className="text-[12px] text-black/70">{schedule.close}</Text>
+                        <Text
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '400',
+                            fontSize: 14,
+                            lineHeight: 14,
+                            letterSpacing: 0,
+                            color: '#6E6E6E',
+                          }}
+                        >
+                          {schedule.close}
+                        </Text>
                             <Ionicons
                               name={activePicker === closeKey ? 'chevron-up' : 'chevron-down'}
                               size={13}
@@ -246,9 +310,9 @@ export default function StoreOpeningHoursEditorScreen() {
                             [day]: { ...current[day], enabled: !current[day].enabled },
                           }))
                         }
-                        className="w-12 h-7 rounded-full bg-black px-1 justify-center"
+                        style={{ width: 30, height: 20 }}
                       >
-                        <View className="w-5 h-5 rounded-full bg-white self-end" />
+                        <Image source={TOGGLE_ON_ICON} style={{ width: 30, height: 20 }} contentFit="contain" />
                       </TouchableOpacity>
                     </View>
                   ) : (
@@ -261,9 +325,26 @@ export default function StoreOpeningHoursEditorScreen() {
                             [day]: { ...current[day], enabled: !current[day].enabled },
                           }))
                         }
-                        className="w-12 h-7 rounded-full bg-[#E9E9E9] px-1 justify-center"
+                        style={{
+                          width: 30,
+                          height: 20,
+                          borderRadius: 10,
+                          backgroundColor: '#E9E9E9',
+                          justifyContent: 'center',
+                          paddingHorizontal: 1,
+                        }}
                       >
-                        <View className="w-5 h-5 rounded-full bg-white self-start" />
+                        <View
+                          style={{
+                            width: 18.75,
+                            height: 18.75,
+                            borderRadius: 999,
+                            backgroundColor: '#FFFFFF',
+                            borderWidth: 1.25,
+                            borderColor: '#222222',
+                            alignSelf: 'flex-start',
+                          }}
+                        />
                       </TouchableOpacity>
                     </View>
                   )}
@@ -275,15 +356,15 @@ export default function StoreOpeningHoursEditorScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() =>
-            router.replace({
-              pathname: '/store-opening-hours',
-              params: { state: 'configured', schedule: JSON.stringify(summaryItems) },
-            })
-          }
+          onPress={handleSave}
+          disabled={saving}
           className="bg-black py-4 items-center justify-center mb-10"
         >
-          <Text className="text-[11px] uppercase tracking-[1px] text-white">Save</Text>
+          {saving ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-[11px] uppercase tracking-[1px] text-white">Save</Text>
+          )}
         </TouchableOpacity>
       </View>
     </SafeAreaView>

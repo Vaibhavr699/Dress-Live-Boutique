@@ -20,17 +20,14 @@ export default function ForgotPasswordScreen() {
 
     setLoading(true);
     try {
-      // API call to request reset code (TBD on backend)
-      // For now we'll simulate success
-      setTimeout(() => {
-        setLoading(false);
-        router.push({
-          pathname: '/otp-verify',
-          params: { email }
-        });
-      }, 1000);
+      await api.post('/users/password-reset/otp', { email: email.trim().toLowerCase() });
+      router.push({
+        pathname: '/otp-verify',
+        params: { email: email.trim().toLowerCase() },
+      });
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to send reset link');
+    } finally {
       setLoading(false);
     }
   };

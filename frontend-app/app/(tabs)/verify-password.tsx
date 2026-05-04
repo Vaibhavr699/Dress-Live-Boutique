@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Modal, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
+import { Image } from 'expo-image';
+
+const ERROR_ICON = require('@/assets/svg/diamond-exclamation.svg');
 
 export default function VerifyPasswordScreen() {
   const router = useRouter();
@@ -16,9 +19,15 @@ export default function VerifyPasswordScreen() {
   const [fieldError, setFieldError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const normalizedCode = useMemo(() => (code || '').replace(/\D/g, '').trim(), [code]);
+
   const handleVerify = async () => {
-    if (!code.trim()) {
+    if (!normalizedCode) {
       setFieldError('This field is mandatory');
+      return;
+    }
+    if (normalizedCode.length !== 4) {
+      setFieldError('Enter the 4-digit code.');
       return;
     }
 
@@ -29,7 +38,7 @@ export default function VerifyPasswordScreen() {
 
     setLoading(true);
     try {
-      const updatedUser = await api.put('/users/me/password/otp', { code, new_password: newPassword });
+      const updatedUser = await api.put('/users/me/password/otp', { code: normalizedCode, new_password: newPassword });
       setUser(updatedUser);
       router.replace('/(tabs)/profile');
     } catch (error) {
@@ -62,7 +71,7 @@ export default function VerifyPasswordScreen() {
     <View className="flex-1 bg-white">
       {/* Header */}
       <View 
-        className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4" 
+        className="px-6 flex-row items-center pb-4" 
         style={{ paddingTop: insets.top + 10 }}
       >
         <TouchableOpacity onPress={handleBack} className="mr-4">
@@ -71,33 +80,88 @@ export default function VerifyPasswordScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} className="px-8 pt-8">
-        <Text className="text-black text-xs font-bold uppercase mb-4 tracking-[1px] opacity-40">Confirm New Password</Text>
-        <Text className="text-black/50 text-[12px] leading-5 mb-10">
-          Please enter the code sent to {typeof email === 'string' && email.length > 0 ? email : 'your email'}.
+        <Text
+          className="text-black mb-4"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '200',
+            fontSize: 14,
+            lineHeight: 14,
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+          }}
+        >
+          Confirm New Password
+        </Text>
+        <Text
+          className="text-black mb-10"
+          style={{
+            fontFamily: 'Helvetica Neue',
+            fontWeight: '300',
+            fontSize: 14,
+            lineHeight: 18,
+            letterSpacing: 0,
+            opacity: 0.6,
+          }}
+        >
+          Please enter the 4-digit code sent to {typeof email === 'string' && email.length > 0 ? email : 'your email'}.
         </Text>
 
         <View className="mb-6">
-          <Text className="text-black/30 text-[9px] font-bold uppercase mb-2 tracking-[0.5px]">Verification Code</Text>
+          <Text
+            className="text-black/40 uppercase mb-2"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 12,
+              lineHeight: 12,
+              letterSpacing: 0.72,
+            }}
+          >
+            Verification Code
+          </Text>
           <TextInput 
             value={code}
             onChangeText={(t) => {
                 setCode(t);
                 setFieldError('');
             }}
-            placeholder="Enter verification code"
-            className={`border-b border-[#F0F0F0] py-4 text-black text-sm ${fieldError ? 'border-red-500' : ''}`}
+            placeholder="Enter 4-digit code"
+            className="border-b text-black"
+            style={{
+              paddingVertical: 0,
+              height: 28,
+              borderBottomColor: fieldError ? '#FF3B30' : '#F0F0F0',
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 14,
+              lineHeight: 14,
+              letterSpacing: 0.84,
+            }}
             keyboardType="number-pad"
           />
           {fieldError && (
              <View className="flex-row items-center mt-2">
-                <Ionicons name="alert-circle-outline" size={12} color="#FF3B30" />
-                <Text className="text-[#FF3B30] text-[10px] ml-2">{fieldError}</Text>
+                <Image source={ERROR_ICON} style={{ width: 12, height: 12, marginRight: 6 }} contentFit="contain" />
+                <Text className="text-[#FF3B30] text-[10px]">{fieldError}</Text>
              </View>
           )}
         </View>
 
         <TouchableOpacity onPress={handleResend} disabled={loading} className="mb-6">
-          <Text className="text-black/50 text-[11px] underline">Resend code</Text>
+          <Text
+            className="text-black underline"
+            style={{
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '300',
+              fontSize: 11,
+              lineHeight: 11,
+              letterSpacing: 0,
+              opacity: 0.6,
+            }}
+          >
+            Resend code
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity 

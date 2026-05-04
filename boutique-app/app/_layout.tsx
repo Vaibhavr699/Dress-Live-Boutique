@@ -7,10 +7,56 @@ import "../global.css";
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Platform, Text, View } from 'react-native';
+import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
+import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
+import '@shared/polyfills/domExceptionNative';
+import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import * as Location from 'expo-location';
 
 SplashScreen.preventAutoHideAsync();
+
+function BootScreen() {
+  return (
+    <View style={{ flex: 1, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <Text
+        style={{
+          color: '#111111',
+          fontSize: 18,
+          fontWeight: '700',
+          letterSpacing: 4,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Boutique Portal
+      </Text>
+      <View
+        style={{
+          width: 84,
+          height: 2,
+          backgroundColor: '#111111',
+          opacity: 0.14,
+          marginTop: 20,
+          marginBottom: 18,
+        }}
+      />
+      <Text
+        style={{
+          color: '#666666',
+          fontSize: 12,
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Loading experience
+      </Text>
+    </View>
+  );
+}
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -18,6 +64,7 @@ export default function RootLayout() {
   const segments = useSegments();
   const { isAuthenticated, user, logout } = useAuthStore();
   const [isReady, setIsReady] = useState(false);
+  const permissionsRequestedRef = useRef(false);
 
   const [loaded, error] = useFonts({
     'PlayfairDisplay-Bold': PlayfairDisplay_700Bold,
@@ -25,11 +72,34 @@ export default function RootLayout() {
     'PlayfairDisplay-Regular': PlayfairDisplay_400Regular,
   });
 
+  const fontsReady = loaded || !!error;
+  const appReady = fontsReady && isReady;
+
   useEffect(() => {
-    if (loaded || error) {
+    if (fontsReady) {
       SplashScreen.hideAsync();
     }
-  }, [loaded, error]);
+  }, [fontsReady]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!isLiveKitNativeSupported()) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const lk = require('@livekit/react-native');
+      if (lk && typeof lk.registerGlobals === 'function') {
+        lk.registerGlobals();
+      }
+      if (Platform.OS === 'android' && lk?.AudioSession?.configureAudio && lk?.AndroidAudioTypePresets?.communication) {
+        lk.AudioSession.configureAudio({
+          audioTypeOptions: lk.AndroidAudioTypePresets.communication,
+          preferredOutputList: ['speaker', 'earpiece', 'bluetooth', 'headset'],
+        });
+      }
+    } catch {
+      // no-op
+    }
+  }, []);
 
   useEffect(() => {
     // Check if hydration is done from the store itself
@@ -69,12 +139,39 @@ export default function RootLayout() {
     }
   }, [isAuthenticated, user, segments, isReady, router, logout]);
 
-  if (!loaded && !error) {
-    return null;
+  useEffect(() => {
+    if (!isReady) return;
+    if (!isAuthenticated) {
+      permissionsRequestedRef.current = false;
+      return;
+    }
+    if (permissionsRequestedRef.current) return;
+    permissionsRequestedRef.current = true;
+
+    (async () => {
+      try {
+        const locPerm = await Location.getForegroundPermissionsAsync();
+        if (locPerm.status !== 'granted') {
+          await Location.requestForegroundPermissionsAsync();
+        }
+      } catch {
+        // ignore
+      }
+    })();
+  }, [isAuthenticated, isReady]);
+
+  const onPartnerVideoCallRoute = segments[0] === 'video-call';
+  useIncomingVideoRingPoller(
+    (loaded || !!error) && isAuthenticated && user?.role === 'partner' && !onPartnerVideoCallRoute
+  );
+
+  if (!appReady) {
+    return <BootScreen />;
   }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <View style={{ flex: 1 }}>
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="landing" options={{ headerShown: false }} />
@@ -86,6 +183,7 @@ export default function RootLayout() {
         <Stack.Screen name="reset-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="add-dress" options={{ presentation: 'modal', headerShown: false }} />
         <Stack.Screen name="video-call" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="video-call-summary" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="video-call-availability" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="video-call-availability-editor" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="team-invite" options={{ headerShown: false, animation: 'slide_from_right' }} />
@@ -102,10 +200,11 @@ export default function RootLayout() {
         <Stack.Screen name="withdraw-funds" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        {/* <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} /> */}
       </Stack>
-
-
+      <IncomingVideoCallBar app="partner" />
       <StatusBar style="auto" />
+      </View>
     </ThemeProvider>
   );
 }

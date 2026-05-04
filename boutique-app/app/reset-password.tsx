@@ -1,12 +1,52 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { api } from '@shared/api/api';
+
+const RESET_TITLE_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 24,
+  lineHeight: 24,
+  letterSpacing: 0,
+  color: '#000000',
+};
+
+const RESET_DESCRIPTION_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '400' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0,
+  color: '#1A1A1A',
+};
+
+const INPUT_HEADING_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '300' as const,
+  fontSize: 12,
+  lineHeight: 12,
+  letterSpacing: 0.72,
+  textTransform: 'uppercase' as const,
+  color: 'rgba(26,26,26,0.5)',
+};
+
+const BUTTON_TEXT_STYLE = {
+  fontFamily: 'Helvetica Neue',
+  fontWeight: '500' as const,
+  fontSize: 14,
+  lineHeight: 14,
+  letterSpacing: 0.56,
+  textTransform: 'uppercase' as const,
+  color: '#FFFFFF',
+};
 
 export default function ResetPasswordScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { email, code } = useLocalSearchParams<{ email?: string; code?: string }>();
   
   const [loading, setLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState<'bridge' | 'input' | 'success'>('bridge');
@@ -25,16 +65,22 @@ export default function ResetPasswordScreen() {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
+    if (!email || !code) {
+      Alert.alert('Error', 'Missing reset code. Please request a new code.');
+      return;
+    }
 
     setLoading(true);
     try {
-      // API call to update password (TBD on backend)
-      setTimeout(() => {
-        setLoading(false);
-        setCurrentStep('success');
-      }, 1000);
+      await api.put('/users/password-reset/confirm', {
+        email: String(email).trim().toLowerCase(),
+        code: String(code),
+        new_password: password,
+      });
+      setCurrentStep('success');
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to update password');
+    } finally {
       setLoading(false);
     }
   };
@@ -43,25 +89,13 @@ export default function ResetPasswordScreen() {
     <>
       <View className="mb-12">
         <Text 
-          className="text-black mb-2"
-          style={{ 
-            fontFamily: 'Helvetica Neue',
-            fontSize: 28,
-            fontWeight: '500',
-            lineHeight: 32,
-            letterSpacing: -0.5
-          }}
+          className="mb-2"
+          style={RESET_TITLE_STYLE}
         >
           Password Reset
         </Text>
         <Text 
-          className="text-[#1A1A1A] opacity-60"
-          style={{ 
-            fontFamily: 'Helvetica Neue',
-            fontSize: 14,
-            fontWeight: '400',
-            lineHeight: 20
-          }}
+          style={RESET_DESCRIPTION_STYLE}
         >
           Your password had been successfully reset. Click confirm to set a new password.
         </Text>
@@ -73,8 +107,7 @@ export default function ResetPasswordScreen() {
         className="bg-[#1A1A1A] py-5 items-center w-full mt-8"
       >
         <Text 
-          className="text-white text-sm font-bold tracking-[2px] uppercase"
-          style={{ fontFamily: 'Helvetica Neue' }}
+          style={BUTTON_TEXT_STYLE}
         >
           CONFIRM & CONTINUE
         </Text>
@@ -86,25 +119,13 @@ export default function ResetPasswordScreen() {
     <>
       <View className="mb-12">
         <Text 
-          className="text-black mb-2"
-          style={{ 
-            fontFamily: 'Helvetica Neue',
-            fontSize: 28,
-            fontWeight: '500',
-            lineHeight: 32,
-            letterSpacing: -0.5
-          }}
+          className="mb-2"
+          style={RESET_TITLE_STYLE}
         >
           Password Reset
         </Text>
         <Text 
-          className="text-[#1A1A1A] opacity-60"
-          style={{ 
-            fontFamily: 'Helvetica Neue',
-            fontSize: 14,
-            fontWeight: '400',
-            lineHeight: 20
-          }}
+          style={RESET_DESCRIPTION_STYLE}
         >
           Create a new password. Ensure it different form previous ones for security.
         </Text>
@@ -113,14 +134,8 @@ export default function ResetPasswordScreen() {
       <View className="gap-10 mb-20">
         <View className="border-b border-[#E0E0E0] pb-2 relative">
           <Text 
-            className="text-[#1A1A1A]/50 uppercase mb-1"
-            style={{ 
-              fontFamily: 'Helvetica Neue',
-              fontSize: 12,
-              fontWeight: '300',
-              lineHeight: 12,
-              letterSpacing: 0.72
-            }}
+            className="mb-1"
+            style={INPUT_HEADING_STYLE}
           >
             NEW PASSWORD *
           </Text>
@@ -140,14 +155,8 @@ export default function ResetPasswordScreen() {
 
         <View className="border-b border-[#E0E0E0] pb-2 relative">
           <Text 
-            className="text-[#1A1A1A]/50 uppercase mb-1"
-            style={{ 
-              fontFamily: 'Helvetica Neue',
-              fontSize: 12,
-              fontWeight: '300',
-              lineHeight: 12,
-              letterSpacing: 0.72
-            }}
+            className="mb-1"
+            style={INPUT_HEADING_STYLE}
           >
             RE-ENDER NEW PASSWORD *
           </Text>
@@ -176,8 +185,7 @@ export default function ResetPasswordScreen() {
           <ActivityIndicator color="white" />
         ) : (
           <Text 
-            className="text-white text-sm font-bold tracking-[2px] uppercase"
-            style={{ fontFamily: 'Helvetica Neue' }}
+            style={BUTTON_TEXT_STYLE}
           >
             UPDATE PASSWORD
           </Text>
@@ -190,25 +198,13 @@ export default function ResetPasswordScreen() {
     <>
       <View className="mb-12">
         <Text 
-          className="text-black mb-2"
-          style={{ 
-            fontFamily: 'Helvetica Neue',
-            fontSize: 28,
-            fontWeight: '500',
-            lineHeight: 32,
-            letterSpacing: -0.5
-          }}
+          className="mb-2"
+          style={RESET_TITLE_STYLE}
         >
           Password Reset
         </Text>
         <Text 
-          className="text-[#1A1A1A] opacity-60"
-          style={{ 
-            fontFamily: 'Helvetica Neue',
-            fontSize: 14,
-            fontWeight: '400',
-            lineHeight: 20
-          }}
+          style={RESET_DESCRIPTION_STYLE}
         >
           Your password had been successfully reset. Click confirm to log in to your account.
         </Text>
@@ -220,8 +216,7 @@ export default function ResetPasswordScreen() {
         className="bg-[#1A1A1A] py-5 items-center w-full mt-8"
       >
         <Text 
-          className="text-white text-sm font-bold tracking-[2px] uppercase"
-          style={{ fontFamily: 'Helvetica Neue' }}
+          style={BUTTON_TEXT_STYLE}
         >
           CONFIRM & CONTINUE
         </Text>

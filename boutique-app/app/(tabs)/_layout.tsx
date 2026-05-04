@@ -1,6 +1,7 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { Platform, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from 'react-native-svg';
 
 function TabLabel({ label, focused }: { label: string; focused: boolean }) {
@@ -135,6 +136,9 @@ function ProfileIcon({ focused }: { focused: boolean }) {
 }
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, 8);
+
   return (
     <Tabs
       screenOptions={{
@@ -145,12 +149,14 @@ export default function TabLayout() {
           backgroundColor: '#FFFFFF',
           borderTopWidth: 1,
           borderTopColor: '#F0F0F0',
-          height: Platform.OS === 'ios' ? 96 : 76,
-          paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+          height: 68 + bottomInset,
+          paddingBottom: bottomInset,
           paddingTop: 8,
         },
         tabBarItemStyle: {
           paddingTop: 4,
+          paddingBottom: 0,
+          justifyContent: 'center',
         },
       }}
     >
