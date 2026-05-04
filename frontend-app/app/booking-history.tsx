@@ -22,7 +22,7 @@ function formatWhen(raw?: string | null) {
 export default function BookingHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticated = useAuthStore((s: { isAuthenticated: boolean }) => s.isAuthenticated);
   const items = useBookingHistoryStore((state) => state.items);
   const lastSyncedAt = useBookingHistoryStore((state) => state.lastSyncedAt);
   const setFromApi = useBookingHistoryStore((state) => state.setFromApi);

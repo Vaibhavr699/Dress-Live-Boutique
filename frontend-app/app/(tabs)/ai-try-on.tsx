@@ -687,7 +687,7 @@ export default function AITryOnScreen() {
               onPress={() =>
                 router.replace({
                   pathname: '/(tabs)/boutique-details',
-                  params: { id: String(dress.boutique_id) },
+                  params: { boutiqueId: String(dress.boutique_id) },
                 } as any)
               }
               className="w-full bg-black py-5 items-center justify-center mb-3"

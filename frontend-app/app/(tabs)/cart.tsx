@@ -36,7 +36,7 @@ const EMPTY_STATE_SUBHEADING_STYLE = {
 export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticated = useAuthStore((s: { isAuthenticated: boolean }) => s.isAuthenticated);
   const cartItems = useCartStore((state) => state.items);
   const removeItem = useCartStore((state) => state.removeItem);
   const toggleSelected = useCartStore((state) => state.toggleSelected);

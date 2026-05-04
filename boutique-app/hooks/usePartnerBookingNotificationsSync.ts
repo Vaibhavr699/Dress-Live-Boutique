@@ -26,8 +26,8 @@ type PartnerBooking = {
 
 export function usePartnerBookingNotificationsSync(enabled: boolean) {
   const upsert = useNotificationStore((s) => s.upsert);
-  const token = useAuthStore((s) => s.token);
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const token = useAuthStore((s: { token: string | null }) => s.token);
+  const isAuthenticated = useAuthStore((s: { isAuthenticated: boolean }) => s.isAuthenticated);
   const appStateRef = useRef(AppState.currentState);
 
   useEffect(() => {

@@ -165,7 +165,7 @@ function extractTimeFromScheduledFor(value: string | undefined): string | null {
 
 export default function BookingCalendarScreen() {
   const router = useRouter();
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticated = useAuthStore((s: { isAuthenticated: boolean }) => s.isAuthenticated);
   const guestDressIds = useShortlistStore((state) => state.dressIds);
   const params = useLocalSearchParams<{
     dressId?: string;

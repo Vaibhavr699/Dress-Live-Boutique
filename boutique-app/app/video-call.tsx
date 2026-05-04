@@ -212,13 +212,7 @@ function StatusChip({ label, tone = 'green' }: { label: string; tone?: 'green' |
   );
 }
 
-function WaitingPreview({
-  title,
-  showPreviewTag,
-}: {
-  title: string;
-  showPreviewTag?: boolean;
-}) {
+function WaitingPreview({ title }: { title: string }) {
   return (
     <>
       <View className="bg-black h-[320px] w-full" />
@@ -247,7 +241,7 @@ function WaitingPreview({
       </View>
 
       <Text className="text-[10px] text-black/25 text-center mt-10">
-        {showPreviewTag ? 'Waiting For The Call Session To Start' : 'Waiting For The Call Session To Start'}
+        Waiting For The Call Session To Start
       </Text>
     </>
   );
@@ -526,10 +520,7 @@ export default function BoutiqueVideoCallScreen() {
               </View>
             )
           ) : (
-            <WaitingPreview
-              title={stage === 'analysis' ? 'Waiting For Advisor To Join' : 'Waiting For Advisor To Join'}
-              showPreviewTag={stage === 'analysis'}
-            />
+            <WaitingPreview title="Waiting For Advisor To Join" />
           )}
         </View>
 
