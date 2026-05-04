@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -11,7 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import settings
+from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
+from app.models.user import User
 
 router = APIRouter()
 
@@ -31,6 +34,18 @@ class TryOnPreviewPayload(BaseModel):
     dress_id: int
     full_body_image_data_url: str
     selfie_image_data_url: Optional[str] = None
+
+
+class LiveTryOnFramePayload(BaseModel):
+    booking_id: int
+    dress_id: int
+    frame_data_url: str
+
+
+# In-memory rate limiter: booking_id → monotonic timestamp of last accepted request.
+# Pruned on each request to prevent unbounded growth.
+_live_tryon_last_request: dict[int, float] = {}
+_LIVE_TRYON_MIN_INTERVAL_SECONDS = 3.0
 
 
 def _decode_image_bytes(image_bytes: bytes):
@@ -629,5 +644,145 @@ async def preview_tryon_base64(
         dress_id=payload.dress_id,
         full_body_image_bytes=full_body_image_bytes,
         selfie_image_bytes=selfie_image_bytes,
+    )
+
+
+def _build_live_tryon_response(
+    *,
+    db: Session,
+    dress_id: int,
+    frame_image_bytes: bytes,
+) -> dict[str, Any]:
+    """
+    Render a try-on for a live video frame.
+    Unlike the pre-booking flow, we skip strict full-body pose validation —
+    live camera frames may not satisfy all pose heuristics but are still
+    good enough for the dress overlay.
+    """
+    dress = crud_dress.get(db, id=dress_id)
+    if not dress:
+        raise HTTPException(status_code=404, detail="Dress not found.")
+    if dress.is_ai_enabled is False:
+        raise HTTPException(status_code=400, detail="This dress is not enabled for AI try-on.")
+
+    garment_url = (dress.ai_model_url or dress.image_url or "").strip()
+    if not garment_url:
+        raise HTTPException(status_code=400, detail="This dress does not have an AI garment image yet.")
+
+    garment_bytes = _download_image_bytes(garment_url)
+
+    if _runpod_tryon_enabled():
+        image_data_url, preview_details = _render_tryon_via_runpod(
+            dress_id=dress.id,
+            dress_name=dress.name,
+            garment_url=garment_url,
+            garment_image_bytes=garment_bytes,
+            full_body_image_bytes=frame_image_bytes,
+        )
+    else:
+        person_img_bgr = _decode_image_bytes(frame_image_bytes)
+        garment_img = _decode_image_with_alpha(garment_bytes)
+        try:
+            preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
+        except HTTPException:
+            # Person detection failed on this frame — overlay garment at frame center as fallback.
+            preview_bgr, preview_details = _compose_tryon_center_fallback(person_img_bgr, garment_img)
+        image_data_url = _encode_png_data_url(preview_bgr)
+
+    return {
+        "ok": True,
+        "dress": {
+            "id": dress.id,
+            "name": dress.name,
+            "image_url": dress.image_url,
+            "ai_model_url": dress.ai_model_url,
+        },
+        "image_data_url": image_data_url,
+        "details": preview_details,
+    }
+
+
+def _compose_tryon_center_fallback(person_img_bgr, garment_img) -> tuple[Any, dict[str, Any]]:
+    """Overlay garment at frame center when HOG person detection fails on a live frame."""
+    try:
+        import cv2
+        import numpy as np
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    p_h, p_w = person_img_bgr.shape[:2]
+    garment_bgr, garment_alpha = _extract_garment_rgba(garment_img)
+    g_h, g_w = garment_bgr.shape[:2]
+
+    target_width = max(100, int(p_w * 0.55))
+    target_height = max(100, int(target_width * (g_h / max(g_w, 1))))
+    target_height = min(target_height, int(p_h * 0.75))
+
+    overlay_x = max(0, (p_w - target_width) // 2)
+    overlay_y = max(0, int(p_h * 0.15))
+
+    resized_garment = cv2.resize(garment_bgr, (target_width, target_height), interpolation=cv2.INTER_AREA)
+    resized_alpha = cv2.resize(garment_alpha, (target_width, target_height), interpolation=cv2.INTER_AREA)
+    alpha_mask = (resized_alpha.astype(np.float32) / 255.0)[..., None]
+
+    result = person_img_bgr.copy()
+    roi = result[overlay_y:overlay_y + target_height, overlay_x:overlay_x + target_width].astype(np.float32)
+    blended = resized_garment.astype(np.float32) * alpha_mask + roi * (1.0 - alpha_mask)
+    result[overlay_y:overlay_y + target_height, overlay_x:overlay_x + target_width] = blended.astype(np.uint8)
+
+    return result, {
+        "renderer": "local_center_fallback",
+        "overlay_box": {"x": overlay_x, "y": overlay_y, "width": target_width, "height": target_height},
+    }
+
+
+@router.post("/live-tryon-frame", response_model=dict)
+async def live_tryon_frame(
+    *,
+    payload: LiveTryOnFramePayload,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Live video call try-on triggered when the consultant switches a dress.
+
+    The buyer's app captures a camera frame, sends it here, and receives a
+    dress-applied image back. Skips strict pose validation used in the
+    pre-booking flow since live frames are inherently variable.
+
+    Rate-limited to one request per 3 seconds per booking to protect the
+    RunPod AI pipeline from being overwhelmed during an active call.
+    """
+    if current_user.role != "buyer":
+        raise HTTPException(status_code=403, detail="Only buyers can request live try-on frames.")
+
+    booking = crud_booking.get(db, id=payload.booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found.")
+    if booking.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed for this booking.")
+    if booking.appointment_type != "video":
+        raise HTTPException(status_code=400, detail="This booking is not a video appointment.")
+
+    # Prune stale entries (older than 60 s) to keep the dict small
+    now = time.monotonic()
+    stale = [k for k, v in _live_tryon_last_request.items() if now - v > 60]
+    for k in stale:
+        _live_tryon_last_request.pop(k, None)
+
+    last = _live_tryon_last_request.get(payload.booking_id, 0.0)
+    if now - last < _LIVE_TRYON_MIN_INTERVAL_SECONDS:
+        remaining = round(_LIVE_TRYON_MIN_INTERVAL_SECONDS - (now - last), 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Try-on is still processing. Please wait {remaining}s before the next frame.",
+        )
+    _live_tryon_last_request[payload.booking_id] = now
+
+    frame_image_bytes = _decode_data_url_image_bytes(payload.frame_data_url)
+    return _build_live_tryon_response(
+        db=db,
+        dress_id=payload.dress_id,
+        frame_image_bytes=frame_image_bytes,
     )
 
