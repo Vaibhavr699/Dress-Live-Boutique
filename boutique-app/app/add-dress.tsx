@@ -411,6 +411,11 @@ export default function AddDressScreen() {
     [mediaError, nameError, priceError, selectedSizes.length]
   );
 
+  const aiServicesSelected = useMemo(
+    () => selectedServices.includes('AI TRY ON') || selectedServices.includes('LIVE TRY-ON'),
+    [selectedServices]
+  );
+
   const handleSave = async () => {
     if (!name.trim() || !price.trim()) {
       Alert.alert('Error', 'Please fill in dress name and final price.');
@@ -424,9 +429,7 @@ export default function AddDressScreen() {
 
     setLoading(true);
     try {
-      const aiRequested =
-        selectedServices.includes('AI TRY ON') ||
-        selectedServices.includes('LIVE TRY-ON');
+      const aiRequested = aiServicesSelected;
 
       const uploadedUrl = await ensureRemoteImageUrl(frontImage || backImage);
       if (!uploadedUrl) {
@@ -742,25 +745,75 @@ export default function AddDressScreen() {
               previewUri={backImage}
               onPress={() => pickAsset(setBackImage)}
             />
-            <UploadRow
-              label="Upload AI Garment Image"
-              hasFile={!!aiGarmentImage}
-              previewUri={aiGarmentImage}
-              onPress={() => pickAsset(setAiGarmentImage)}
-            />
-            <Text className="text-[10px] text-black/45 leading-5 mb-4">
-              Optional but recommended for better AI results. Use a clean front-facing dress photo with minimal background and the full dress visible.
-            </Text>
+
+            {/* AI Garment Image — shown always, more prominent when AI is selected */}
+            <View className={`mb-2 ${aiServicesSelected ? 'border border-black/10 p-4 rounded-sm' : ''}`}>
+              {aiServicesSelected && (
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-[10px] font-bold uppercase tracking-[0.8px] text-black">
+                    AI Garment Image
+                  </Text>
+                  {aiGarmentImage ? (
+                    <View className="flex-row items-center bg-[#EEF8EE] px-2 py-1 rounded-full">
+                      <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+                      <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">AI Ready</Text>
+                    </View>
+                  ) : (
+                    <View className="flex-row items-center bg-[#FFF4EC] px-2 py-1 rounded-full">
+                      <View className="w-1.5 h-1.5 rounded-full bg-[#C9491A] mr-1.5" />
+                      <Text className="text-[#C9491A] text-[8px] uppercase tracking-[0.6px]">Using Fallback</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <UploadRow
+                label={aiServicesSelected ? '' : 'Upload AI Garment Image'}
+                hasFile={!!aiGarmentImage}
+                previewUri={aiGarmentImage}
+                onPress={() => pickAsset(setAiGarmentImage)}
+              />
+
+              {/* Guidance — more detailed when AI is selected */}
+              {aiServicesSelected ? (
+                <View className="bg-[#F9F9F9] p-4 rounded-sm mb-2">
+                  <Text className="text-[10px] font-bold uppercase tracking-[0.6px] text-black/50 mb-3">
+                    What to upload
+                  </Text>
+                  {[
+                    ['✓', 'Dress photographed flat or on a hanger'],
+                    ['✓', 'Plain white or transparent background'],
+                    ['✓', 'Full dress visible — top to hem'],
+                    ['✗', 'No model wearing the dress'],
+                    ['✗', 'No busy or cluttered backgrounds'],
+                  ].map(([icon, tip], i) => (
+                    <View key={i} className="flex-row items-start mb-1.5">
+                      <Text className={`text-[10px] mr-2 ${icon === '✓' ? 'text-[#4EA35D]' : 'text-[#C9491A]'}`}>
+                        {icon}
+                      </Text>
+                      <Text className="text-[10px] text-black/60 flex-1 leading-4">{tip}</Text>
+                    </View>
+                  ))}
+                  {!aiGarmentImage && (
+                    <View className="mt-3 pt-3 border-t border-[#ECECEC]">
+                      <Text className="text-[10px] text-[#C9491A] leading-4">
+                        No AI garment image uploaded. The main dress photo will be used as fallback — this may reduce try-on accuracy.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <Text className="text-[10px] text-black/45 leading-5 mb-4">
+                  Required when AI Try-On or Live Try-On is enabled. Upload a clean front-facing dress photo on a white or transparent background — no model.
+                </Text>
+              )}
+            </View>
+
             <UploadRow
               label="Upload AI Video Try For AI 3D Photo *"
               hasFile={!!videoAsset}
               previewUri={videoAsset}
               onPress={() => pickAsset(setVideoAsset)}
-            />
-
-            <SectionHeader
-              title="3D / AI Overlay Ready"
-              subtitle="If no separate AI garment image is uploaded, the main dress photo will be used as the fallback try-on asset."
             />
 
             <View className="border-t border-[#EFEFEF] pt-5 mt-2 mb-6">

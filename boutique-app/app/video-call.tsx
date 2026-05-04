@@ -111,7 +111,15 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
         >
           <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} />
         </View>
-      ) : null}
+      ) : (
+        <View
+          className="absolute right-4 top-4 border border-white/70 bg-black/80 overflow-hidden items-center justify-center px-2"
+          style={{ width: 112, height: 152, borderRadius: 18 }}
+        >
+          <Ionicons name="videocam-off-outline" size={20} color="rgba(255,255,255,0.75)" />
+          <Text className="text-white/60 text-[9px] text-center mt-2 leading-3">Camera off</Text>
+        </View>
+      )}
 
       {/* Advisor: switch outfit (signals customer UI; live AI renderer consumes this next). */}
       <View className="absolute left-3 right-3 bottom-3">
@@ -270,6 +278,7 @@ export default function BoutiqueVideoCallScreen() {
   const [bookingDresses, setBookingDresses] = useState<VideoCallBookingDress[]>([]);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [speakerOn, setSpeakerOn] = useState(true);
+  const [cameraOn, setCameraOn] = useState(true);
   const [lkConnected, setLkConnected] = useState(false);
 
   const bookingId = useMemo(() => {
@@ -308,6 +317,10 @@ export default function BoutiqueVideoCallScreen() {
       }
     })();
   }, [lkConnected, speakerOn]);
+
+  const toggleCamera = () => {
+    setCameraOn((current) => !current);
+  };
 
   useEffect(() => {
     if (stageIndex >= STAGE_SEQUENCE.length - 1) {
@@ -500,7 +513,7 @@ export default function BoutiqueVideoCallScreen() {
                     token={tokenData.token}
                     connect={true}
                     audio={true}
-                    video={true}
+                    video={cameraOn}
                     options={{ adaptiveStream: { pixelDensity: 'screen' } }}
                     onConnected={() => {
                       setLkConnected(true);
@@ -543,6 +556,17 @@ export default function BoutiqueVideoCallScreen() {
                 style={{ opacity: lkConnected ? 1 : 0.4, elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 }}
               >
                 <Feather name={speakerOn ? 'volume-2' : 'volume-x'} size={22} color={speakerOn ? 'black' : 'white'} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={toggleCamera}
+                disabled={!lkConnected}
+                className={`w-14 h-14 rounded-full items-center justify-center ml-4 ${
+                  cameraOn ? 'bg-[#F9F9F9]' : 'bg-[#FF3B30]'
+                }`}
+                style={{ opacity: lkConnected ? 1 : 0.4, elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 }}
+              >
+                <Feather name={cameraOn ? 'video' : 'video-off'} size={22} color={cameraOn ? 'black' : 'white'} />
               </TouchableOpacity>
             </View>
 
