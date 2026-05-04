@@ -278,9 +278,7 @@ export default function VideoCallScreen() {
       console.warn('Failed to mark booking completed:', error);
     } finally {
       setEnding(false);
-      setCallState('waiting');
       const elapsed = seconds;
-      setSeconds(0);
       router.replace({
         pathname: '/video-call-summary',
         params: {

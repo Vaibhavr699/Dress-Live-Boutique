@@ -29,12 +29,6 @@ type Booking = {
   boutique?: { name?: string | null; location?: string | null } | null;
 };
 
-function formatBookingRef(id: number) {
-  const n = Number(id);
-  const safe = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-  return `DL-BOOK-${String(safe).padStart(6, '0')}`;
-}
-
 export default function BookingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();

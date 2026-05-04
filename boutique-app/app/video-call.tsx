@@ -224,16 +224,7 @@ function WaitingPreview({
       <View className="bg-black h-[320px] w-full" />
 
       <View className="items-center mt-4">
-        <View className="flex-row items-center">
-          <TouchableOpacity className="w-10 h-10 items-center justify-center">
-            <Ionicons name="mic-off-outline" size={18} color="#111111" />
-          </TouchableOpacity>
-          <TouchableOpacity className="w-10 h-10 items-center justify-center ml-2">
-            <Ionicons name="videocam-outline" size={18} color="#111111" />
-          </TouchableOpacity>
-        </View>
-
-        <Text className="text-[16px] text-black mt-5">{title}</Text>
+        <Text className="text-[16px] text-black">{title}</Text>
         <Text className="text-[10px] text-black/35 text-center mt-2 leading-4 px-8">
           Your session will begin automatically as soon as the boutique advisor joins.
         </Text>

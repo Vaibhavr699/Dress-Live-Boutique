@@ -641,7 +641,7 @@ export default function AITryOnScreen() {
               </Text>
               {dress ? (
                 <Text className="text-black/45 text-[11px] leading-5 mt-3 text-center px-6">
-                  Preview generated for {(dress.name || '').trim() || `Dress #${dress.id}`}. You can now continue to booking from the dress page.
+                  Preview generated for {(dress.name || '').trim() || `Dress #${dress.id}`}.
                 </Text>
               ) : null}
             </View>
@@ -681,19 +681,38 @@ export default function AITryOnScreen() {
           className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 pb-12"
           style={{ paddingBottom: insets.bottom + 20 }}
         >
-          <TouchableOpacity 
+          {currentStep.type === 'result' && dress?.boutique_id ? (
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() =>
+                router.replace({
+                  pathname: '/(tabs)/boutique-details',
+                  params: { id: String(dress.boutique_id) },
+                } as any)
+              }
+              className="w-full bg-black py-5 items-center justify-center mb-3"
+            >
+              <Text className="text-white text-[12px] font-bold tracking-[3px] uppercase">Book This Dress</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleNext}
             disabled={currentStep.type === 'analysis' || rendering}
-            className="w-full bg-black py-5 items-center justify-center"
+            className={`w-full py-5 items-center justify-center ${currentStep.type === 'result' ? 'border border-black' : 'bg-black'}`}
             style={{ opacity: currentStep.type === 'analysis' || rendering ? 0.55 : 1 }}
           >
-            <Text className="text-white text-[12px] font-bold tracking-[3px] uppercase">
+            <Text
+              className="text-[12px] font-bold tracking-[3px] uppercase"
+              style={{ color: currentStep.type === 'result' ? '#000' : '#fff' }}
+            >
               {currentStep.type === 'result' ? 'Done' : currentStep.type === 'analysis' ? 'Creating preview' : 'Continue'}
             </Text>
           </TouchableOpacity>
+
           {currentStep.type === 'confirmation' && (
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setStep(step - 1)}
               className="mt-4 items-center"
             >
