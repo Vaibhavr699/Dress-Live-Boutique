@@ -279,10 +279,14 @@ export default function VideoCallScreen() {
     } finally {
       setEnding(false);
       setCallState('waiting');
+      const elapsed = seconds;
       setSeconds(0);
       router.replace({
         pathname: '/video-call-summary',
-        params: { bookingId: bookingId ? String(bookingId) : '' },
+        params: {
+          bookingId: bookingId ? String(bookingId) : '',
+          durationSeconds: String(elapsed),
+        },
       } as any);
     }
   };
