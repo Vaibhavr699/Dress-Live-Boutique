@@ -222,14 +222,25 @@ export default function BookingScreen() {
           className="flex-1"
           contentContainerStyle={{ paddingTop: 24, paddingBottom: 100 }}
         >
-          {bookings.map((booking) => (
+          {bookings.map((booking) => {
+            const isActionable = booking.status === 'accepted' || booking.status === 'rescheduled';
+            const isTerminal = booking.status === 'rejected' || booking.status === 'completed';
+            const statusLabel =
+              booking.status === 'requested' ? 'Awaiting Confirmation' :
+              booking.status === 'rejected'  ? 'Booking Declined' :
+              booking.status === 'completed' ? 'Call Completed' : null;
+            const actionLabel =
+              booking.appointment_type === 'video' ? 'Start Video Call' : 'See Google Map';
+
+            return (
             <View key={booking.id} className="px-5 mb-10">
               <Text className="text-black text-[14px] font-[400] uppercase mb-5 tracking-[0px]">
                 {booking.appointment_type === 'video' ? 'VIDEO CALL BOOKED' : 'STORE VISIT BOOKED'}
               </Text>
-              
+
               <View className="border border-black rounded-sm" style={{ height: 256, position: 'relative' }}>
-                {/* Actions Row */}
+                {/* Actions Row — hidden for terminal statuses */}
+                {!isTerminal && (
                 <View className="absolute right-4 top-3 flex-row gap-5 z-10">
                   <TouchableOpacity
                     onPress={() =>
@@ -250,6 +261,7 @@ export default function BookingScreen() {
                     <Feather name="trash-2" size={16} color="black" />
                   </TouchableOpacity>
                 </View>
+                )}
 
                 {/* Details Section */}
                 <View className="px-6 pt-5">
@@ -335,8 +347,10 @@ export default function BookingScreen() {
                 </View>
 
                 {/* Main Action Button */}
-                <TouchableOpacity 
+                <TouchableOpacity
+                  disabled={!isActionable}
                   onPress={() => {
+                    if (!isActionable) return;
                     if (booking.appointment_type === 'video') {
                       router.push({ pathname: '/(tabs)/video-call', params: { bookingId: String(booking.id) } } as any);
                       return;
@@ -344,16 +358,20 @@ export default function BookingScreen() {
                     const locationQuery = booking.location || booking.boutique?.location || '';
                     void openGoogleMaps(locationQuery);
                   }}
-                   className="absolute left-0 right-0 bottom-0 bg-black items-center justify-center"
-                   style={{ height: 48 }}
+                  className="absolute left-0 right-0 bottom-0 items-center justify-center"
+                  style={{ height: 48, backgroundColor: isActionable ? '#000' : '#F2F2F2' }}
                 >
-                  <Text className="text-white text-[12px] font-bold tracking-[2.5px] uppercase">
-                    {booking.appointment_type === 'video' ? 'Start Video Call' : 'See Google Map'}
+                  <Text
+                    className="text-[12px] font-bold tracking-[2.5px] uppercase"
+                    style={{ color: isActionable ? '#fff' : '#AAAAAA' }}
+                  >
+                    {statusLabel ?? actionLabel}
                   </Text>
                 </TouchableOpacity>
               </View>
             </View>
-          ))}
+            );
+          })}
 
           {/* If there are bookings but fewer than multiple types, we could show empty placeholder logic but for now simple listing is best */}
         </ScrollView>
