@@ -58,7 +58,7 @@ export function useIncomingVideoRingPoller(enabled: boolean) {
     });
 
     tick();
-    const id = setInterval(tick, 12000);
+    const id = setInterval(tick, 30000);
     return () => {
       cancelled = true;
       sub.remove();

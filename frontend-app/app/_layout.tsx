@@ -156,8 +156,6 @@ export default function RootLayout() {
     const isProtectedForGuests =
       (inTabsGroup &&
         [
-          'booking',
-          'booking-calendar',
           'checkout',
           'order-summary',
           'ai-try-on',
@@ -253,8 +251,13 @@ export default function RootLayout() {
   }, [router]);
 
   const onBuyerVideoCallRoute = segments[0] === '(tabs)' && segments[1] === 'video-call';
+  const hasActiveVideoBooking = useBookingHistoryStore(
+    (s) => s.items.some(
+      (b) => b.appointment_type === 'video' && ['requested', 'accepted', 'rescheduled'].includes(b.status)
+    )
+  );
   useIncomingVideoRingPoller(
-    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute
+    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute && hasActiveVideoBooking
   );
 
   if (!appReady) {
