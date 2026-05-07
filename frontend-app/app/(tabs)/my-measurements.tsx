@@ -54,6 +54,7 @@ export default function MyMeasurementsScreen() {
   // Scan inputs
   const [weightKg, setWeightKg] = useState('');
   const [age, setAge] = useState('');
+  const [gender, setGender] = useState<'female' | 'male' | ''>('');
 
   // Measurement fields
   const [m, setM] = useState<Measurements>(EMPTY);
@@ -97,6 +98,10 @@ export default function MyMeasurementsScreen() {
       Alert.alert('Required', 'Please enter your height and weight before scanning.');
       return;
     }
+    if (!age.trim() || !gender) {
+      Alert.alert('Required', 'Please enter your age and select your gender before scanning.');
+      return;
+    }
     if (!permission?.granted) {
       const result = await requestPermission();
       if (!result.granted) {
@@ -118,7 +123,8 @@ export default function MyMeasurementsScreen() {
       const data: any = await api.post('/users/me/measurements/scan', {
         height_cm: parseFloat(m.height_cm),
         weight_kg: parseFloat(weightKg),
-        age: age.trim() ? parseInt(age, 10) : undefined,
+        age: parseInt(age, 10),
+        gender,
         front_image_data_url: `data:image/jpeg;base64,${photo.base64}`,
       });
 
@@ -144,13 +150,14 @@ export default function MyMeasurementsScreen() {
 
   const handleSave = async () => {
     const body: Record<string, number> = {};
-    const pairs: [keyof Measurements, string][] = [
+    const pairs: [string, string][] = [
       ['height_cm', m.height_cm],
       ['bust_cm', m.bust_cm],
       ['waist_cm', m.waist_cm],
       ['hips_cm', m.hips_cm],
       ['shoulder_cm', m.shoulder_cm],
       ['arm_length_cm', m.arm_length_cm],
+      ['weight_kg', weightKg],
     ];
     for (const [key, val] of pairs) {
       const n = parseFloat(val);
@@ -212,7 +219,7 @@ export default function MyMeasurementsScreen() {
   if (step === 'camera') {
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <CameraView ref={cameraRef} style={{ flex: 1 }} facing="front" />
+        <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back" />
 
         <View style={{ position: 'absolute', top: insets.top + 10, left: 20 }}>
           <TouchableOpacity onPress={handleBack}>
@@ -337,9 +344,42 @@ export default function MyMeasurementsScreen() {
             <MeasurementInput value={weightKg} onChangeText={setWeightKg} />
           </View>
 
-          <View className="mb-8">
-            <Label>Age (optional)</Label>
+          <View className="mb-6">
+            <Label>Age *</Label>
             <MeasurementInput value={age} onChangeText={setAge} />
+          </View>
+
+          <View className="mb-8">
+            <Label>Gender *</Label>
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+              {(['female', 'male'] as const).map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  onPress={() => setGender(g)}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 8,
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderColor: gender === g ? '#000' : '#E0E0E0',
+                    backgroundColor: gender === g ? '#000' : 'transparent',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: 'Helvetica Neue',
+                      fontWeight: '300',
+                      fontSize: 12,
+                      letterSpacing: 1.5,
+                      textTransform: 'uppercase',
+                      color: gender === g ? '#fff' : '#000',
+                    }}
+                  >
+                    {g}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           <TouchableOpacity

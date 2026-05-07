@@ -48,13 +48,14 @@ class MeasurementScanPayload(BaseModel):
     height_cm: float
     weight_kg: float
     front_image_data_url: str
-    age: Optional[int] = None
-    gender: Optional[str] = None
+    age: int
+    gender: str  # "male" | "female"
     side_image_data_url: Optional[str] = None
 
 
 class MeasurementManualPayload(BaseModel):
     height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
     bust_cm: Optional[float] = None
     waist_cm: Optional[float] = None
     hips_cm: Optional[float] = None
