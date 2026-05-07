@@ -20,6 +20,7 @@ from app.crud.crud_user import crud_user
 from app.models.user import User
 from app.schemas.boutique import BoutiqueCreate
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
+from app.services import bodygram as bodygram_service
 
 router = APIRouter()
 
@@ -41,6 +42,24 @@ class PasswordOtpVerifyPayload(BaseModel):
 class DeleteAccountPayload(BaseModel):
     password: str
     email: Optional[str] = None
+
+
+class MeasurementScanPayload(BaseModel):
+    height_cm: float
+    weight_kg: float
+    front_image_data_url: str
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    side_image_data_url: Optional[str] = None
+
+
+class MeasurementManualPayload(BaseModel):
+    height_cm: Optional[float] = None
+    bust_cm: Optional[float] = None
+    waist_cm: Optional[float] = None
+    hips_cm: Optional[float] = None
+    shoulder_cm: Optional[float] = None
+    arm_length_cm: Optional[float] = None
 
 
 class PasswordResetOtpSendPayload(BaseModel):
@@ -499,6 +518,72 @@ async def verify_password_change_otp(
         },
     )
     return user
+
+
+def _measurements_dict(user: User) -> dict:
+    return {
+        "height_cm": user.height_cm,
+        "weight_kg": user.weight_kg,
+        "bust_cm": user.bust_cm,
+        "waist_cm": user.waist_cm,
+        "hips_cm": user.hips_cm,
+        "shoulder_cm": user.shoulder_cm,
+        "arm_length_cm": user.arm_length_cm,
+        "measurements_source": user.measurements_source,
+    }
+
+
+@router.get("/me/measurements")
+def get_measurements(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    return _measurements_dict(current_user)
+
+
+@router.post("/me/measurements/scan")
+async def scan_measurements(
+    payload: MeasurementScanPayload,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    if not (settings.BODYGRAM_API_KEY or "").strip() or not (settings.BODYGRAM_ORG_ID or "").strip():
+        raise HTTPException(status_code=503, detail="AI measurement scan is not configured.")
+
+    try:
+        measurements = await bodygram_service.run_scan(
+            api_key=settings.BODYGRAM_API_KEY,
+            org_id=settings.BODYGRAM_ORG_ID,
+            height_cm=payload.height_cm,
+            weight_kg=payload.weight_kg,
+            front_image_data_url=payload.front_image_data_url,
+            age=payload.age,
+            gender=payload.gender,
+            side_image_data_url=payload.side_image_data_url,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    update_data = {
+        "height_cm": payload.height_cm,
+        "weight_kg": payload.weight_kg,
+        "measurements_source": "bodygram",
+        **{k: v for k, v in measurements.items() if v is not None},
+    }
+    user = crud_user.update(db, db_obj=current_user, obj_in=update_data)
+    return _measurements_dict(user)
+
+
+@router.put("/me/measurements")
+def update_measurements(
+    payload: MeasurementManualPayload,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+    update_data["measurements_source"] = "manual"
+    user = crud_user.update(db, db_obj=current_user, obj_in=update_data)
+    return _measurements_dict(user)
 
 
 @router.delete("/me")

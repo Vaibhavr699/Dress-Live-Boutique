@@ -24,6 +24,14 @@ class UserBase(BaseModel):
     country_code: Optional[str] = None
     role: Literal["buyer", "partner"] = "buyer"
     boutique_id: Optional[int] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    bust_cm: Optional[float] = None
+    waist_cm: Optional[float] = None
+    hips_cm: Optional[float] = None
+    shoulder_cm: Optional[float] = None
+    arm_length_cm: Optional[float] = None
+    measurements_source: Optional[str] = None
 
 
 # Properties to receive via API on creation

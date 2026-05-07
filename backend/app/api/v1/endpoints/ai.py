@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
 from app.models.user import User
+from app.services import fashn as fashn_service
 
 router = APIRouter()
 
@@ -110,51 +111,15 @@ def _download_image_bytes(url: str) -> bytes:
         raise HTTPException(status_code=502, detail=f"Could not load dress image for AI try-on: {e}")
 
 
-def _extract_runpod_image_data_url(payload: Any) -> Optional[str]:
-    if isinstance(payload, str):
-        candidate = payload.strip()
-        if candidate.startswith("data:image/"):
-            return candidate
-        return None
-
-    if isinstance(payload, dict):
-        for key in (
-            "image_data_url",
-            "result_image_data_url",
-            "output_image_data_url",
-            "image",
-            "result_image",
-            "data_url",
-        ):
-            candidate = payload.get(key)
-            if isinstance(candidate, str) and candidate.strip().startswith("data:image/"):
-                return candidate.strip()
-
-        for key in ("output", "result"):
-            nested = payload.get(key)
-            extracted = _extract_runpod_image_data_url(nested)
-            if extracted:
-                return extracted
-
-    if isinstance(payload, list):
-        for item in payload:
-            extracted = _extract_runpod_image_data_url(item)
-            if extracted:
-                return extracted
-
-    return None
-
-
-def _runpod_tryon_enabled() -> bool:
-    return bool((settings.RUNPOD_API_KEY or "").strip() and (settings.RUNPOD_TRYON_ENDPOINT_ID or "").strip())
+def _fashn_tryon_enabled() -> bool:
+    return bool((settings.FASHN_API_KEY or "").strip())
 
 
 def _resize_image_bytes_for_tryon(image_bytes: bytes, max_side: int = 768) -> bytes:
-    """Downscale to max_side px on the longest dimension before sending to RunPod.
+    """Downscale to max_side px on the longest dimension before sending to an external AI API.
 
-    A full phone photo is 3–5 MB as base64 which can push the RunPod API payload
-    over its practical limit. Resizing to 768 px keeps it under 200 KB while
-    preserving enough detail for garment overlay.
+    A full phone photo is 3–5 MB as base64. Resizing to 768 px keeps it under
+    200 KB while preserving enough detail for garment overlay.
     """
     try:
         import cv2
@@ -179,65 +144,6 @@ def _resize_image_bytes_for_tryon(image_bytes: bytes, max_side: int = 768) -> by
     if not ok:
         return image_bytes
     return buf.tobytes()
-
-
-def _render_tryon_via_runpod(
-    *,
-    dress_id: int,
-    dress_name: str | None,
-    garment_url: str,
-    garment_image_bytes: bytes,
-    full_body_image_bytes: bytes,
-    selfie_image_bytes: bytes | None = None,
-) -> tuple[str, dict[str, Any]]:
-    endpoint_id = (settings.RUNPOD_TRYON_ENDPOINT_ID or "").strip()
-    api_key = (settings.RUNPOD_API_KEY or "").strip()
-    if not endpoint_id or not api_key:
-        raise HTTPException(status_code=500, detail="RunPod AI try-on is not configured.")
-
-    # Resize full-body frame to ≤768 px before base64-encoding to keep the
-    # RunPod JSON payload well under the API's practical size limit (~10 MB).
-    resized_full_body = _resize_image_bytes_for_tryon(full_body_image_bytes, max_side=768)
-
-    request_body = {
-        "input": {
-            "task": "virtual-tryon",
-            "dress_id": dress_id,
-            "dress_name": dress_name or "",
-            "garment_source_url": garment_url,
-            "garment_image_data_url": _encode_image_bytes_data_url(garment_image_bytes, "image/png"),
-            "full_body_image_data_url": _encode_image_bytes_data_url(resized_full_body, "image/jpeg"),
-            "selfie_image_data_url": (
-                _encode_image_bytes_data_url(selfie_image_bytes, "image/jpeg") if selfie_image_bytes else None
-            ),
-            "return_format": "data_url",
-        }
-    }
-
-    try:
-        response = httpx.post(
-            f"https://api.runpod.ai/v2/{endpoint_id}/runsync",
-            json=request_body,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=float(settings.RUNPOD_TRYON_TIMEOUT_SECONDS or 90),
-        )
-        response.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"RunPod AI try-on is unavailable: {e}")
-
-    try:
-        payload = response.json()
-    except Exception:
-        raise HTTPException(status_code=502, detail="RunPod AI try-on returned an unreadable response.")
-
-    image_data_url = _extract_runpod_image_data_url(payload)
-    if not image_data_url:
-        raise HTTPException(status_code=502, detail="RunPod AI try-on did not return an image.")
-
-    return image_data_url, {
-        "renderer": "runpod",
-        "runpod_endpoint_id": endpoint_id,
-    }
 
 
 def _decode_image_with_alpha(image_bytes: bytes):
@@ -561,7 +467,7 @@ def _validate_image_bytes_response(image_bytes: bytes) -> dict[str, Any]:
     }
 
 
-def _build_tryon_preview_response(
+async def _build_tryon_preview_response(
     *,
     db: Session,
     dress_id: int,
@@ -579,24 +485,28 @@ def _build_tryon_preview_response(
     if not validation.ok:
         raise HTTPException(status_code=400, detail=validation.reason or "Please upload a valid full-body image.")
 
-    # Selfie is accepted for forward compatibility even though the MVP renderer does not yet use it.
-    if selfie_image_bytes is not None:
-        _ = len(selfie_image_bytes)
-
     garment_url = (dress.ai_model_url or dress.image_url or "").strip()
     if not garment_url:
         raise HTTPException(status_code=400, detail="This dress does not have an AI garment image yet.")
 
     garment_bytes = _download_image_bytes(garment_url)
-    if _runpod_tryon_enabled():
-        image_data_url, preview_details = _render_tryon_via_runpod(
-            dress_id=dress.id,
-            dress_name=dress.name,
-            garment_url=garment_url,
-            garment_image_bytes=garment_bytes,
-            full_body_image_bytes=full_body_image_bytes,
-            selfie_image_bytes=selfie_image_bytes,
-        )
+
+    if _fashn_tryon_enabled():
+        try:
+            resized_body = _resize_image_bytes_for_tryon(full_body_image_bytes, max_side=768)
+            person_data_url = _encode_image_bytes_data_url(resized_body, "image/jpeg")
+            image_data_url = await fashn_service.run_tryon(
+                api_key=settings.FASHN_API_KEY,
+                person_image_data_url=person_data_url,
+                garment_image_url=garment_url,
+                timeout_seconds=float(settings.FASHN_TIMEOUT_SECONDS),
+            )
+            preview_details = {"renderer": "fashn"}
+        except Exception as e:
+            garment_img = _decode_image_with_alpha(garment_bytes)
+            preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
+            image_data_url = _encode_png_data_url(preview_bgr)
+            preview_details["fashn_error"] = str(e)
     else:
         garment_img = _decode_image_with_alpha(garment_bytes)
         preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
@@ -655,7 +565,7 @@ async def preview_tryon(
 
     image_bytes = await full_body_file.read()
     selfie_image_bytes = await selfie_file.read() if selfie_file is not None else None
-    return _build_tryon_preview_response(
+    return await _build_tryon_preview_response(
         db=db,
         dress_id=dress_id,
         full_body_image_bytes=image_bytes,
@@ -675,7 +585,7 @@ async def preview_tryon_base64(
         if payload.selfie_image_data_url
         else None
     )
-    return _build_tryon_preview_response(
+    return await _build_tryon_preview_response(
         db=db,
         dress_id=payload.dress_id,
         full_body_image_bytes=full_body_image_bytes,
@@ -683,7 +593,7 @@ async def preview_tryon_base64(
     )
 
 
-def _build_live_tryon_response(
+async def _build_live_tryon_response(
     *,
     db: Session,
     dress_id: int,
@@ -707,21 +617,32 @@ def _build_live_tryon_response(
 
     garment_bytes = _download_image_bytes(garment_url)
 
-    if _runpod_tryon_enabled():
-        image_data_url, preview_details = _render_tryon_via_runpod(
-            dress_id=dress.id,
-            dress_name=dress.name,
-            garment_url=garment_url,
-            garment_image_bytes=garment_bytes,
-            full_body_image_bytes=frame_image_bytes,
-        )
+    if _fashn_tryon_enabled():
+        try:
+            resized_frame = _resize_image_bytes_for_tryon(frame_image_bytes, max_side=768)
+            frame_data_url = _encode_image_bytes_data_url(resized_frame, "image/jpeg")
+            image_data_url = await fashn_service.run_tryon(
+                api_key=settings.FASHN_API_KEY,
+                person_image_data_url=frame_data_url,
+                garment_image_url=garment_url,
+                timeout_seconds=float(settings.FASHN_TIMEOUT_SECONDS),
+            )
+            preview_details = {"renderer": "fashn"}
+        except Exception as e:
+            person_img_bgr = _decode_image_bytes(frame_image_bytes)
+            garment_img = _decode_image_with_alpha(garment_bytes)
+            try:
+                preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
+            except HTTPException:
+                preview_bgr, preview_details = _compose_tryon_center_fallback(person_img_bgr, garment_img)
+            image_data_url = _encode_png_data_url(preview_bgr)
+            preview_details["fashn_error"] = str(e)
     else:
         person_img_bgr = _decode_image_bytes(frame_image_bytes)
         garment_img = _decode_image_with_alpha(garment_bytes)
         try:
             preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
         except HTTPException:
-            # Person detection failed on this frame — overlay garment at frame center as fallback.
             preview_bgr, preview_details = _compose_tryon_center_fallback(person_img_bgr, garment_img)
         image_data_url = _encode_png_data_url(preview_bgr)
 
@@ -786,8 +707,8 @@ async def live_tryon_frame(
     dress-applied image back. Skips strict pose validation used in the
     pre-booking flow since live frames are inherently variable.
 
-    Rate-limited to one request per 3 seconds per booking to protect the
-    RunPod AI pipeline from being overwhelmed during an active call.
+    Rate-limited to one request per 3 seconds per booking to avoid
+    overwhelming the AI pipeline during an active call.
     """
     if current_user.role != "buyer":
         raise HTTPException(status_code=403, detail="Only buyers can request live try-on frames.")
@@ -816,7 +737,7 @@ async def live_tryon_frame(
     _live_tryon_last_request[payload.booking_id] = now
 
     frame_image_bytes = _decode_data_url_image_bytes(payload.frame_data_url)
-    return _build_live_tryon_response(
+    return await _build_live_tryon_response(
         db=db,
         dress_id=payload.dress_id,
         frame_image_bytes=frame_image_bytes,
