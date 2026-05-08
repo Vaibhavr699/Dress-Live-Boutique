@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   ScrollView,
   Text,
   TextInput,
@@ -59,6 +61,9 @@ export default function MyMeasurementsScreen() {
   // Captured photos (base64) — front captured first, then right side
   const frontPhotoRef = useRef<string | null>(null);
 
+  // Rotation animation for the side-photo step
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+
   // Measurement fields
   const [m, setM] = useState<Measurements>(EMPTY);
 
@@ -83,6 +88,33 @@ export default function MyMeasurementsScreen() {
     }
     router.back();
   }, [step, source, router]);
+
+  // Loop the 0° → 90° rotation while the side-capture step is active
+  useEffect(() => {
+    if (step !== 'camera-side') {
+      rotateAnim.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(rotateAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.delay(700),
+        Animated.timing(rotateAnim, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+        Animated.delay(400),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [step, rotateAnim]);
 
   // Load existing measurements on mount
   useEffect(() => {
@@ -250,6 +282,10 @@ export default function MyMeasurementsScreen() {
     const guidance = isFront
       ? 'Face the camera. Stand straight, arms\nslightly away from your body.'
       : 'Turn 90° to your right. Keep arms\nrelaxed at your sides.';
+    const iconRotation = rotateAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: ['0deg', '90deg'],
+    });
 
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -295,6 +331,19 @@ export default function MyMeasurementsScreen() {
             gap: 12,
           }}
         >
+          <Animated.View
+            style={{
+              width: 72,
+              height: 72,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 4,
+              transform: [{ rotate: isFront ? '0deg' : iconRotation }],
+            }}
+          >
+            <Ionicons name="body-outline" size={56} color="white" />
+          </Animated.View>
+
           <Text
             style={{
               color: 'white',
