@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../shared/api/api';
 
-type Step = 'form' | 'camera' | 'processing';
+type Step = 'form' | 'camera-front' | 'camera-side' | 'processing';
 
 interface Measurements {
   height_cm: string;
@@ -56,6 +56,9 @@ export default function MyMeasurementsScreen() {
   const [age, setAge] = useState('');
   const [gender, setGender] = useState<'female' | 'male' | ''>('');
 
+  // Captured photos (base64) — front captured first, then right side
+  const frontPhotoRef = useRef<string | null>(null);
+
   // Measurement fields
   const [m, setM] = useState<Measurements>(EMPTY);
 
@@ -63,7 +66,14 @@ export default function MyMeasurementsScreen() {
     setM((prev) => ({ ...prev, [key]: val }));
 
   const handleBack = useCallback(() => {
-    if (step === 'camera') {
+    if (step === 'camera-side') {
+      // Step back to front capture, drop the saved front photo
+      frontPhotoRef.current = null;
+      setStep('camera-front');
+      return;
+    }
+    if (step === 'camera-front') {
+      frontPhotoRef.current = null;
       setStep('form');
       return;
     }
@@ -109,7 +119,8 @@ export default function MyMeasurementsScreen() {
         return;
       }
     }
-    setStep('camera');
+    frontPhotoRef.current = null;
+    setStep('camera-front');
   };
 
   const handleCapture = async () => {
@@ -118,6 +129,19 @@ export default function MyMeasurementsScreen() {
     try {
       const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.8 });
       if (!photo?.base64) throw new Error('Could not capture photo.');
+
+      // First step: store front photo and advance to side capture
+      if (step === 'camera-front') {
+        frontPhotoRef.current = photo.base64;
+        setLoading(false);
+        setStep('camera-side');
+        return;
+      }
+
+      // Second step: send both photos to backend
+      const frontB64 = frontPhotoRef.current;
+      if (!frontB64) throw new Error('Front photo missing. Please retake.');
+
       setStep('processing');
 
       const data: any = await api.post('/users/me/measurements/scan', {
@@ -125,8 +149,11 @@ export default function MyMeasurementsScreen() {
         weight_kg: parseFloat(weightKg),
         age: parseInt(age, 10),
         gender,
-        front_image_data_url: `data:image/jpeg;base64,${photo.base64}`,
+        front_image_data_url: `data:image/jpeg;base64,${frontB64}`,
+        side_image_data_url: `data:image/jpeg;base64,${photo.base64}`,
       });
+
+      frontPhotoRef.current = null;
 
       setM({
         height_cm: fmt(data.height_cm) || m.height_cm,
@@ -141,7 +168,8 @@ export default function MyMeasurementsScreen() {
       setStep('form');
       Alert.alert('Scan complete', 'Your measurements have been updated. Review and save below.');
     } catch (e: any) {
-      setStep('camera');
+      frontPhotoRef.current = null;
+      setStep('camera-front');
       Alert.alert('Scan failed', e?.message || 'Could not process your photo. Please try again.');
     } finally {
       setLoading(false);
@@ -215,8 +243,14 @@ export default function MyMeasurementsScreen() {
     />
   );
 
-  // Camera step
-  if (step === 'camera') {
+  // Camera step (front or side)
+  if (step === 'camera-front' || step === 'camera-side') {
+    const isFront = step === 'camera-front';
+    const stepLabel = isFront ? 'Step 1 of 2 · Front' : 'Step 2 of 2 · Right side';
+    const guidance = isFront
+      ? 'Face the camera. Stand straight, arms\nslightly away from your body.'
+      : 'Turn 90° to your right. Keep arms\nrelaxed at your sides.';
+
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         <CameraView ref={cameraRef} style={{ flex: 1 }} facing="back" />
@@ -225,6 +259,30 @@ export default function MyMeasurementsScreen() {
           <TouchableOpacity onPress={handleBack}>
             <Ionicons name="arrow-back" size={28} color="white" />
           </TouchableOpacity>
+        </View>
+
+        <View
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            left: 0,
+            right: 0,
+            alignItems: 'center',
+          }}
+        >
+          <Text
+            style={{
+              color: 'white',
+              fontFamily: 'Helvetica Neue',
+              fontWeight: '400',
+              fontSize: 11,
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+              opacity: 0.9,
+            }}
+          >
+            {stepLabel}
+          </Text>
         </View>
 
         <View
@@ -249,7 +307,7 @@ export default function MyMeasurementsScreen() {
               opacity: 0.85,
             }}
           >
-            Stand straight, arms slightly out.{'\n'}Plain background works best.
+            {guidance}
           </Text>
 
           <TouchableOpacity

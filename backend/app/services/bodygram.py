@@ -32,6 +32,52 @@ def _extract_measurements(entry: dict) -> dict:
     return result
 
 
+def _stats_payload(
+    *, height_mm: int, weight_g: int, age: Optional[int], gender: Optional[str]
+) -> dict:
+    body: dict = {"height": height_mm, "weight": weight_g}
+    if age is not None:
+        body["age"] = age
+    if gender is not None:
+        body["gender"] = gender
+    return {"statsEstimations": body}
+
+
+def _photo_payload(
+    *,
+    height_mm: int,
+    weight_g: int,
+    age: Optional[int],
+    gender: Optional[str],
+    front_b64: str,
+    right_b64: str,
+) -> dict:
+    body: dict = {
+        "height": height_mm,
+        "weight": weight_g,
+        "frontPhoto": front_b64,
+        "rightPhoto": right_b64,
+    }
+    if age is not None:
+        body["age"] = age
+    if gender is not None:
+        body["gender"] = gender
+    return {"photoScan": body}
+
+
+async def _post_scan(client: httpx.AsyncClient, *, api_key: str, org_id: str, payload: dict) -> tuple[int, dict]:
+    resp = await client.post(
+        f"{_BODYGRAM_API_BASE}/orgs/{org_id}/scans",
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
+        json=payload,
+    )
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    return resp.status_code, data
+
+
 async def run_scan(
     *,
     api_key: str,
@@ -46,68 +92,43 @@ async def run_scan(
     """
     Submit a body measurement scan to Bodygram Platform API.
 
-    Uses photoScan mode when both front and side photos are provided;
-    falls back to statsEstimations (stats-only) otherwise.
+    Tries photoScan when both front and side photos are provided. Falls back
+    to statsEstimations on photoScan failure (e.g. credit limits, photo
+    validation) or when photos are missing.
 
     Returns a dict with: bust_cm, waist_cm, hips_cm, shoulder_cm, arm_length_cm.
-    Raises RuntimeError on API or processing failure.
+    Raises RuntimeError on terminal failure.
     """
-    headers = {
-        "Authorization": api_key,  # raw key, no prefix
-        "Content-Type": "application/json",
-    }
-
-    # Height must be in mm, weight in grams
     height_mm = round(height_cm * 10)
     weight_g = round(weight_kg * 1000)
 
-    if front_image_data_url and side_image_data_url:
-        payload = {
-            "photoScan": {
-                "height": height_mm,
-                "weight": weight_g,
-                "frontPhoto": _strip_data_url(front_image_data_url),
-                "rightPhoto": _strip_data_url(side_image_data_url),
-            }
-        }
-        if age is not None:
-            payload["photoScan"]["age"] = age
-        if gender is not None:
-            payload["photoScan"]["gender"] = gender
-    else:
-        payload = {
-            "statsEstimations": {
-                "height": height_mm,
-                "weight": weight_g,
-            }
-        }
-        if age is not None:
-            payload["statsEstimations"]["age"] = age
-        if gender is not None:
-            payload["statsEstimations"]["gender"] = gender
-
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{_BODYGRAM_API_BASE}/orgs/{org_id}/scans",
-            headers=headers,
-            json=payload,
-        )
-        try:
-            data = resp.json()
-        except Exception:
-            data = {}
-
-        if not resp.is_success:
-            entry = data.get("entry") or {}
-            detail = (
-                (data.get("error") or {}).get("message")
-                or entry.get("errorMessage")
-                or resp.text
+        # Try photoScan if both photos provided
+        if front_image_data_url and side_image_data_url:
+            photo_payload = _photo_payload(
+                height_mm=height_mm,
+                weight_g=weight_g,
+                age=age,
+                gender=gender,
+                front_b64=_strip_data_url(front_image_data_url),
+                right_b64=_strip_data_url(side_image_data_url),
             )
-            raise RuntimeError(f"Bodygram API error {resp.status_code}: {detail}")
+            status, data = await _post_scan(client, api_key=api_key, org_id=org_id, payload=photo_payload)
+            entry = data.get("entry") or {}
+            if status < 400 and entry.get("status") == "success":
+                return _extract_measurements(entry)
+            # photoScan failed — fall through to statsEstimations as a safety net
 
-        entry = data.get("entry", {})
-        if entry.get("status") == "failure":
+        # Stats-only path (also used as photoScan fallback)
+        stats_payload = _stats_payload(
+            height_mm=height_mm, weight_g=weight_g, age=age, gender=gender
+        )
+        status, data = await _post_scan(client, api_key=api_key, org_id=org_id, payload=stats_payload)
+        entry = data.get("entry") or {}
+        if status >= 400:
+            detail = (data.get("error") or {}).get("message") or "unknown error"
+            raise RuntimeError(f"Bodygram API error {status}: {detail}")
+        if entry.get("status") != "success":
             raise RuntimeError(
                 f"Bodygram scan failed: {entry.get('errorMessage', 'unknown error')}"
             )
