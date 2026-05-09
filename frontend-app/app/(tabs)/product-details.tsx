@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert, GestureResponderEvent, useWindowDimensions } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
+import { useSwipeBackHandler } from '@/components/ui/edge-swipe-back';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -52,7 +54,7 @@ export default function ProductDetailsScreen() {
   const panStateRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
   const lastTapAtRef = useRef(0);
 
-  const { addItem } = useCartStore();
+  const addItem = useCartStore((state) => state.addItem);
 
   useEffect(() => {
     if (!id) {
@@ -254,6 +256,8 @@ export default function ProductDetailsScreen() {
     router.back();
   };
 
+  useSwipeBackHandler(handleBack);
+
   const openImageViewer = (index = 0) => {
     setViewerIndex(index);
     setViewerZoom(1);
@@ -356,7 +360,8 @@ export default function ProductDetailsScreen() {
     }
   };
 
-  if (loading) {
+  const isStale = !!id && dress != null && String(dress.id) !== String(id);
+  if (loading || isStale) {
     return (
       <View className="flex-1 items-center justify-center bg-white" style={{ paddingTop: insets.top }}>
         <ActivityIndicator color="#1A1A1A" />
@@ -386,7 +391,7 @@ export default function ProductDetailsScreen() {
   }
 
   return (
-    <View className="flex-1 bg-white">
+    <FadeInView withTranslate={false} duration={260} style={{ flex: 1 }} className="bg-white">
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Header Image Section */}
         <View className="relative w-full" style={{ height: productImageHeight }}>
@@ -406,6 +411,9 @@ export default function ProductDetailsScreen() {
                   source={image.source}
                   style={{ width: productImageWidth, height: productImageHeight }}
                   contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={180}
+                  recyclingKey={image.key}
                 />
               </TouchableOpacity>
             ))}
@@ -772,6 +780,6 @@ export default function ProductDetailsScreen() {
           </View>
         </View>
       </Modal>
-    </View>
+    </FadeInView>
   );
 }

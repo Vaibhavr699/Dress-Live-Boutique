@@ -10,7 +10,9 @@ import { useShortlistStore } from '@/store/useShortlistStore';
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { setToken, setUser, logout } = useAuthStore();
+  const setToken = useAuthStore((s) => s.setToken);
+  const setUser = useAuthStore((s) => s.setUser);
+  const logout = useAuthStore((s) => s.logout);
   const guestShortlistIds = useShortlistStore((state) => state.dressIds);
   const clearGuestShortlist = useShortlistStore((state) => state.clear);
   

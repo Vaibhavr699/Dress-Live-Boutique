@@ -4,7 +4,7 @@
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/dress-live-icon.png",
     "scheme": "dress-live",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -23,10 +23,9 @@
       "jsEngine": "hermes",
       "newArchEnabled": true,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/icon.png",
-        "backgroundImage": "./assets/images/icon.png",
-        "monochromeImage": "./assets/images/icon.png"
+        "backgroundColor": "#F4DCDC",
+        "foregroundImage": "./assets/images/dress-live-icon-foreground.png",
+        "monochromeImage": "./assets/images/dress-live-icon-foreground.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -47,7 +46,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/icon.png",
+          "image": "./assets/images/dress-live-icon.png",
           "imageWidth": 200,
           "backgroundColor": "#ffffff",
           "dark": {

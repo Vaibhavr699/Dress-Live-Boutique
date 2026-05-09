@@ -4,6 +4,7 @@ import { View, StyleSheet, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { useCartStore } from '@/store/useCartStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { EdgeSwipeBackProvider } from '@/components/ui/edge-swipe-back';
 
 const HOME_ICON = require('../../assets/svg/Home.svg');
 const CART_ICON = require('../../assets/svg/Cart.svg');
@@ -76,11 +77,14 @@ export default function TabLayout() {
   const bottomInset = Math.max(insets.bottom, 8);
 
   return (
+    <EdgeSwipeBackProvider>
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: '#1A1A1A',
         tabBarInactiveTintColor: '#1A1A1A50',
         headerShown: false,
+        animation: 'shift',
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           height: 62 + bottomInset,
           paddingBottom: bottomInset,
@@ -225,10 +229,7 @@ export default function TabLayout() {
       />
 
     </Tabs>
-
-
-
-
+    </EdgeSwipeBackProvider>
 
   );
 }

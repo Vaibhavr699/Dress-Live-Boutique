@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -98,6 +99,7 @@ export default function VideoCallSummaryScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : (
+        <FadeInView withTranslate={false} duration={260} style={{ flex: 1 }}>
         <ScrollView
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
@@ -241,6 +243,7 @@ export default function VideoCallSummaryScreen() {
             </TouchableOpacity>
           </View>
         </ScrollView>
+        </FadeInView>
       )}
     </View>
   );

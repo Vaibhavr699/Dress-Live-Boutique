@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -144,7 +145,7 @@ export default function BookingScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : !isLoggedIn ? (
-        <View className="flex-1 items-center justify-center px-10">
+        <FadeInView className="flex-1 items-center justify-center px-10">
           <View className="mb-8 opacity-20">
             <Image source={NO_BOOKING_ICON} style={{ width: 64, height: 64 }} />
           </View>
@@ -178,9 +179,9 @@ export default function BookingScreen() {
           <TouchableOpacity onPress={() => router.push('/login')} className="mt-10 border-b border-black pb-1">
             <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Sign in</Text>
           </TouchableOpacity>
-        </View>
+        </FadeInView>
       ) : isEmpty ? (
-        <View className="flex-1 items-center px-10" style={{ paddingTop: 76 }}>
+        <FadeInView className="flex-1 items-center px-10" style={{ paddingTop: 76 }}>
           <View className="mb-6 items-center justify-center">
             <Image source={NO_BOOKING_ICON} style={{ width: 34, height: 34 }} contentFit="contain" />
           </View>
@@ -209,7 +210,7 @@ export default function BookingScreen() {
             You haven&apos;t booked a video call or store visit yet.{'\n'}
             When you do, they will be shown here.
           </Text>
-        </View>
+        </FadeInView>
       ) : (
         <ScrollView 
           showsVerticalScrollIndicator={false} 

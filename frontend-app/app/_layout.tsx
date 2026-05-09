@@ -2,6 +2,9 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+import 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ErrorBoundary } from '@/components/error-boundary';
 import "../global.css";
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -12,7 +15,6 @@ import { Platform, Text, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
-import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
@@ -86,26 +88,6 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsReady]);
-
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    if (!isLiveKitNativeSupported()) return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const lk = require('@livekit/react-native');
-      if (lk && typeof lk.registerGlobals === 'function') {
-        lk.registerGlobals();
-      }
-      if (Platform.OS === 'android' && lk?.AudioSession?.configureAudio && lk?.AndroidAudioTypePresets?.communication) {
-        lk.AudioSession.configureAudio({
-          audioTypeOptions: lk.AndroidAudioTypePresets.communication,
-          preferredOutputList: ['speaker', 'earpiece', 'bluetooth', 'headset'],
-        });
-      }
-    } catch {
-      // no-op
-    }
-  }, []);
 
   useEffect(() => {
     // Check if hydration is done from the store itself
@@ -265,34 +247,50 @@ export default function RootLayout() {
   }
 
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+    <ErrorBoundary>
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <View style={{ flex: 1 }}>
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="landing" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="signup" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="forgot-password" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="otp-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="reset-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-edit-address" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-my-measurements" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-verify-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-delete-account" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-confirm-delete" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-payment-methods" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-payment-details" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="booking-history" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="video-call-summary" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 260,
+          gestureEnabled: false,
+          fullScreenGestureEnabled: false,
+          contentStyle: { backgroundColor: '#FFFFFF' },
+        }}
+      >
+        <Stack.Screen name="index" options={{ animation: 'fade' }} />
+        <Stack.Screen name="landing" options={{ animation: 'fade' }} />
+        <Stack.Screen name="(tabs)" options={{ animation: 'fade', animationDuration: 220 }} />
+        <Stack.Screen name="login" options={{ animation: 'fade' }} />
+        <Stack.Screen name="signup" options={{ animation: 'fade' }} />
+        <Stack.Screen name="forgot-password" options={{ animation: 'fade' }} />
+        <Stack.Screen name="otp-verify" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="reset-password" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-edit-address" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-my-measurements" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-security-password" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-verify-password" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-delete-account" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-confirm-delete" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-payment-methods" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-payment-details" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="booking-history" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="notifications" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="video-call-summary" options={{ gestureEnabled: true }} />
+        <Stack.Screen
+          name="modal"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom', title: 'Modal', headerShown: true }}
+        />
       </Stack>
       <IncomingVideoCallBar app="buyer" />
       <StatusBar style="auto" />
       </View>
     </ThemeProvider>
+    </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }
 

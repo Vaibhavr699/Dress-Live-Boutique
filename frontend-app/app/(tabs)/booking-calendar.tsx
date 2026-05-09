@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions, Modal, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -454,6 +455,7 @@ export default function BookingCalendarScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : (
+      <FadeInView withTranslate={false} duration={260} style={{ flex: 1 }}>
       <ScrollView showsVerticalScrollIndicator={false} className="px-8">
         <Text className="text-black text-lg font-medium mb-4">
           {appointmentType === 'video' ? 'Booking Calendar Video Call' : 'Booking Calendar Visit Store'}
@@ -580,6 +582,7 @@ export default function BookingCalendarScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+      </FadeInView>
       )}
 
       {/* Language Dropdown Modal */}

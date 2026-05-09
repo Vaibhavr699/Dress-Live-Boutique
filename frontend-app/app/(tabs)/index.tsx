@@ -23,6 +23,8 @@ import * as Location from 'expo-location';
 import { api } from '@shared/api/api';
 import { useFocusEffect } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
+import { FlashList, ListRenderItemInfo } from '@shopify/flash-list';
+import { FadeInView } from '@/components/ui/fade-in-view';
 
 const MARKER_ICON = require('@/assets/svg/marker.svg');
 const PLUS_ICON = require('@/assets/svg/plus.svg');
@@ -201,15 +203,33 @@ export default function DashboardScreen() {
         api.get('/boutiques/'),
       ]);
 
-      setDresses(Array.isArray(dressData) ? dressData : []);
+      const dressList = Array.isArray(dressData) ? (dressData as Dress[]) : [];
+      const boutiqueList = Array.isArray(boutiqueData) ? (boutiqueData as Boutique[]) : [];
+
+      setDresses(dressList);
       setBoutiques(
-        Array.isArray(boutiqueData)
-          ? boutiqueData.reduce((acc: Record<number, Boutique>, boutique: Boutique) => {
-              acc[boutique.id] = boutique;
-              return acc;
-            }, {})
-          : {}
+        boutiqueList.reduce((acc: Record<number, Boutique>, boutique: Boutique) => {
+          acc[boutique.id] = boutique;
+          return acc;
+        }, {})
       );
+
+      // Warm the image cache for the first few boutique covers so they render
+      // instantly when the user starts scrolling.
+      const coverUrls = boutiqueList
+        .map((b) => (b.header_image_url || '').trim())
+        .filter((url): url is string => url.length > 0)
+        .slice(0, 5);
+      const dressFallbackUrls = dressList
+        .map((d) => (d.image_url || '').trim())
+        .filter((url): url is string => url.length > 0)
+        .slice(0, 5);
+      const toPrefetch = Array.from(new Set([...coverUrls, ...dressFallbackUrls])).slice(0, 6);
+      if (toPrefetch.length > 0) {
+        Image.prefetch(toPrefetch, 'memory-disk').catch(() => {
+          // Prefetch is best-effort; ignore failures.
+        });
+      }
     } catch (error) {
       console.error('Failed to load customer catalog:', error);
     } finally {
@@ -570,193 +590,202 @@ export default function DashboardScreen() {
           </View>
         </View>
       </View>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleFetchCurrentLocation}
-          className="flex-row items-center justify-center px-5"
-          style={{ minHeight: 36, marginTop: 4, marginBottom: 10 }}
-        >
-          <Image source={MARKER_ICON} style={{ width: 17, height: 17 }} contentFit="contain" />
-          {locationLoading ? (
-            <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
-          ) : (
-            <Text
-              className="text-[#1A1A1A] ml-2"
-              numberOfLines={1}
-              style={{
-                fontFamily: 'Helvetica Neue',
-                fontSize: 12,
-                fontWeight: '400',
-                lineHeight: 12,
-                letterSpacing: 0,
-              }}
-            >
-              {currentLocationLabel}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Categories Tab Bar */}
-        <View>
-          <View className="relative">
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{
-                marginLeft: screenWidth < 400 ? 24 : 0,
-                marginRight: screenWidth < 400 ? 24 : 0,
-              }}
-              contentContainerStyle={{
-                flexGrow: 1,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingTop: 4,
-                paddingBottom: 14,
-                paddingLeft: 0,
-                paddingRight: showHomeFilters ? 64 : 0,
-              }}
-            >
-              {CATEGORIES.map((cat, idx) => (
-                <TouchableOpacity
-                  key={cat}
-                  onPress={() => {
-                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                    setActiveCategory(cat);
-                  }}
-                  activeOpacity={0.85}
-                  style={{
-                    paddingLeft: idx === 0 ? 0 : screenWidth < 400 ? 4 : 8,
-                    paddingRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 4 : 8,
-                    paddingVertical: 6,
-                    marginRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 2 : 12,
-                  }}
-                >
+      {loading ? (
+        <View className="flex-1 items-center justify-center" style={{ paddingBottom: 80 }}>
+          <ActivityIndicator color="#1A1A1A" />
+        </View>
+      ) : (
+        <FlashList<BoutiqueCard>
+          data={boutiqueCards}
+          keyExtractor={(b) => String(b.boutiqueId)}
+          estimatedItemSize={300}
+          contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <View style={{ marginHorizontal: -20 }}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleFetchCurrentLocation}
+                className="flex-row items-center justify-center px-5"
+                style={{ minHeight: 36, marginTop: 4, marginBottom: 10 }}
+              >
+                <Image source={MARKER_ICON} style={{ width: 17, height: 17 }} contentFit="contain" />
+                {locationLoading ? (
+                  <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
+                ) : (
                   <Text
+                    className="text-[#1A1A1A] ml-2"
                     numberOfLines={1}
-                    className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#6E6E6E]'}
                     style={{
                       fontFamily: 'Helvetica Neue',
+                      fontSize: 12,
                       fontWeight: '400',
-                      fontSize: 14,
-                      lineHeight: 14,
+                      lineHeight: 12,
                       letterSpacing: 0,
                     }}
                   >
-                    {cat}
+                    {currentLocationLabel}
                   </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+                )}
+              </TouchableOpacity>
 
-            {showHomeFilters ? (
-              <View
-                ref={(n) => {
-                  filtersButtonRef.current = n;
-                }}
-                className="absolute right-4 top-0 bottom-0 justify-center"
-                pointerEvents="box-none"
-              >
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={openFilters}
-                  className="w-10 h-10 items-center justify-center border border-[#E7E7E7] bg-white"
-                >
-                  <Ionicons name="options-outline" size={18} color="#1A1A1A" />
-                </TouchableOpacity>
-              </View>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Product Feed */}
-        <View className="px-5 pt-2 pb-6">
-          {loading ? (
-            <View className="py-20 items-center justify-center">
-              <ActivityIndicator color="#1A1A1A" />
-            </View>
-          ) : boutiqueCards.length === 0 ? (
-            <View className="py-20 items-center justify-center">
-              <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No dresses available</Text>
-              <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
-                Try adjusting your search or browse another category to see more results.
-              </Text>
-            </View>
-          ) : (
-            boutiqueCards.map((b) => (
-              <View key={b.boutiqueId} className="mb-7">
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  className="mb-3"
-                  onPress={() =>
-                    router.push({
-                      pathname: '/(tabs)/boutique-details',
-                      params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
-                    })
-                  }
-                >
-                  <View style={{ width: '100%', height: 196, overflow: 'hidden' }}>
-                    <Image
-                      source={
-                        b.coverImageUrl
-                          ? { uri: b.coverImageUrl }
-                          : require('@/assets/images/Dashboard image 1.png')
-                      }
-                      style={{ width: '100%', height: 260, marginTop: -14 }}
-                      contentFit="cover"
-                    />
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() =>
-                    router.push({
-                      pathname: '/(tabs)/boutique-details',
-                      params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
-                    })
-                  }
-                  activeOpacity={0.85}
-                >
-                  <View className="flex-row items-center justify-between mb-2 ">
-                    <Text
-                      className="flex-1 pr-3 mb-1.5"
-                      style={{
-                        color: '#000000',
-                        fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
-                        fontWeight: '700',
-                        fontSize: 14,
-                        lineHeight: 14,
-                        letterSpacing: 2,
-                        includeFontPadding: false,
-                      }}
-                      numberOfLines={1}
-                    >
-                      {b.boutiqueName}
-                    </Text>
-                    <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
-                  </View>
-                  <Text
+              <View>
+                <View className="relative">
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
                     style={{
-                      color: '#6E6E6E',
+                      marginLeft: screenWidth < 400 ? 24 : 0,
+                      marginRight: screenWidth < 400 ? 24 : 0,
+                    }}
+                    contentContainerStyle={{
+                      flexGrow: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingTop: 4,
+                      paddingBottom: 14,
+                      paddingLeft: 0,
+                      paddingRight: showHomeFilters ? 64 : 0,
+                    }}
+                  >
+                    {CATEGORIES.map((cat, idx) => (
+                      <TouchableOpacity
+                        key={cat}
+                        onPress={() => {
+                          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                          setActiveCategory(cat);
+                        }}
+                        activeOpacity={0.85}
+                        style={{
+                          paddingLeft: idx === 0 ? 0 : screenWidth < 400 ? 4 : 8,
+                          paddingRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 4 : 8,
+                          paddingVertical: 6,
+                          marginRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 2 : 12,
+                        }}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#6E6E6E]'}
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '400',
+                            fontSize: 14,
+                            lineHeight: 14,
+                            letterSpacing: 0,
+                          }}
+                        >
+                          {cat}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {showHomeFilters ? (
+                    <View
+                      ref={(n) => {
+                        filtersButtonRef.current = n;
+                      }}
+                      className="absolute right-4 top-0 bottom-0 justify-center"
+                      pointerEvents="box-none"
+                    >
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={openFilters}
+                        className="w-10 h-10 items-center justify-center border border-[#E7E7E7] bg-white"
+                      >
+                        <Ionicons name="options-outline" size={18} color="#1A1A1A" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            </View>
+          }
+          ListEmptyComponent={
+            <FadeInView>
+              <View className="py-20 items-center justify-center">
+                <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No dresses available</Text>
+                <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
+                  Try adjusting your search or browse another category to see more results.
+                </Text>
+              </View>
+            </FadeInView>
+          }
+          renderItem={({ item: b, index: idx }: ListRenderItemInfo<BoutiqueCard>) => (
+            <FadeInView delay={Math.min(idx * 60, 360)} className="mb-7" style={{ paddingTop: 8 }}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                className="mb-3"
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/boutique-details',
+                    params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                  })
+                }
+              >
+                <View style={{ width: '100%', height: 196, overflow: 'hidden' }}>
+                  <Image
+                    source={
+                      b.coverImageUrl
+                        ? { uri: b.coverImageUrl }
+                        : require('@/assets/images/Dashboard image 1.png')
+                    }
+                    style={{ width: '100%', height: 260, marginTop: -14 }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={180}
+                    recyclingKey={String(b.boutiqueId)}
+                  />
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/boutique-details',
+                    params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                  })
+                }
+                activeOpacity={0.85}
+              >
+                <View className="flex-row items-center justify-between mb-2 ">
+                  <Text
+                    className="flex-1 pr-3 mb-1.5"
+                    style={{
+                      color: '#000000',
                       fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
-                      fontWeight: '600',
+                      fontWeight: '700',
                       fontSize: 14,
                       lineHeight: 14,
-                      letterSpacing: 0,
+                      letterSpacing: 2,
                       includeFontPadding: false,
                     }}
                     numberOfLines={1}
                   >
-                    {b.boutiqueLocation}
+                    {b.boutiqueName}
                   </Text>
-                </TouchableOpacity>
-              </View>
-            ))
+                  <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
+                </View>
+                <Text
+                  style={{
+                    color: '#6E6E6E',
+                    fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
+                    fontWeight: '600',
+                    fontSize: 14,
+                    lineHeight: 14,
+                    letterSpacing: 0,
+                    includeFontPadding: false,
+                  }}
+                  numberOfLines={1}
+                >
+                  {b.boutiqueLocation}
+                </Text>
+              </TouchableOpacity>
+            </FadeInView>
           )}
-        </View>
-
-      </ScrollView>
+        />
+      )}
 
       {/* Filters Popover - hidden for now */}
       {showHomeFilters ? (

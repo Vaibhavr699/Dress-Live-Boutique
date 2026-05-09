@@ -7,6 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useBookingHistoryStore, BookingHistoryItem } from '@/store/useBookingHistoryStore';
+import { FadeInView } from '@/components/ui/fade-in-view';
 
 function formatType(type: BookingHistoryItem['appointment_type']) {
   return type === 'video' ? 'VIDEO CALL' : 'STORE VISIT';
@@ -74,8 +75,12 @@ export default function BookingHistoryScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 90 }}>
-        {sortedItems.length === 0 ? (
-          <View className="px-8 pt-20 items-center">
+        {sortedItems.length === 0 && syncing && !lastSyncedAt ? (
+          <View className="flex-1 items-center justify-center pt-20">
+            <ActivityIndicator color="#1A1A1A" />
+          </View>
+        ) : sortedItems.length === 0 ? (
+          <FadeInView className="px-8 pt-20 items-center">
             <Text className="text-black text-[12px] font-bold uppercase tracking-[2px] mb-3 text-center">No bookings yet</Text>
             <Text className="text-black/40 text-[11px] text-center leading-5 px-6">
               When you book a video call or store visit, it will appear here.
@@ -83,15 +88,15 @@ export default function BookingHistoryScreen() {
             <TouchableOpacity onPress={() => router.replace('/(tabs)')} className="mt-10 border-b border-black pb-1">
               <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Browse dresses</Text>
             </TouchableOpacity>
-          </View>
+          </FadeInView>
         ) : (
           <View className="px-6 pt-6">
             <Text className="text-black/35 text-[10px] font-bold uppercase tracking-[1px] mb-4">
               {sortedItems.length} booking(s){lastSyncedAt ? ` • synced` : ''}
             </Text>
 
-            {sortedItems.map((b) => (
-              <View key={b.id} className="mb-4 border border-[#F0F0F0] p-5">
+            {sortedItems.map((b, idx) => (
+              <FadeInView key={b.id} delay={Math.min(idx * 50, 300)} className="mb-4 border border-[#F0F0F0] p-5">
                 <View className="flex-row items-start justify-between">
                   <View className="flex-1 pr-4">
                     <Text className="text-black text-[12px] font-bold uppercase tracking-[1px]">
@@ -136,7 +141,7 @@ export default function BookingHistoryScreen() {
                 >
                   <Text className="text-white text-[11px] font-bold uppercase tracking-[2px]">Reschedule</Text>
                 </TouchableOpacity>
-              </View>
+              </FadeInView>
             ))}
           </View>
         )}

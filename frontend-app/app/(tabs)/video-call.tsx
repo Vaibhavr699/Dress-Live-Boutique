@@ -18,6 +18,7 @@ import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
 import { parseTryonSwitchMessage } from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
+import { ensureLiveKitRegistered } from '@shared/livekitInit';
 
 type CallState = 'waiting' | 'active';
 type TokenResponse = { url: string; token: string; room: string; identity: string };
@@ -36,6 +37,7 @@ type LiveKitDeps = {
 
 function loadLiveKitDeps(): LiveKitDeps | null {
   try {
+    ensureLiveKitRegistered();
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const livekitMod = require('@livekit/react-native');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -733,19 +735,7 @@ export default function VideoCallScreen() {
                         </View>
                       )}
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => capturePhoto(false)}
-                      disabled={photoCapturing}
-                      activeOpacity={0.9}
-                      className="border border-black/20 py-3.5 items-center rounded-sm"
-                    >
-                      <View className="flex-row items-center gap-2">
-                        <Feather name="image" size={13} color="#666" />
-                        <Text className="text-black/50 text-[10px] uppercase tracking-[1px]">
-                          Choose from Gallery
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
+                    
                   </View>
                 </View>
               )}
@@ -809,16 +799,7 @@ export default function VideoCallScreen() {
                         </View>
                       )}
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => capturePhoto(false)}
-                      disabled={photoCapturing}
-                      activeOpacity={0.9}
-                      className="border border-black/15 py-3 items-center rounded-sm"
-                    >
-                      <Text className="text-black/45 text-[10px] uppercase tracking-[1px]">
-                        Choose from Gallery
-                      </Text>
-                    </TouchableOpacity>
+  
                   </View>
                 ) : tryOnLoading ? (
                   /* Generating — spinner shown on video overlay; panel shows brief status */

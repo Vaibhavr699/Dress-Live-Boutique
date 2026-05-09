@@ -1,13 +1,15 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { FlashList, ListRenderItemInfo } from '@shopify/flash-list';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
+import { FadeInView } from '@/components/ui/fade-in-view';
 
 const WISHLIST_EMPTY_SVG = require('@/assets/svg/wishlist-heart 1.svg');
 const PLUS_ICON = require('@/assets/svg/plus.svg');
@@ -162,7 +164,7 @@ export default function WishlistScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : isEmpty ? (
-        <View className="flex-1 items-center justify-center px-10">
+        <FadeInView className="flex-1 items-center justify-center px-10">
           <View className="mb-8 items-center justify-center">
             <Image
               source={WISHLIST_EMPTY_SVG}
@@ -183,14 +185,15 @@ export default function WishlistScreen() {
           >
             <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Shop Now</Text>
           </TouchableOpacity>
-        </View>
+        </FadeInView>
       ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          className="flex-1"
+        <FlashList<Dress>
+          data={wishlistItems}
+          keyExtractor={(item) => String(item.id)}
+          estimatedItemSize={148}
           contentContainerStyle={{ paddingTop: 28, paddingBottom: 100 }}
-        >
-          {wishlistItems.map((item) => {
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item, index }: ListRenderItemInfo<Dress>) => {
             const imageSource = item.image_url
               ? { uri: item.image_url }
               : require('@/assets/images/Dashboard image 1.png');
@@ -198,7 +201,7 @@ export default function WishlistScreen() {
               typeof item.price === 'number' ? `${item.price.toFixed(0)} EUR` : 'Price on request';
 
             return (
-              <View key={item.id} className="flex-row items-start px-6 mb-10">
+              <FadeInView delay={Math.min(index * 50, 300)} className="flex-row items-start px-6 mb-10">
                 <TouchableOpacity
                   activeOpacity={0.85}
                   onPress={() =>
@@ -212,10 +215,12 @@ export default function WishlistScreen() {
                     source={imageSource}
                     style={{ width: 100, height: 100, borderRadius: 0 }}
                     contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={150}
+                    recyclingKey={String(item.id)}
                   />
                 </TouchableOpacity>
 
-                {/* Text + divider + actions: plus left-aligned with title; heart right */}
                 <View className="flex-1 ml-5" style={{ minHeight: 100 }}>
                   <TouchableOpacity
                     activeOpacity={0.85}
@@ -282,10 +287,10 @@ export default function WishlistScreen() {
                     </TouchableOpacity>
                   </View>
                 </View>
-              </View>
+              </FadeInView>
             );
-          })}
-        </ScrollView>
+          }}
+        />
       )}
     </View>
   );

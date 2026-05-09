@@ -534,17 +534,6 @@ export default function AITryOnScreen() {
                     <Ionicons name="camera-reverse-outline" size={26} color="black" />
                   </TouchableOpacity>
                 </View>
-
-                <View className="mt-6">
-                  <TouchableOpacity
-                    onPress={handlePickFromGallery}
-                    activeOpacity={0.85}
-                    className="border border-black py-3 items-center mb-3"
-                  >
-                    <Text className="text-black text-[10px] font-bold uppercase tracking-[1px]">Choose from gallery</Text>
-                  </TouchableOpacity>
-
-                </View>
               </View>
             )}
 
