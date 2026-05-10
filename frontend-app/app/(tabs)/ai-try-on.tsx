@@ -6,7 +6,24 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { api } from '@shared/api/api';
+
+const MAX_UPLOAD_DIMENSION = 1280;
+const UPLOAD_COMPRESSION = 0.7;
+
+async function downscaleForUpload(uri: string): Promise<{ uri: string; base64: string }> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: MAX_UPLOAD_DIMENSION } }],
+    {
+      compress: UPLOAD_COMPRESSION,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    }
+  );
+  return { uri: result.uri, base64: result.base64 ?? '' };
+}
 
 type Dress = {
   id: number;
@@ -79,12 +96,12 @@ export default function AITryOnScreen() {
     {
       id: 5,
       type: 'camera',
-      instructions: 'NOW TAKE A FULL-BODY PHOTO',
+      instructions: 'NOW TAKE OR PICK A PHOTO OF YOURSELF',
     },
     {
       id: 6,
       type: 'countdown',
-      instructions: 'HOLD STILL WHILE WE CAPTURE YOUR FULL-BODY PHOTO.',
+      instructions: 'HOLD STILL WHILE WE CAPTURE YOUR PHOTO.',
     },
     {
       id: 7,
@@ -168,11 +185,15 @@ export default function AITryOnScreen() {
       throw new Error('Open AI Try On from a specific dress to generate a preview.');
     }
 
-    const res = (await api.post('/ai/preview-tryon-base64', {
-      dress_id: normalizedDressId,
-      full_body_image_data_url: fullBodyImageDataUrl,
-      ...(selfieDataUrl ? { selfie_image_data_url: selfieDataUrl } : {}),
-    })) as {
+    const res = (await api.post(
+      '/ai/preview-tryon-base64',
+      {
+        dress_id: normalizedDressId,
+        full_body_image_data_url: fullBodyImageDataUrl,
+        ...(selfieDataUrl ? { selfie_image_data_url: selfieDataUrl } : {}),
+      },
+      { timeoutMs: 120_000 }
+    )) as {
       image_data_url?: string | null;
     };
     if (!res?.image_data_url) {
@@ -183,40 +204,20 @@ export default function AITryOnScreen() {
 
   const processFullBodyCandidate = useCallback(async (candidate: SavedPhoto) => {
     setFullBodyUri(candidate.uri);
-    setValidating(true);
-    setRendering(false);
+    setValidating(false);
     setRenderedUri(null);
     setValidationError(null);
+    setRendering(true);
+    setStep(7);
 
     try {
-      const res = (await api.post('/ai/validate-full-body-base64', {
-        image_data_url: candidate.dataUrl,
-      })) as { ok?: boolean; reason?: string };
-
-      if (!res?.ok) {
-        setValidationError(res?.reason || 'Please retake the photo with your full body in view.');
-        setStep(5);
-        return;
-      }
-
-      setValidating(false);
-      setRendering(true);
-      setStep(7);
-
-      try {
-        await createTryOnPreview(candidate.dataUrl);
-        setStep(8);
-      } catch (renderError: any) {
-        setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
-        setStep(5);
-      } finally {
-        setRendering(false);
-      }
-    } catch (error: any) {
-      setValidationError(error?.message || 'Could not validate the photo. Please try again.');
+      await createTryOnPreview(candidate.dataUrl);
+      setStep(8);
+    } catch (renderError: any) {
+      setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
       setStep(5);
     } finally {
-      setValidating(false);
+      setRendering(false);
     }
   }, [createTryOnPreview]);
 
@@ -230,21 +231,28 @@ export default function AITryOnScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
-      quality: 0.85,
-      base64: true,
+      quality: 1,
+      base64: false,
     });
 
     if (result.canceled) return null;
     const asset = result.assets?.[0];
-    if (!asset?.uri || !asset.base64) {
+    if (!asset?.uri) {
       Alert.alert('AI Try On', 'Could not read the selected image. Please try again.');
       return null;
     }
 
-    return {
-      uri: asset.uri,
-      dataUrl: toJpegDataUrl(asset.base64),
-    } satisfies SavedPhoto;
+    try {
+      const downscaled = await downscaleForUpload(asset.uri);
+      if (!downscaled.base64) throw new Error('downscale failed');
+      return {
+        uri: downscaled.uri,
+        dataUrl: toJpegDataUrl(downscaled.base64),
+      } satisfies SavedPhoto;
+    } catch {
+      Alert.alert('AI Try On', 'Could not prepare the photo. Please try a different image.');
+      return null;
+    }
   }, []);
 
   useEffect(() => {
@@ -261,17 +269,18 @@ export default function AITryOnScreen() {
         clearInterval(id);
         try {
           const pic = await cameraRef.current?.takePictureAsync({
-            quality: 0.8,
+            quality: 1,
             mirror: false,
-            base64: true,
+            base64: false,
           });
           if (!cancelled && pic?.uri) {
-            if (!pic.base64) {
+            const downscaled = await downscaleForUpload(pic.uri);
+            if (!downscaled.base64) {
               throw new Error('Could not read the photo. Please try again.');
             }
             await processFullBodyCandidate({
-              uri: pic.uri,
-              dataUrl: toJpegDataUrl(pic.base64),
+              uri: downscaled.uri,
+              dataUrl: toJpegDataUrl(downscaled.base64),
             });
           }
         } catch {
@@ -300,18 +309,18 @@ export default function AITryOnScreen() {
     try {
       if (currentStep.id === 3) {
         const pic = await cameraRef.current?.takePictureAsync({
-          quality: 0.85,
+          quality: 1,
           mirror: false,
-          base64: true,
+          base64: false,
         });
         if (!pic?.uri) return;
-        if (!pic.base64) {
+        const downscaled = await downscaleForUpload(pic.uri);
+        if (!downscaled.base64) {
           Alert.alert('AI Try On', 'Could not capture the selfie. Please try again.');
           return;
         }
-        const candidate = { uri: pic.uri, dataUrl: toJpegDataUrl(pic.base64) };
-        setSelfieUri(pic.uri);
-        setSelfieDataUrl(candidate.dataUrl);
+        setSelfieUri(downscaled.uri);
+        setSelfieDataUrl(toJpegDataUrl(downscaled.base64));
         setStep(4);
         return;
       }
@@ -670,14 +679,18 @@ export default function AITryOnScreen() {
           className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 pb-12"
           style={{ paddingBottom: insets.bottom + 20 }}
         >
-          {currentStep.type === 'result' && dress?.boutique_id ? (
+          {currentStep.type === 'result' && normalizedDressId ? (
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() =>
-                router.replace({
-                  pathname: '/(tabs)/boutique-details',
-                  params: { boutiqueId: String(dress.boutique_id) },
-                } as any)
+                router.push({
+                  pathname: '/(tabs)/booking-calendar',
+                  params: {
+                    dressId: String(normalizedDressId),
+                    appointmentType: 'video',
+                    source: 'product',
+                  },
+                })
               }
               className="w-full bg-black py-5 items-center justify-center mb-3"
             >
@@ -718,7 +731,7 @@ export default function AITryOnScreen() {
               }}
               className="mt-4 items-center"
             >
-              <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">Retake full-body photo</Text>
+              <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">Retake photo</Text>
             </TouchableOpacity>
           ) : null}
         </View>

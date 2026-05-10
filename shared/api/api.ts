@@ -58,7 +58,7 @@ function getBaseUrl() {
 const BASE_URL = getBaseUrl();
 const IS_WEB_RUNTIME = typeof window !== 'undefined' && typeof document !== 'undefined';
 
-const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const RETRY_METHODS = new Set(['GET']);
 const RETRY_STATUSES = new Set([502, 503, 504]);
 const MAX_RETRIES = 2;
@@ -245,6 +245,13 @@ function createApiError(error: any) {
   }
 
   const message = typeof error?.message === 'string' ? error.message : '';
+  const name = typeof error?.name === 'string' ? error.name : '';
+
+  if (name === 'AbortError' || /aborted/i.test(message)) {
+    return attachApiMeta(new Error('The request took too long. Please check your connection and try again.'), {
+      debugMessage: message || 'Aborted',
+    });
+  }
 
   if (message.includes('Network request failed') || message.includes('Failed to fetch')) {
     return attachApiMeta(new Error("We couldn't connect right now. Please try again."), {

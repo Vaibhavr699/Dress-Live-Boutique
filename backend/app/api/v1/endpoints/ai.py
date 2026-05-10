@@ -353,6 +353,50 @@ def _validate_full_body_hog(img_bgr) -> _PoseValidationResult:
     )
 
 
+def _validate_human_present(img_bgr) -> _PoseValidationResult:
+    """
+    Loose validation: only checks that *a* person is detectable in the image.
+    Used by the AI try-on preview path so users can pick any photo with a human
+    (selfie, half-body, full-body) without being rejected for framing.
+
+    Falls back to "ok" on detector errors so we never block rendering on a
+    transient MediaPipe issue — Fashn AI will surface its own error if the
+    image is unusable.
+    """
+    try:
+        import mediapipe as mp
+    except Exception:
+        return _PoseValidationResult(ok=True)
+
+    h, w = img_bgr.shape[:2]
+    if h < 64 or w < 64:
+        return _PoseValidationResult(ok=False, reason="Image is too small. Please pick a larger photo.")
+
+    if not hasattr(mp, "solutions"):
+        return _PoseValidationResult(ok=True)
+
+    try:
+        img_rgb = img_bgr[:, :, ::-1]
+        mp_pose = mp.solutions.pose
+        with mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=0,
+            enable_segmentation=False,
+            min_detection_confidence=0.3,
+            min_tracking_confidence=0.3,
+        ) as pose:
+            res = pose.process(img_rgb)
+        if not res.pose_landmarks or not res.pose_landmarks.landmark:
+            return _PoseValidationResult(
+                ok=False,
+                reason="No person detected in the photo. Please pick a photo that clearly shows a person.",
+            )
+        return _PoseValidationResult(ok=True)
+    except Exception:
+        # If detection fails for any reason, don't block the render.
+        return _PoseValidationResult(ok=True)
+
+
 def _validate_full_body_pose(img_bgr) -> _PoseValidationResult:
     """
     Validate that image contains a single, mostly full-body person.
@@ -481,9 +525,9 @@ async def _build_tryon_preview_response(
         raise HTTPException(status_code=400, detail="This dress is not enabled for AI try-on.")
 
     person_img_bgr = _decode_image_bytes(full_body_image_bytes)
-    validation = _validate_full_body_pose(person_img_bgr)
+    validation = _validate_human_present(person_img_bgr)
     if not validation.ok:
-        raise HTTPException(status_code=400, detail=validation.reason or "Please upload a valid full-body image.")
+        raise HTTPException(status_code=400, detail=validation.reason or "Please pick a photo with a person clearly visible.")
 
     garment_url = (dress.ai_model_url or dress.image_url or "").strip()
     if not garment_url:

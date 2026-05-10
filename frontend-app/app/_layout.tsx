@@ -11,7 +11,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Text, View } from 'react-native';
+import { LogBox, Platform, Text, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
@@ -24,6 +24,12 @@ import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
+
+if (__DEV__) {
+  // Benign dev-only noise from expo-keep-awake when Metro toggles screen-wake.
+  // Does not affect production builds.
+  LogBox.ignoreLogs([/Unable to activate keep awake/, /ERR_KEEP_AWAKE/]);
+}
 
 function BootScreen() {
   return (

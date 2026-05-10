@@ -11,12 +11,70 @@ import {
   View,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../shared/api/api';
 
+const MAX_UPLOAD_DIMENSION = 1280;
+const UPLOAD_COMPRESSION = 0.7;
+
+async function downscaleForUpload(uri: string): Promise<string> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: MAX_UPLOAD_DIMENSION } }],
+    {
+      compress: UPLOAD_COMPRESSION,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    }
+  );
+  if (!result.base64) throw new Error('Could not prepare photo.');
+  return result.base64;
+}
+
 type Step = 'form' | 'camera-front' | 'camera-side' | 'processing';
+
+function Label({ children }: { children: string }) {
+  return (
+    <Text
+      className="text-black/40 uppercase mb-2"
+      style={{ fontFamily: 'Helvetica Neue', fontWeight: '300', fontSize: 12, letterSpacing: 0.72 }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function MeasurementInput({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (v: string) => void;
+}) {
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChangeText}
+      keyboardType="numeric"
+      style={{
+        height: 28,
+        width: '100%',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+        paddingVertical: 0,
+        fontFamily: 'Helvetica Neue',
+        fontWeight: '300',
+        fontSize: 14,
+        letterSpacing: 0.84,
+        color: '#000',
+      }}
+      placeholderTextColor="#BDBDBD"
+    />
+  );
+}
 
 interface Measurements {
   height_cm: string;
@@ -39,6 +97,30 @@ const EMPTY: Measurements = {
 function fmt(v: number | null | undefined): string {
   if (v == null) return '';
   return String(Math.round(v * 10) / 10);
+}
+
+type Unit = 'cm' | 'm';
+
+function scaleMeasurementString(input: string, factor: number): string {
+  if (!input) return '';
+  const n = parseFloat(input);
+  if (isNaN(n)) return input;
+  const scaled = n * factor;
+  // Round to 2 decimals — enough for either cm or m
+  return String(Math.round(scaled * 100) / 100);
+}
+
+function convertMeasurements(values: Measurements, fromUnit: Unit, toUnit: Unit): Measurements {
+  if (fromUnit === toUnit) return values;
+  const factor = toUnit === 'm' ? 0.01 : 100;
+  return {
+    height_cm: scaleMeasurementString(values.height_cm, factor),
+    bust_cm: scaleMeasurementString(values.bust_cm, factor),
+    waist_cm: scaleMeasurementString(values.waist_cm, factor),
+    hips_cm: scaleMeasurementString(values.hips_cm, factor),
+    shoulder_cm: scaleMeasurementString(values.shoulder_cm, factor),
+    arm_length_cm: scaleMeasurementString(values.arm_length_cm, factor),
+  };
 }
 
 export default function MyMeasurementsScreen() {
@@ -66,6 +148,15 @@ export default function MyMeasurementsScreen() {
 
   // Measurement fields
   const [m, setM] = useState<Measurements>(EMPTY);
+  const [unit, setUnit] = useState<Unit>('cm');
+
+  const toggleUnit = useCallback((next: Unit) => {
+    setUnit((prev) => {
+      if (prev === next) return prev;
+      setM((prevM) => convertMeasurements(prevM, prev, next));
+      return next;
+    });
+  }, []);
 
   const setField = (key: keyof Measurements) => (val: string) =>
     setM((prev) => ({ ...prev, [key]: val }));
@@ -121,18 +212,20 @@ export default function MyMeasurementsScreen() {
     api
       .get('/users/me/measurements')
       .then((data: any) => {
-        setM({
+        const fromApi: Measurements = {
           height_cm: fmt(data.height_cm),
           bust_cm: fmt(data.bust_cm),
           waist_cm: fmt(data.waist_cm),
           hips_cm: fmt(data.hips_cm),
           shoulder_cm: fmt(data.shoulder_cm),
           arm_length_cm: fmt(data.arm_length_cm),
-        });
+        };
+        setM(unit === 'cm' ? fromApi : convertMeasurements(fromApi, 'cm', unit));
         if (data.weight_kg) setWeightKg(fmt(data.weight_kg));
         setSource_(data.measurements_source ?? null);
       })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleStartScan = async () => {
@@ -159,12 +252,13 @@ export default function MyMeasurementsScreen() {
     if (!cameraRef.current) return;
     setLoading(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.8 });
-      if (!photo?.base64) throw new Error('Could not capture photo.');
+      const photo = await cameraRef.current.takePictureAsync({ base64: false, quality: 1 });
+      if (!photo?.uri) throw new Error('Could not capture photo.');
+      const compressedB64 = await downscaleForUpload(photo.uri);
 
       // First step: store front photo and advance to side capture
       if (step === 'camera-front') {
-        frontPhotoRef.current = photo.base64;
+        frontPhotoRef.current = compressedB64;
         setLoading(false);
         setStep('camera-side');
         return;
@@ -176,25 +270,33 @@ export default function MyMeasurementsScreen() {
 
       setStep('processing');
 
-      const data: any = await api.post('/users/me/measurements/scan', {
-        height_cm: parseFloat(m.height_cm),
-        weight_kg: parseFloat(weightKg),
-        age: parseInt(age, 10),
-        gender,
-        front_image_data_url: `data:image/jpeg;base64,${frontB64}`,
-        side_image_data_url: `data:image/jpeg;base64,${photo.base64}`,
-      });
+      // Backend expects cm — convert if user is editing in meters
+      const heightCmForApi = unit === 'm' ? parseFloat(m.height_cm) * 100 : parseFloat(m.height_cm);
+
+      const data: any = await api.post(
+        '/users/me/measurements/scan',
+        {
+          height_cm: heightCmForApi,
+          weight_kg: parseFloat(weightKg),
+          age: parseInt(age, 10),
+          gender,
+          front_image_data_url: `data:image/jpeg;base64,${frontB64}`,
+          side_image_data_url: `data:image/jpeg;base64,${compressedB64}`,
+        },
+        { timeoutMs: 120_000 }
+      );
 
       frontPhotoRef.current = null;
 
-      setM({
-        height_cm: fmt(data.height_cm) || m.height_cm,
+      const fromApi: Measurements = {
+        height_cm: fmt(data.height_cm) || (unit === 'm' ? String(heightCmForApi) : m.height_cm),
         bust_cm: fmt(data.bust_cm),
         waist_cm: fmt(data.waist_cm),
         hips_cm: fmt(data.hips_cm),
         shoulder_cm: fmt(data.shoulder_cm),
         arm_length_cm: fmt(data.arm_length_cm),
-      });
+      };
+      setM(unit === 'cm' ? fromApi : convertMeasurements(fromApi, 'cm', unit));
       if (data.weight_kg) setWeightKg(fmt(data.weight_kg));
       setSource_(data.measurements_source ?? 'bodygram');
       setStep('form');
@@ -209,19 +311,22 @@ export default function MyMeasurementsScreen() {
   };
 
   const handleSave = async () => {
+    // Body measurements are stored as cm on the backend. If user is editing in
+    // meters, multiply by 100 before sending. Weight is always kg.
+    const cmFactor = unit === 'm' ? 100 : 1;
     const body: Record<string, number> = {};
-    const pairs: [string, string][] = [
-      ['height_cm', m.height_cm],
-      ['bust_cm', m.bust_cm],
-      ['waist_cm', m.waist_cm],
-      ['hips_cm', m.hips_cm],
-      ['shoulder_cm', m.shoulder_cm],
-      ['arm_length_cm', m.arm_length_cm],
-      ['weight_kg', weightKg],
+    const pairs: [string, string, number][] = [
+      ['height_cm', m.height_cm, cmFactor],
+      ['bust_cm', m.bust_cm, cmFactor],
+      ['waist_cm', m.waist_cm, cmFactor],
+      ['hips_cm', m.hips_cm, cmFactor],
+      ['shoulder_cm', m.shoulder_cm, cmFactor],
+      ['arm_length_cm', m.arm_length_cm, cmFactor],
+      ['weight_kg', weightKg, 1],
     ];
-    for (const [key, val] of pairs) {
+    for (const [key, val, factor] of pairs) {
       const n = parseFloat(val);
-      if (!isNaN(n) && n > 0) body[key] = n;
+      if (!isNaN(n) && n > 0) body[key] = n * factor;
     }
     if (Object.keys(body).length === 0) return;
 
@@ -238,42 +343,6 @@ export default function MyMeasurementsScreen() {
   };
 
   const canSave = Object.values(m).some((v) => v.trim().length > 0);
-
-  const Label = ({ children }: { children: string }) => (
-    <Text
-      className="text-black/40 uppercase mb-2"
-      style={{ fontFamily: 'Helvetica Neue', fontWeight: '300', fontSize: 12, letterSpacing: 0.72 }}
-    >
-      {children}
-    </Text>
-  );
-
-  const MeasurementInput = ({
-    value,
-    onChangeText,
-  }: {
-    value: string;
-    onChangeText: (v: string) => void;
-  }) => (
-    <TextInput
-      value={value}
-      onChangeText={onChangeText}
-      keyboardType="numeric"
-      style={{
-        height: 28,
-        width: '100%',
-        borderBottomWidth: 1,
-        borderBottomColor: '#F0F0F0',
-        paddingVertical: 0,
-        fontFamily: 'Helvetica Neue',
-        fontWeight: '300',
-        fontSize: 14,
-        letterSpacing: 0.84,
-        color: '#000',
-      }}
-      placeholderTextColor="#BDBDBD"
-    />
-  );
 
   // Camera step (front or side)
   if (step === 'camera-front' || step === 'camera-side') {
@@ -338,7 +407,10 @@ export default function MyMeasurementsScreen() {
               alignItems: 'center',
               justifyContent: 'center',
               marginBottom: 4,
-              transform: [{ rotate: isFront ? '0deg' : iconRotation }],
+              transform: [
+                { perspective: 800 },
+                { rotateY: isFront ? '0deg' : iconRotation },
+              ],
             }}
           >
             <Ionicons name="body-outline" size={56} color="white" />
@@ -442,7 +514,7 @@ export default function MyMeasurementsScreen() {
           </Text>
 
           <View className="mb-6">
-            <Label>Height (cm) *</Label>
+            <Label>{`Height (${unit}) *`}</Label>
             <MeasurementInput value={m.height_cm} onChangeText={setField('height_cm')} />
           </View>
 
@@ -510,41 +582,73 @@ export default function MyMeasurementsScreen() {
           </TouchableOpacity>
 
           {/* Manual measurements section */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-            <Text
-              style={{ fontFamily: 'Helvetica Neue', fontWeight: '300', fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', color: '#000', opacity: 0.35 }}
-            >
-              Measurements
-            </Text>
-            {source_ ? (
-              <Text style={{ marginLeft: 8, fontSize: 10, color: source_ === 'bodygram' ? '#2E7D32' : '#999', fontFamily: 'Helvetica Neue', fontWeight: '300' }}>
-                {source_ === 'bodygram' ? '● AI' : '● Manual'}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text
+                style={{ fontFamily: 'Helvetica Neue', fontWeight: '300', fontSize: 11, letterSpacing: 1.5, textTransform: 'uppercase', color: '#000', opacity: 0.35 }}
+              >
+                Measurements
               </Text>
-            ) : null}
+              {source_ ? (
+                <Text style={{ marginLeft: 8, fontSize: 10, color: source_ === 'bodygram' ? '#2E7D32' : '#999', fontFamily: 'Helvetica Neue', fontWeight: '300' }}>
+                  {source_ === 'bodygram' ? '● AI' : '● Manual'}
+                </Text>
+              ) : null}
+            </View>
+            <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: '#E0E0E0' }}>
+              {(['cm', 'm'] as const).map((u) => {
+                const active = unit === u;
+                return (
+                  <TouchableOpacity
+                    key={u}
+                    onPress={() => toggleUnit(u)}
+                    activeOpacity={0.85}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 6,
+                      backgroundColor: active ? '#000' : 'transparent',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: 'Helvetica Neue',
+                        fontWeight: '400',
+                        fontSize: 10,
+                        letterSpacing: 1.5,
+                        textTransform: 'uppercase',
+                        color: active ? '#fff' : '#000',
+                      }}
+                    >
+                      {u}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
 
           <View className="mb-6">
-            <Label>Bust (cm)</Label>
+            <Label>{`Bust (${unit})`}</Label>
             <MeasurementInput value={m.bust_cm} onChangeText={setField('bust_cm')} />
           </View>
 
           <View className="mb-6">
-            <Label>Waist (cm)</Label>
+            <Label>{`Waist (${unit})`}</Label>
             <MeasurementInput value={m.waist_cm} onChangeText={setField('waist_cm')} />
           </View>
 
           <View className="mb-6">
-            <Label>Hips (cm)</Label>
+            <Label>{`Hips (${unit})`}</Label>
             <MeasurementInput value={m.hips_cm} onChangeText={setField('hips_cm')} />
           </View>
 
           <View className="mb-6">
-            <Label>Shoulder (cm)</Label>
+            <Label>{`Shoulder (${unit})`}</Label>
             <MeasurementInput value={m.shoulder_cm} onChangeText={setField('shoulder_cm')} />
           </View>
 
           <View className="mb-8">
-            <Label>Arm Length (cm)</Label>
+            <Label>{`Arm Length (${unit})`}</Label>
             <MeasurementInput value={m.arm_length_cm} onChangeText={setField('arm_length_cm')} />
           </View>
 
