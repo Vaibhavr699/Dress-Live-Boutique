@@ -7,10 +7,14 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Modal,
+  Pressable,
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
+import ViewShot from 'react-native-view-shot';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -69,10 +73,15 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
   onDressSwitch: (dressId: number, dressName: string | null) => void;
   tryOnOverlayUri: string | null;
   tryOnLoading: boolean;
+  captureActive: boolean;
+  onLiveFrame: (dataUrl: string) => void;
 }) {
-  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading } = props;
+  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, onLiveFrame } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
+  const viewShotRef = useRef<ViewShot | null>(null);
+  const onLiveFrameRef = useRef(onLiveFrame);
+  React.useEffect(() => { onLiveFrameRef.current = onLiveFrame; }, [onLiveFrame]);
 
   // Remote camera track (advisor video)
   const tracks = deps.useTracks([deps.Track.Source.Camera], { onlySubscribed: false });
@@ -114,6 +123,45 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
     room.on('dataReceived', handler as any);
     return () => { room.off('dataReceived', handler as any); };
   }, [room, bookingId, onDressSwitch]);
+
+  // ── Auto-capture loop ──
+  // While the buyer's local video is published AND a dress is active, grab a
+  // frame from the off-screen ViewShot every ~2s, downscale to 640px, and hand
+  // the resulting data URL to the parent (which fires generateTryOn).
+  // We depend on the trackSid (stable string) rather than the `local` object
+  // (new identity every render) to avoid restarting the timer on every render.
+  const localTrackSid: string | null = localCamPub?.trackSid ?? null;
+  React.useEffect(() => {
+    if (!captureActive || !localTrackSid) return;
+    let cancelled = false;
+
+    const captureOnce = async () => {
+      try {
+        const ref = viewShotRef.current;
+        if (!ref || typeof ref.capture !== 'function') return;
+        const uri = await ref.capture();
+        if (cancelled || !uri) return;
+        const resized = await ImageManipulator.manipulateAsync(
+          uri,
+          [{ resize: { width: 640 } }],
+          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+        );
+        if (cancelled || !resized.base64) return;
+        onLiveFrameRef.current(`data:image/jpeg;base64,${resized.base64}`);
+      } catch {
+        // Single capture failure is non-fatal — the next tick will retry.
+      }
+    };
+
+    // First capture after a short warmup so the video pipeline has frames to grab.
+    const initial = setTimeout(captureOnce, 1500);
+    const interval = setInterval(captureOnce, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(initial);
+      clearInterval(interval);
+    };
+  }, [captureActive, localTrackSid]);
 
   return (
     <View style={{ width: '100%', height: frameHeight }}>
@@ -183,6 +231,30 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
         </View>
       ) : null}
 
+      {/* Off-screen high-res copy of the local video track for auto-capture.
+          Sits at left:-10000 so it is rendered + decoded but never visible.
+          ViewShot wraps the VideoTrack so capture() can grab the latest frame. */}
+      {local && captureActive ? (
+        <View
+          collapsable={false}
+          pointerEvents="none"
+          style={{ position: 'absolute', left: -10000, top: 0, width: 480, height: 720, opacity: 0 }}
+        >
+          <ViewShot
+            ref={viewShotRef}
+            options={{ format: 'jpg', quality: 0.85, result: 'tmpfile' }}
+            style={{ width: 480, height: 720 }}
+          >
+            <deps.VideoTrack
+              trackRef={local}
+              mirror={false}
+              style={{ width: 480, height: 720 }}
+              zOrder={-1}
+            />
+          </ViewShot>
+        </View>
+      ) : null}
+
       <View
         className="absolute left-4 right-4 bottom-4 bg-white/95 border border-white/70 px-4 py-3"
         style={{ borderRadius: 18 }}
@@ -235,6 +307,16 @@ export default function VideoCallScreen() {
   const [tryOnDressName, setTryOnDressName] = useState<string | null>(null);
   const [tryOnActiveDressId, setTryOnActiveDressId] = useState<number | null>(null);
   const [photoCapturing, setPhotoCapturing] = useState(false);
+
+  // ── HD freeze-frame state (Phase 4) ─────────────────────────────────────
+  const [hdLoading, setHdLoading] = useState(false);
+  const [hdResultUri, setHdResultUri] = useState<string | null>(null);
+  const [hdError, setHdError] = useState<string | null>(null);
+  const [hdModalOpen, setHdModalOpen] = useState(false);
+
+  // ── Phase 5 telemetry & failure tracking ───────────────────────────────
+  const consecutiveFailuresRef = useRef(0);
+  const [showLightingHint, setShowLightingHint] = useState(false);
 
   // Refs so the stable onDressSwitch callback always reads latest values
   const tryOnPhotoRef = useRef<string | null>(null);
@@ -358,30 +440,98 @@ export default function VideoCallScreen() {
   };
 
   // ── AI Try-On: generate result for current dress ─────────────────────────
-  const generateTryOn = useCallback(async (dressId: number) => {
+  // quality 'live' (default) → OpenCV path, sub-second response.
+  // quality 'hd' → Fashn path, 10–30s, photo-realistic (Phase 4 freeze frame).
+  const generateTryOn = useCallback(async (dressId: number, quality: 'live' | 'hd' = 'live') => {
     const photo = tryOnPhotoRef.current;
     const bId = bookingIdRef.current;
     if (!photo || !bId) return;
 
+    const startedAt = Date.now();
     setTryOnLoading(true);
     setTryOnResultUri(null);
     setTryOnError(null);
     try {
-      const res = await api.post('/ai/live-tryon-frame', {
-        booking_id: bId,
-        dress_id: dressId,
-        frame_data_url: photo,
-      }) as { image_data_url?: string | null };
+      const res = await api.post(
+        '/ai/live-tryon-frame',
+        {
+          booking_id: bId,
+          dress_id: dressId,
+          frame_data_url: photo,
+          quality,
+        },
+        // HD path can take up to 2 minutes; live path stays at default 30s timeout.
+        quality === 'hd' ? { timeoutMs: 120_000 } : undefined,
+      ) as { image_data_url?: string | null; quality?: string };
+      const elapsedMs = Date.now() - startedAt;
       if (res?.image_data_url) {
         setTryOnResultUri(res.image_data_url);
+        consecutiveFailuresRef.current = 0;
+        setShowLightingHint(false);
+        // Phase 5 telemetry — dev only.
+        if (__DEV__) {
+          console.log(`[tryon] dress=${dressId} quality=${res?.quality ?? quality} latency=${elapsedMs}ms`);
+        }
       } else {
         setTryOnError('No result returned. Please try again.');
+        consecutiveFailuresRef.current += 1;
       }
     } catch (err: any) {
+      // 429 from server rate limit is expected during fast auto-capture — drop silently.
+      if (err?.status === 429) return;
       const msg = err?.detail || err?.message || 'Try-on failed. Please try again.';
       setTryOnError(typeof msg === 'string' ? msg : 'Try-on failed. Please try again.');
+      consecutiveFailuresRef.current += 1;
     } finally {
+      // Phase 5 — surface a lighting hint after 3 consecutive failures.
+      if (consecutiveFailuresRef.current >= 3) {
+        setShowLightingHint(true);
+      }
       setTryOnLoading(false);
+    }
+  }, []);
+
+  // ── Phase 4: HD freeze-frame ────────────────────────────────────────────
+  // Captures the current live frame and sends it through Fashn for a
+  // photo-realistic still. Opens a full-screen modal with the result.
+  const captureHdPreview = useCallback(async () => {
+    const photo = tryOnPhotoRef.current;
+    const bId = bookingIdRef.current;
+    const dressId = tryOnActiveDressIdRef.current;
+    if (!photo || !bId || !dressId) {
+      Alert.alert('Hold on', 'Pick a dress and let the live preview warm up first.');
+      return;
+    }
+    setHdLoading(true);
+    setHdError(null);
+    setHdResultUri(null);
+    setHdModalOpen(true);
+    const startedAt = Date.now();
+    try {
+      const res = await api.post(
+        '/ai/live-tryon-frame',
+        {
+          booking_id: bId,
+          dress_id: dressId,
+          frame_data_url: photo,
+          quality: 'hd',
+        },
+        { timeoutMs: 120_000 },
+      ) as { image_data_url?: string | null; quality?: string };
+      const elapsedMs = Date.now() - startedAt;
+      if (__DEV__) {
+        console.log(`[tryon:hd] dress=${dressId} quality=${res?.quality ?? 'hd'} latency=${elapsedMs}ms`);
+      }
+      if (res?.image_data_url) {
+        setHdResultUri(res.image_data_url);
+      } else {
+        setHdError('HD preview returned no image. Please try again.');
+      }
+    } catch (err: any) {
+      const msg = err?.detail || err?.message || 'HD preview failed. Please try again.';
+      setHdError(typeof msg === 'string' ? msg : 'HD preview failed. Please try again.');
+    } finally {
+      setHdLoading(false);
     }
   }, []);
 
@@ -396,6 +546,29 @@ export default function VideoCallScreen() {
   };
   const stableOnDressSwitch = useCallback(
     (dressId: number, dressName: string | null) => dressSwitchHandlerRef.current(dressId, dressName),
+    [],
+  );
+
+  // Stable live-frame handler. Auto-capture in BuyerRoomView calls this every
+  // ~2s with a fresh data URL of the buyer's current video frame. We update
+  // the photo state and, if a dress is active and we are not already
+  // rendering, kick off a new try-on. The backend rate-limits to 1 / 3s.
+  const tryOnActiveDressIdRef = useRef<number | null>(null);
+  const tryOnLoadingRef = useRef(false);
+  useEffect(() => { tryOnActiveDressIdRef.current = tryOnActiveDressId; }, [tryOnActiveDressId]);
+  useEffect(() => { tryOnLoadingRef.current = tryOnLoading; }, [tryOnLoading]);
+
+  const liveFrameHandlerRef = useRef<(dataUrl: string) => void>(() => {});
+  liveFrameHandlerRef.current = (dataUrl: string) => {
+    tryOnPhotoRef.current = dataUrl;
+    setTryOnPhotoDataUrl(dataUrl);
+    const activeId = tryOnActiveDressIdRef.current;
+    if (activeId && !tryOnLoadingRef.current) {
+      void generateTryOn(activeId);
+    }
+  };
+  const stableOnLiveFrame = useCallback(
+    (dataUrl: string) => liveFrameHandlerRef.current(dataUrl),
     [],
   );
 
@@ -573,6 +746,8 @@ export default function VideoCallScreen() {
                       onDressSwitch={stableOnDressSwitch}
                       tryOnOverlayUri={tryOnResultUri}
                       tryOnLoading={tryOnLoading}
+                      captureActive={callState === 'active' && tryOnActiveDressId != null}
+                      onLiveFrame={stableOnLiveFrame}
                     />
                   </deps.LiveKitRoom>
                 );
@@ -659,86 +834,31 @@ export default function VideoCallScreen() {
               </View>
             </View>
 
-            {/* Try-On photo capture */}
+            {/* Live AI Try-On — auto-capture from video stream */}
             <View className="bg-[#F9F9F9] p-6 rounded-2xl">
               <View className="flex-row items-center justify-between mb-4">
                 <Text className="text-black text-[12px] font-bold uppercase tracking-[1px] opacity-40">
-                  Try-On Photo
+                  Live AI Try-On
                 </Text>
-                {tryOnPhotoDataUrl ? (
-                  <View className="flex-row items-center bg-[#EEF8EE] px-2.5 py-1 rounded-full">
-                    <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
-                    <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Ready</Text>
-                  </View>
-                ) : (
-                  <View className="flex-row items-center bg-[#FFF4EC] px-2.5 py-1 rounded-full">
-                    <View className="w-1.5 h-1.5 rounded-full bg-[#C9491A] mr-1.5" />
-                    <Text className="text-[#C9491A] text-[8px] uppercase tracking-[0.6px]">Not set</Text>
-                  </View>
-                )}
+                <View className="flex-row items-center bg-[#EEF8EE] px-2.5 py-1 rounded-full">
+                  <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+                  <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Auto</Text>
+                </View>
               </View>
 
-              {tryOnPhotoDataUrl ? (
-                /* Photo captured — show preview */
-                <View className="flex-row items-start gap-4">
-                  <View className="overflow-hidden rounded-xl border border-black/5" style={{ width: 72, height: 96 }}>
-                    <Image source={{ uri: tryOnPhotoDataUrl }} style={{ width: 72, height: 96 }} contentFit="cover" />
-                  </View>
-                  <View className="flex-1">
-                    <Text className="text-black/70 text-[12px] leading-5 mb-3">
-                      Your photo is ready. When the consultant switches dresses, your AI preview will generate instantly.
-                    </Text>
-                    <View className="flex-row gap-3">
-                      <TouchableOpacity
-                        onPress={() => capturePhoto(true)}
-                        disabled={photoCapturing}
-                        className="border border-black px-3 py-2"
-                      >
-                        <Text className="text-black text-[9px] font-bold uppercase tracking-[1px]">
-                          Retake
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => capturePhoto(false)}
-                        disabled={photoCapturing}
-                        className="border border-black/20 px-3 py-2"
-                      >
-                        <Text className="text-black/50 text-[9px] uppercase tracking-[1px]">
-                          Gallery
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </View>
-              ) : (
-                /* No photo yet */
-                <View>
-                  <Text className="text-black/55 text-[12px] leading-5 mb-5">
-                    Take a full-body photo now so AI can apply dresses on you the moment your consultant selects them.
-                  </Text>
-                  <View className="gap-3">
-                    <TouchableOpacity
-                      onPress={() => capturePhoto(true)}
-                      disabled={photoCapturing}
-                      activeOpacity={0.9}
-                      className="bg-black py-4 items-center rounded-sm"
-                      style={{ opacity: photoCapturing ? 0.5 : 1 }}
-                    >
-                      {photoCapturing ? (
-                        <ActivityIndicator color="white" size="small" />
-                      ) : (
-                        <View className="flex-row items-center gap-2">
-                          <Feather name="camera" size={14} color="white" />
-                          <Text className="text-white text-[11px] font-bold uppercase tracking-[1.5px]">
-                            Take Full-Body Photo
-                          </Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                    
-                  </View>
-                </View>
-              )}
+              <Text className="text-black/55 text-[12px] leading-5 mb-3">
+                Stand in front of the camera once the call starts. We will auto-capture your video and apply each dress the consultant selects — no manual photo needed.
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => capturePhoto(false)}
+                disabled={photoCapturing}
+                className="self-start"
+              >
+                <Text className="text-black/40 text-[9px] uppercase tracking-[1px] underline">
+                  {photoCapturing ? 'Picking…' : 'Or pick from gallery'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -749,7 +869,7 @@ export default function VideoCallScreen() {
             <View className="bg-[#F9F9F9] rounded-2xl overflow-hidden">
               {/* Panel header */}
               <View className="px-5 pt-5 pb-4 flex-row items-center justify-between border-b border-black/5">
-                <View>
+                <View className="flex-1 mr-3">
                   <Text className="text-black text-[11px] font-bold uppercase tracking-[1.2px]">
                     Live AI Try-On
                   </Text>
@@ -759,47 +879,21 @@ export default function VideoCallScreen() {
                     </Text>
                   ) : null}
                 </View>
-                {tryOnPhotoDataUrl ? (
-                  <TouchableOpacity
-                    onPress={() => capturePhoto(true)}
-                    disabled={photoCapturing || tryOnLoading}
-                    className="flex-row items-center gap-1.5 border border-black/15 px-3 py-1.5 rounded-full"
-                  >
-                    <Feather name="refresh-cw" size={11} color="#555" />
-                    <Text className="text-black/55 text-[9px] uppercase tracking-[0.8px]">
-                      {photoCapturing ? 'Capturing…' : 'New Photo'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
+                <View className="flex-row items-center bg-[#EEF8EE] px-2.5 py-1 rounded-full">
+                  <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+                  <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Live</Text>
+                </View>
               </View>
 
               {/* Panel body */}
               <View className="p-5">
                 {!tryOnPhotoDataUrl ? (
-                  /* No photo — prompt to capture */
-                  <View>
-                    <Text className="text-black/55 text-[12px] leading-5 mb-4">
-                      Capture a full-body photo so AI can apply each dress on you as your consultant switches them.
+                  /* Waiting for first auto-capture */
+                  <View className="flex-row items-center py-3">
+                    <ActivityIndicator color="#1A1A1A" size="small" />
+                    <Text className="text-black/55 text-[11px] ml-3">
+                      Warming up live capture…
                     </Text>
-                    <TouchableOpacity
-                      onPress={() => capturePhoto(true)}
-                      disabled={photoCapturing}
-                      activeOpacity={0.9}
-                      className="bg-black py-4 items-center rounded-sm mb-3"
-                      style={{ opacity: photoCapturing ? 0.5 : 1 }}
-                    >
-                      {photoCapturing ? (
-                        <ActivityIndicator color="white" size="small" />
-                      ) : (
-                        <View className="flex-row items-center gap-2">
-                          <Feather name="camera" size={14} color="white" />
-                          <Text className="text-white text-[11px] font-bold uppercase tracking-[1.5px]">
-                            Capture Photo
-                          </Text>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-  
                   </View>
                 ) : tryOnLoading ? (
                   /* Generating — spinner shown on video overlay; panel shows brief status */
@@ -835,25 +929,48 @@ export default function VideoCallScreen() {
                   </View>
                 ) : tryOnResultUri ? (
                   /* Result shown on video overlay — compact status in panel */
-                  <View className="flex-row items-center justify-between py-2">
-                    <View className="flex-row items-center bg-[#EEF8EE] px-3 py-1.5 rounded-full">
-                      <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
-                      <Text className="text-[#4EA35D] text-[9px] uppercase tracking-[0.6px]">
-                        Showing on video
+                  <View>
+                    <View className="flex-row items-center justify-between py-2">
+                      <View className="flex-row items-center bg-[#EEF8EE] px-3 py-1.5 rounded-full">
+                        <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+                        <Text className="text-[#4EA35D] text-[9px] uppercase tracking-[0.6px]">
+                          Showing on video
+                        </Text>
+                      </View>
+                      <Text className="text-black/40 text-[9px] uppercase tracking-[0.8px]">
+                        Auto-refreshing
                       </Text>
                     </View>
-                    {tryOnActiveDressId ? (
-                      <TouchableOpacity
-                        onPress={() => void generateTryOn(tryOnActiveDressId)}
-                        disabled={tryOnLoading}
-                        className="flex-row items-center gap-1.5 border border-black/15 px-3 py-1.5 rounded-full"
-                      >
-                        <Feather name="refresh-cw" size={11} color="#555" />
-                        <Text className="text-black/55 text-[9px] uppercase tracking-[0.8px]">
-                          Refresh
+                    {showLightingHint ? (
+                      <View className="mt-3 bg-[#FFF8EC] border border-[#F0D4A0] px-3 py-2 flex-row items-start gap-2 rounded-sm">
+                        <Feather name="sun" size={12} color="#A87A2A" />
+                        <Text className="text-[#A87A2A] text-[10px] leading-4 flex-1">
+                          Try-on keeps failing — please move toward better lighting and stand fully in frame.
                         </Text>
-                      </TouchableOpacity>
+                      </View>
                     ) : null}
+                    <TouchableOpacity
+                      onPress={captureHdPreview}
+                      disabled={hdLoading}
+                      activeOpacity={0.85}
+                      className="mt-3 flex-row items-center gap-2 bg-black py-3 px-4 self-start rounded-sm"
+                      style={{ opacity: hdLoading ? 0.5 : 1 }}
+                    >
+                      <Feather name="zap" size={12} color="white" />
+                      <Text className="text-white text-[10px] font-bold uppercase tracking-[1.2px]">
+                        {hdLoading ? 'Generating HD…' : 'Capture HD preview'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => capturePhoto(true)}
+                      disabled={photoCapturing || tryOnLoading}
+                      className="mt-3 self-start flex-row items-center gap-1.5"
+                    >
+                      <Feather name="camera" size={11} color="#666" />
+                      <Text className="text-black/40 text-[9px] uppercase tracking-[0.8px] underline">
+                        {photoCapturing ? 'Capturing…' : 'Snap manually'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 ) : (
                   /* Photo set but no dress selected yet */
@@ -893,6 +1010,93 @@ export default function VideoCallScreen() {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* ── Phase 4: HD freeze-frame modal ── */}
+      <Modal
+        visible={hdModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setHdModalOpen(false)}
+      >
+        <Pressable
+          onPress={() => setHdModalOpen(false)}
+          className="flex-1 bg-black/85 items-center justify-center px-6"
+        >
+          <Pressable onPress={(e) => e.stopPropagation()} className="w-full max-w-md">
+            <View className="bg-white rounded-2xl overflow-hidden">
+              <View className="px-5 pt-5 pb-3 flex-row items-center justify-between">
+                <View>
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1.5px]">
+                    HD Preview
+                  </Text>
+                  {tryOnDressName ? (
+                    <Text className="text-black/50 text-[10px] mt-1" numberOfLines={1}>
+                      {tryOnDressName}
+                    </Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity onPress={() => setHdModalOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Ionicons name="close" size={22} color="#000" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ aspectRatio: 3 / 4, backgroundColor: '#F4F4F4' }}>
+                {hdResultUri ? (
+                  <Image source={{ uri: hdResultUri }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+                ) : hdLoading ? (
+                  <View className="flex-1 items-center justify-center px-8">
+                    <ActivityIndicator color="#1A1A1A" size="large" />
+                    <Text className="text-black/70 text-[12px] mt-5 font-medium text-center">
+                      Hold still — generating HD preview
+                    </Text>
+                    <Text className="text-black/40 text-[10px] mt-2 text-center leading-4">
+                      AI rendering can take 10–30 seconds.
+                    </Text>
+                  </View>
+                ) : hdError ? (
+                  <View className="flex-1 items-center justify-center px-8">
+                    <Feather name="alert-circle" size={28} color="#C9491A" />
+                    <Text className="text-black/70 text-[12px] mt-4 text-center font-medium">
+                      Could not generate HD preview
+                    </Text>
+                    <Text className="text-black/45 text-[10px] mt-2 text-center leading-4">
+                      {hdError}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={captureHdPreview}
+                      className="mt-5 flex-row items-center gap-2 border border-black/20 px-4 py-2.5 rounded-sm"
+                    >
+                      <Feather name="refresh-cw" size={12} color="#555" />
+                      <Text className="text-black/60 text-[10px] uppercase tracking-[1px]">Try again</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+
+              {hdResultUri ? (
+                <View className="px-5 py-4 flex-row gap-3">
+                  <TouchableOpacity
+                    onPress={captureHdPreview}
+                    className="flex-1 border border-black/15 py-3 items-center rounded-sm"
+                  >
+                    <Text className="text-black/70 text-[10px] font-bold uppercase tracking-[1.2px]">
+                      Re-render
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setHdModalOpen(false)}
+                    className="flex-1 bg-black py-3 items-center rounded-sm"
+                  >
+                    <Text className="text-white text-[10px] font-bold uppercase tracking-[1.2px]">
+                      Done
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

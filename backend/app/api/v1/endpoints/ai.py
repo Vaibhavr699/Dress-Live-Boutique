@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import collections
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -41,12 +42,19 @@ class LiveTryOnFramePayload(BaseModel):
     booking_id: int
     dress_id: int
     frame_data_url: str
+    # 'live' (default) → OpenCV-only, ~1s; 'hd' → Fashn (slow, photo-realistic).
+    quality: str = "live"
 
 
-# In-memory rate limiter: booking_id → monotonic timestamp of last accepted request.
-# Pruned on each request to prevent unbounded growth.
-_live_tryon_last_request: dict[int, float] = {}
-_LIVE_TRYON_MIN_INTERVAL_SECONDS = 3.0
+# In-memory rate limiter, keyed by (booking_id, quality). Live and HD have
+# different cadence budgets so a slow Fashn call doesn't block snappy live
+# frames (and vice versa). Pruned on every request.
+_live_tryon_last_request: dict[tuple[int, str], float] = {}
+_LIVE_TRYON_INTERVAL_BY_QUALITY = {
+    "live": 1.0,
+    "hd": 5.0,
+}
+_LIVE_TRYON_DEFAULT_INTERVAL = 1.0
 
 
 def _decode_image_bytes(image_bytes: bytes):
@@ -95,6 +103,23 @@ def _encode_png_data_url(img_bgr) -> str:
     return f"data:image/png;base64,{payload}"
 
 
+def _encode_jpeg_data_url(img_bgr, quality: int = 80) -> str:
+    """JPEG encoder for live overlays — ~3-5x smaller payload than PNG and
+    visually identical when composited on top of a video stream."""
+    try:
+        import cv2
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    ok, encoded = cv2.imencode(
+        ".jpg", img_bgr, [cv2.IMWRITE_JPEG_QUALITY, int(max(1, min(100, quality)))]
+    )
+    if not ok or encoded is None:
+        raise HTTPException(status_code=500, detail="Could not encode try-on preview.")
+    payload = base64.b64encode(encoded.tobytes()).decode("ascii")
+    return f"data:image/jpeg;base64,{payload}"
+
+
 def _encode_image_bytes_data_url(image_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Image data is required.")
@@ -109,6 +134,33 @@ def _download_image_bytes(url: str) -> bytes:
         return response.content
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not load dress image for AI try-on: {e}")
+
+
+# Garment bytes are heavy to re-download every frame during a live call.
+# Keep a small in-process LRU keyed by URL; entries are invalidated after
+# `_GARMENT_CACHE_TTL_SECONDS` so dress edits propagate within a minute.
+_GARMENT_CACHE_MAX = 64
+_GARMENT_CACHE_TTL_SECONDS = 60.0
+_garment_cache: "collections.OrderedDict[str, tuple[float, bytes]]" = collections.OrderedDict()
+
+
+def _get_garment_bytes_cached(url: str) -> bytes:
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing garment image URL.")
+    now = time.monotonic()
+    cached = _garment_cache.get(url)
+    if cached is not None:
+        ts, content = cached
+        if now - ts <= _GARMENT_CACHE_TTL_SECONDS:
+            _garment_cache.move_to_end(url)
+            return content
+        _garment_cache.pop(url, None)
+    content = _download_image_bytes(url)
+    _garment_cache[url] = (now, content)
+    _garment_cache.move_to_end(url)
+    while len(_garment_cache) > _GARMENT_CACHE_MAX:
+        _garment_cache.popitem(last=False)
+    return content
 
 
 def _fashn_tryon_enabled() -> bool:
@@ -213,6 +265,127 @@ def _extract_garment_rgba(garment_img):
         alpha = cv2.normalize(alpha, None, 0, 255, cv2.NORM_MINMAX)
 
     return garment_bgr, alpha
+
+
+def _compose_tryon_pose_warp(person_img_bgr, garment_img) -> tuple[Any, dict[str, Any]]:
+    """
+    Phase 3 renderer: use MediaPipe pose landmarks (shoulders + hips) to build
+    a perspective transform that warps the garment onto the body. Much better
+    than the HOG bbox fit when the body is not perfectly facing the camera.
+
+    Raises HTTPException if MediaPipe is unavailable or no pose is detected;
+    callers should fall back to _compose_tryon_preview / center fallback.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
+
+    try:
+        import mediapipe as mp
+    except Exception:
+        raise HTTPException(status_code=400, detail="Pose-warp unavailable on this server.")
+
+    if not hasattr(mp, "solutions"):
+        raise HTTPException(status_code=400, detail="Pose-warp unavailable on this server.")
+
+    h, w = person_img_bgr.shape[:2]
+    if h < 64 or w < 64:
+        raise HTTPException(status_code=400, detail="Frame too small for pose-warp.")
+
+    img_rgb = person_img_bgr[:, :, ::-1]
+    mp_pose = mp.solutions.pose
+    # Lightest pose model for low-latency real-time use.
+    with mp_pose.Pose(
+        static_image_mode=True,
+        model_complexity=0,
+        enable_segmentation=False,
+        min_detection_confidence=0.3,
+        min_tracking_confidence=0.3,
+    ) as pose:
+        res = pose.process(img_rgb)
+
+    if not res.pose_landmarks or not res.pose_landmarks.landmark:
+        raise HTTPException(status_code=400, detail="No person detected for pose-warp.")
+
+    lm = res.pose_landmarks.landmark
+    L = mp_pose.PoseLandmark
+
+    def pt(idx) -> tuple[float, float, float]:
+        p = lm[idx.value]
+        return (float(p.x) * w, float(p.y) * h, float(getattr(p, "visibility", 0.0) or 0.0))
+
+    ls = pt(L.LEFT_SHOULDER)   # left shoulder (subject's left = image right)
+    rs = pt(L.RIGHT_SHOULDER)
+    lh = pt(L.LEFT_HIP)
+    rh = pt(L.RIGHT_HIP)
+
+    # Require all four keypoints with at least modest confidence — otherwise
+    # the perspective transform will produce a broken polygon.
+    min_vis = 0.35
+    if min(ls[2], rs[2], lh[2], rh[2]) < min_vis:
+        raise HTTPException(status_code=400, detail="Pose keypoints not confident enough for warp.")
+
+    # In MediaPipe naming, LEFT_* refers to the subject's left side (so it
+    # appears on the image's RIGHT for a forward-facing buyer). For the warp
+    # quadrilateral we want the order (top-left, top-right, bottom-right,
+    # bottom-left) in image-space.
+    image_left_shoulder = rs[:2]   # subject's right shoulder → image left
+    image_right_shoulder = ls[:2]
+    image_left_hip = rh[:2]
+    image_right_hip = lh[:2]
+
+    # Expand the quad outward a bit so the dress falls on the body, not
+    # purely between the joint centers.
+    shoulder_dx = image_right_shoulder[0] - image_left_shoulder[0]
+    body_h = ((image_left_hip[1] + image_right_hip[1]) / 2.0) - ((image_left_shoulder[1] + image_right_shoulder[1]) / 2.0)
+    if shoulder_dx <= 0 or body_h <= 0:
+        raise HTTPException(status_code=400, detail="Pose geometry invalid for warp.")
+
+    expand_x = shoulder_dx * 0.18  # widen by ~18% on each side
+    expand_top = body_h * 0.06     # nudge the dress up a touch above shoulders
+    expand_bottom = body_h * 0.55  # extend dress past hips toward mid-thigh
+
+    dst_tl = (image_left_shoulder[0] - expand_x, image_left_shoulder[1] - expand_top)
+    dst_tr = (image_right_shoulder[0] + expand_x, image_right_shoulder[1] - expand_top)
+    dst_br = (image_right_hip[0] + expand_x, image_right_hip[1] + expand_bottom)
+    dst_bl = (image_left_hip[0] - expand_x, image_left_hip[1] + expand_bottom)
+
+    # Source quad: assume a standard product photo where the garment occupies
+    # roughly the middle 65% horizontally and runs from ~10% to ~75% vertically.
+    garment_bgr, garment_alpha = _extract_garment_rgba(garment_img)
+    g_h, g_w = garment_bgr.shape[:2]
+    if g_h <= 0 or g_w <= 0:
+        raise HTTPException(status_code=400, detail="Selected dress image is not usable for AI try-on.")
+
+    src_tl = (g_w * 0.18, g_h * 0.10)
+    src_tr = (g_w * 0.82, g_h * 0.10)
+    src_br = (g_w * 0.82, g_h * 0.75)
+    src_bl = (g_w * 0.18, g_h * 0.75)
+
+    src = np.array([src_tl, src_tr, src_br, src_bl], dtype=np.float32)
+    dst = np.array([dst_tl, dst_tr, dst_br, dst_bl], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(src, dst)
+    warped_garment = cv2.warpPerspective(garment_bgr, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=(0, 0, 0))
+    warped_alpha = cv2.warpPerspective(garment_alpha, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
+    # Slight feather to reduce hard edges from the warp.
+    warped_alpha = cv2.GaussianBlur(warped_alpha, (5, 5), 0)
+
+    alpha_mask = (warped_alpha.astype(np.float32) / 255.0)[..., None]
+    result = person_img_bgr.astype(np.float32) * (1.0 - alpha_mask) + warped_garment.astype(np.float32) * alpha_mask
+    result = np.clip(result, 0, 255).astype(np.uint8)
+
+    return result, {
+        "renderer": "local_pose_warp",
+        "keypoint_visibility": {
+            "left_shoulder": ls[2],
+            "right_shoulder": rs[2],
+            "left_hip": lh[2],
+            "right_hip": rh[2],
+        },
+    }
 
 
 def _compose_tryon_preview(person_img_bgr, garment_img) -> tuple[Any, dict[str, Any]]:
@@ -637,17 +810,45 @@ async def preview_tryon_base64(
     )
 
 
+def _render_local_tryon(frame_image_bytes: bytes, garment_bytes: bytes) -> tuple[Any, dict[str, Any]]:
+    """OpenCV-only render path. Returns (bgr_image, details).
+
+    Cascade (best → fallback):
+      1. pose-warp (MediaPipe shoulders + hips → perspective transform)
+      2. HOG bbox + scaled paste (no perspective)
+      3. center paste (no person detection)
+    """
+    person_img_bgr = _decode_image_bytes(frame_image_bytes)
+    garment_img = _decode_image_with_alpha(garment_bytes)
+    try:
+        return _compose_tryon_pose_warp(person_img_bgr, garment_img)
+    except HTTPException:
+        pass
+    try:
+        return _compose_tryon_preview(person_img_bgr, garment_img)
+    except HTTPException:
+        return _compose_tryon_center_fallback(person_img_bgr, garment_img)
+
+
 async def _build_live_tryon_response(
     *,
     db: Session,
     dress_id: int,
     frame_image_bytes: bytes,
+    quality: str = "live",
 ) -> dict[str, Any]:
     """
     Render a try-on for a live video frame.
-    Unlike the pre-booking flow, we skip strict full-body pose validation —
-    live camera frames may not satisfy all pose heuristics but are still
-    good enough for the dress overlay.
+
+    quality='live' (default): OpenCV-only. ~0.5–1s per frame. Cartoonish but
+    snappy enough for continuous video overlay.
+
+    quality='hd': try Fashn first (10–30s, photo-realistic) and fall back to
+    OpenCV if Fashn fails. Use this for the "Capture HD preview" / freeze
+    frame flow, not for continuous live updates.
+
+    Skips strict full-body pose validation in both paths — live frames are
+    inherently variable.
     """
     dress = crud_dress.get(db, id=dress_id)
     if not dress:
@@ -659,9 +860,9 @@ async def _build_live_tryon_response(
     if not garment_url:
         raise HTTPException(status_code=400, detail="This dress does not have an AI garment image yet.")
 
-    garment_bytes = _download_image_bytes(garment_url)
+    garment_bytes = _get_garment_bytes_cached(garment_url)
 
-    if _fashn_tryon_enabled():
+    if quality == "hd" and _fashn_tryon_enabled():
         try:
             resized_frame = _resize_image_bytes_for_tryon(frame_image_bytes, max_side=768)
             frame_data_url = _encode_image_bytes_data_url(resized_frame, "image/jpeg")
@@ -673,22 +874,13 @@ async def _build_live_tryon_response(
             )
             preview_details = {"renderer": "fashn"}
         except Exception as e:
-            person_img_bgr = _decode_image_bytes(frame_image_bytes)
-            garment_img = _decode_image_with_alpha(garment_bytes)
-            try:
-                preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
-            except HTTPException:
-                preview_bgr, preview_details = _compose_tryon_center_fallback(person_img_bgr, garment_img)
-            image_data_url = _encode_png_data_url(preview_bgr)
+            preview_bgr, preview_details = _render_local_tryon(frame_image_bytes, garment_bytes)
+            image_data_url = _encode_jpeg_data_url(preview_bgr, quality=85)
             preview_details["fashn_error"] = str(e)
     else:
-        person_img_bgr = _decode_image_bytes(frame_image_bytes)
-        garment_img = _decode_image_with_alpha(garment_bytes)
-        try:
-            preview_bgr, preview_details = _compose_tryon_preview(person_img_bgr, garment_img)
-        except HTTPException:
-            preview_bgr, preview_details = _compose_tryon_center_fallback(person_img_bgr, garment_img)
-        image_data_url = _encode_png_data_url(preview_bgr)
+        # 'live' path — always OpenCV, always JPEG. Sub-second latency.
+        preview_bgr, preview_details = _render_local_tryon(frame_image_bytes, garment_bytes)
+        image_data_url = _encode_jpeg_data_url(preview_bgr, quality=80)
 
     return {
         "ok": True,
@@ -700,6 +892,7 @@ async def _build_live_tryon_response(
         },
         "image_data_url": image_data_url,
         "details": preview_details,
+        "quality": "hd" if (quality == "hd" and _fashn_tryon_enabled() and preview_details.get("renderer") == "fashn") else "live",
     }
 
 
@@ -745,14 +938,15 @@ async def live_tryon_frame(
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     """
-    Live video call try-on triggered when the consultant switches a dress.
+    Live video call try-on triggered when the consultant switches a dress,
+    or by the buyer's auto-capture loop sending fresh frames.
 
-    The buyer's app captures a camera frame, sends it here, and receives a
-    dress-applied image back. Skips strict pose validation used in the
-    pre-booking flow since live frames are inherently variable.
+    quality='live' (default) → OpenCV, sub-second response, ~1 frame/s budget.
+    quality='hd' → Fashn (photo-realistic), ~5s rate-limit budget; intended
+    for an explicit "Capture HD preview" button rather than the live feed.
 
-    Rate-limited to one request per 3 seconds per booking to avoid
-    overwhelming the AI pipeline during an active call.
+    Rate-limited per (booking_id, quality) so a slow HD render in flight does
+    not block snappy live frames.
     """
     if current_user.role != "buyer":
         raise HTTPException(status_code=403, detail="Only buyers can request live try-on frames.")
@@ -765,25 +959,32 @@ async def live_tryon_frame(
     if booking.appointment_type != "video":
         raise HTTPException(status_code=400, detail="This booking is not a video appointment.")
 
+    quality = (payload.quality or "live").strip().lower()
+    if quality not in _LIVE_TRYON_INTERVAL_BY_QUALITY:
+        quality = "live"
+    interval = _LIVE_TRYON_INTERVAL_BY_QUALITY.get(quality, _LIVE_TRYON_DEFAULT_INTERVAL)
+
     # Prune stale entries (older than 60 s) to keep the dict small
     now = time.monotonic()
     stale = [k for k, v in _live_tryon_last_request.items() if now - v > 60]
     for k in stale:
         _live_tryon_last_request.pop(k, None)
 
-    last = _live_tryon_last_request.get(payload.booking_id, 0.0)
-    if now - last < _LIVE_TRYON_MIN_INTERVAL_SECONDS:
-        remaining = round(_LIVE_TRYON_MIN_INTERVAL_SECONDS - (now - last), 1)
+    rate_key = (payload.booking_id, quality)
+    last = _live_tryon_last_request.get(rate_key, 0.0)
+    if now - last < interval:
+        remaining = round(interval - (now - last), 1)
         raise HTTPException(
             status_code=429,
             detail=f"Try-on is still processing. Please wait {remaining}s before the next frame.",
         )
-    _live_tryon_last_request[payload.booking_id] = now
+    _live_tryon_last_request[rate_key] = now
 
     frame_image_bytes = _decode_data_url_image_bytes(payload.frame_data_url)
     return await _build_live_tryon_response(
         db=db,
         dress_id=payload.dress_id,
         frame_image_bytes=frame_image_bytes,
+        quality=quality,
     )
 
