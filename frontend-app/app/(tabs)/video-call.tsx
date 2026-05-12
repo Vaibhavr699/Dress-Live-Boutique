@@ -222,34 +222,25 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
         </View>
       ) : null}
 
+      {/* Visible local PiP. ViewShot wraps it so auto-capture grabs real
+          frames — off-screen LiveKit views don't get painted on either
+          platform, which produced black captures. The PiP itself is the
+          capture surface. */}
       {local ? (
         <View
           className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
-          style={{ width: 112, height: 152, borderRadius: 18 }}
-        >
-          <deps.VideoTrack trackRef={local} mirror={true} style={{ width: '100%', height: '100%' }} zOrder={1} />
-        </View>
-      ) : null}
-
-      {/* Off-screen high-res copy of the local video track for auto-capture.
-          Sits at left:-10000 so it is rendered + decoded but never visible.
-          ViewShot wraps the VideoTrack so capture() can grab the latest frame. */}
-      {local && captureActive ? (
-        <View
-          collapsable={false}
-          pointerEvents="none"
-          style={{ position: 'absolute', left: -10000, top: 0, width: 480, height: 720, opacity: 0 }}
+          style={{ width: 168, height: 224, borderRadius: 18 }}
         >
           <ViewShot
             ref={viewShotRef}
             options={{ format: 'jpg', quality: 0.85, result: 'tmpfile' }}
-            style={{ width: 480, height: 720 }}
+            style={{ width: '100%', height: '100%' }}
           >
             <deps.VideoTrack
               trackRef={local}
-              mirror={false}
-              style={{ width: 480, height: 720 }}
-              zOrder={-1}
+              mirror={true}
+              style={{ width: '100%', height: '100%' }}
+              zOrder={1}
             />
           </ViewShot>
         </View>

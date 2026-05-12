@@ -547,7 +547,22 @@ export default function BoutiqueVideoCallScreen() {
                       setLkConnected(true);
                     }}
                   >
-                    <View className="rounded-[28px] overflow-hidden border border-black/5">
+                    {/* elevation forces this wrapper into Android's hardware
+                        layer for shadow rendering, which keeps the WebRTC
+                        SurfaceView (the local-camera PiP) paintable. Without
+                        elevation, overflow-hidden + borderRadius routes
+                        children through a software layer and SurfaceView
+                        goes black. */}
+                    <View
+                      className="rounded-[28px] overflow-hidden border border-black/5"
+                      style={{
+                        elevation: 5,
+                        shadowColor: '#000',
+                        shadowOffset: { width: 0, height: 4 },
+                        shadowOpacity: 0.15,
+                        shadowRadius: 10,
+                      }}
+                    >
                       <PartnerRoomView
                         deps={deps}
                         bookingDresses={bookingDresses}
