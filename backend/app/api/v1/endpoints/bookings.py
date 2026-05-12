@@ -276,6 +276,11 @@ def create_booking(
     type_label = _appointment_label(booking.appointment_type)
     buyer_name = (current_user.full_name or current_user.email or "A customer").strip()
     boutique_name = (boutique.name if boutique else "your boutique") or "your boutique"
+    buyer_image = (current_user.profile_image_url or "").strip() or None
+    boutique_image = None
+    if boutique:
+        boutique_image = (boutique.header_image_url or boutique.interior_image_url or "").strip() or None
+
     for partner_id in _partner_user_ids_for_boutique(db, booking.boutique_id):
         _notify_safe(
             db,
@@ -286,6 +291,7 @@ def create_booking(
             action_type="booking",
             action_id=booking.id,
             payload=_booking_payload(booking),
+            image_url=buyer_image,
         )
 
     # Also notify the buyer with a confirmation row so they have a paper trail.
@@ -298,6 +304,7 @@ def create_booking(
         action_type="booking",
         action_id=booking.id,
         payload=_booking_payload(booking),
+        image_url=boutique_image,
     )
 
     return serialize_booking(db, booking)
@@ -395,6 +402,15 @@ def update_booking(
             body = f"Your {type_label} was updated. Check the latest details."
             kind = "booking_updated"
 
+        # Rich image: show the *counterparty's* picture to the recipient.
+        if acting_role == "partner":
+            boutique = crud_boutique.get(db, id=booking.boutique_id)
+            recipient_image = None
+            if boutique:
+                recipient_image = (boutique.header_image_url or boutique.interior_image_url or "").strip() or None
+        else:
+            recipient_image = (current_user.profile_image_url or "").strip() or None
+
         for uid in recipients:
             _notify_safe(
                 db,
@@ -405,6 +421,7 @@ def update_booking(
                 action_type="booking",
                 action_id=booking.id,
                 payload=_booking_payload(booking),
+                image_url=recipient_image,
             )
 
     return serialize_booking(db, booking)

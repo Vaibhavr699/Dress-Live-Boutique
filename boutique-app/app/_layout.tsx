@@ -15,6 +15,7 @@ import '@shared/polyfills/domExceptionNative';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { api } from '@shared/api/api';
+import { setupNotifications } from '@shared/notificationsSetup';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 
@@ -162,6 +163,9 @@ export default function RootLayout() {
             if (perm.status !== 'granted') {
               await Notifications.requestPermissionsAsync();
             }
+            // Register Android channels + iOS categories. Partner role gets
+            // Accept/Decline inline buttons on booking-request pushes.
+            await setupNotifications({ role: 'partner' });
             try {
               const tokenRes = await Notifications.getExpoPushTokenAsync();
               const expoToken = tokenRes?.data;
@@ -207,12 +211,35 @@ export default function RootLayout() {
           shouldSetBadge: false,
         }),
       });
-      const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const sub = Notifications.addNotificationResponseReceivedListener(async (response) => {
         const data = response.notification.request.content.data as {
           action_type?: string | null;
           type?: string | null;
           bookingId?: number | string | null;
+          action_id?: number | string | null;
         };
+        const actionId = response.actionIdentifier; // e.g. 'accept', 'decline', 'view', or DEFAULT_ACTION_IDENTIFIER
+
+        // Resolve the booking id from the push payload.
+        const rawId = data?.bookingId ?? data?.action_id ?? null;
+        const bookingId = typeof rawId === 'number' ? rawId : Number(rawId);
+
+        // Inline Accept / Decline from the lock screen — call the API directly
+        // so the partner can act without opening the app.
+        if (Number.isFinite(bookingId) && (actionId === 'accept' || actionId === 'decline')) {
+          try {
+            await api.put(`/bookings/${bookingId}`, {
+              status: actionId === 'accept' ? 'accepted' : 'rejected',
+            });
+          } catch {
+            // If the silent action fails (offline, token expired, etc.), fall
+            // back to opening the booking screen so the partner can retry.
+            router.push('/(tabs)/booking');
+          }
+          return;
+        }
+
+        // Default tap / "View" → open the booking tab.
         const action = data?.action_type ?? data?.type;
         if (action === 'booking') {
           router.push('/(tabs)/booking');

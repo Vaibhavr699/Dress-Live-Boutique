@@ -16,6 +16,7 @@ import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
 import { api } from '@shared/api/api';
+import { setupNotifications } from '@shared/notificationsSetup';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
@@ -189,6 +190,8 @@ export default function RootLayout() {
             if (notifPerm.status !== 'granted') {
               await Notifications.requestPermissionsAsync();
             }
+            // Register Android channels + iOS categories with inline buttons.
+            await setupNotifications({ role: 'buyer' });
             try {
               const tokenRes = await Notifications.getExpoPushTokenAsync();
               const expoToken = tokenRes?.data;

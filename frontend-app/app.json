@@ -74,6 +74,13 @@
           "isAccessMediaLocationEnabled": false
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/dress-live-icon-foreground.png",
+          "color": "#1A1A1A"
+        }
+      ],
       "expo-font",
       "expo-secure-store",
       "expo-web-browser"
