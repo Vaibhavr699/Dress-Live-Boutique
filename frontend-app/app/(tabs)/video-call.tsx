@@ -126,13 +126,29 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
 
   // ── Auto-capture loop ──
   // While the buyer's local video is published AND a dress is active, grab a
-  // frame from the off-screen ViewShot every ~2s, downscale to 640px, and hand
-  // the resulting data URL to the parent (which fires generateTryOn).
-  // We depend on the trackSid (stable string) rather than the `local` object
-  // (new identity every render) to avoid restarting the timer on every render.
+  // frame from the visible PiP ViewShot every ~2s, downscale to 640px, and
+  // hand it to the parent (which fires generateTryOn).
+  //
+  // If captures come back essentially black (Android SurfaceView limitation
+  // on some devices), we detect it via the JPEG payload size — a 640x* JPEG
+  // of normal video is 40–150 KB, but the same dimensions of a solid black
+  // frame compresses to under 8 KB. After repeated black captures we pause
+  // the loop and let the user fall back to the manual "Snap manually" path.
   const localTrackSid: string | null = localCamPub?.trackSid ?? null;
+  const blackFrameStreakRef = React.useRef(0);
+  const [captureDisabled, setCaptureDisabled] = React.useState(false);
+
+  // Reset failure state whenever the user re-activates capture (e.g. picks a
+  // new dress after the loop self-disabled).
   React.useEffect(() => {
-    if (!captureActive || !localTrackSid) return;
+    if (captureActive) {
+      blackFrameStreakRef.current = 0;
+      setCaptureDisabled(false);
+    }
+  }, [captureActive]);
+
+  React.useEffect(() => {
+    if (!captureActive || !localTrackSid || captureDisabled) return;
     let cancelled = false;
 
     const captureOnce = async () => {
@@ -147,6 +163,21 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
           { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
         );
         if (cancelled || !resized.base64) return;
+
+        // Black-frame heuristic: base64 length × 0.75 = byte count.
+        // Solid-black 640x* JPEG @ q=0.7 ≈ 3–6 KB; real video ≈ 40+ KB.
+        const sizeKb = (resized.base64.length * 0.75) / 1024;
+        if (sizeKb < 8) {
+          blackFrameStreakRef.current += 1;
+          if (__DEV__) {
+            console.log(`[tryon:capture] black-ish frame (${sizeKb.toFixed(1)} KB) streak=${blackFrameStreakRef.current}`);
+          }
+          if (blackFrameStreakRef.current >= 3) {
+            setCaptureDisabled(true);
+          }
+          return; // Do not upload a black frame.
+        }
+        blackFrameStreakRef.current = 0;
         onLiveFrameRef.current(`data:image/jpeg;base64,${resized.base64}`);
       } catch {
         // Single capture failure is non-fatal — the next tick will retry.
@@ -161,7 +192,7 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
       clearTimeout(initial);
       clearInterval(interval);
     };
-  }, [captureActive, localTrackSid]);
+  }, [captureActive, localTrackSid, captureDisabled]);
 
   return (
     <View style={{ width: '100%', height: frameHeight }}>
@@ -262,11 +293,23 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
               {activeDressLabel}
             </Text>
           </View>
-          <View className="bg-[#EEF8EE] px-2.5 py-1 rounded-full flex-row items-center">
-            <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
-            <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Live</Text>
-          </View>
+          {captureDisabled ? (
+            <View className="bg-[#FFF4EC] px-2.5 py-1 rounded-full flex-row items-center">
+              <View className="w-1.5 h-1.5 rounded-full bg-[#C9491A] mr-1.5" />
+              <Text className="text-[#C9491A] text-[8px] uppercase tracking-[0.6px]">Tap Snap</Text>
+            </View>
+          ) : (
+            <View className="bg-[#EEF8EE] px-2.5 py-1 rounded-full flex-row items-center">
+              <View className="w-1.5 h-1.5 rounded-full bg-[#4EA35D] mr-1.5" />
+              <Text className="text-[#4EA35D] text-[8px] uppercase tracking-[0.6px]">Live</Text>
+            </View>
+          )}
         </View>
+        {captureDisabled ? (
+          <Text className="text-[#A87A2A] text-[9px] mt-2 leading-3">
+            Auto-capture is not working on this device. Tap “Snap manually” below to refresh the try-on.
+          </Text>
+        ) : null}
       </View>
     </View>
   );

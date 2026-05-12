@@ -15,6 +15,7 @@ import { LogBox, Platform, Text, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
+import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
@@ -189,8 +190,19 @@ export default function RootLayout() {
               await Notifications.requestPermissionsAsync();
             }
             try {
-              const token = await Notifications.getExpoPushTokenAsync();
-              console.log('Expo push token:', token.data);
+              const tokenRes = await Notifications.getExpoPushTokenAsync();
+              const expoToken = tokenRes?.data;
+              if (expoToken) {
+                // Register with backend so server-side dispatch can reach this device.
+                try {
+                  await api.post('/notifications/push-tokens', {
+                    expo_token: expoToken,
+                    platform: Platform.OS,
+                  });
+                } catch (err) {
+                  console.warn('Failed to register push token:', err);
+                }
+              }
             } catch {
               // ignore token errors (works only on physical device + correct project setup)
             }

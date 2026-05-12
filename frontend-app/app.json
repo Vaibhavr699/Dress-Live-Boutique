@@ -66,6 +66,14 @@
           "photosPermission": "Allow Dress Live to access your photos so you can upload a profile picture."
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Dress Live to read your latest photos so you can quickly pick one for AI try-on.",
+          "savePhotosPermission": "Allow Dress Live to save photos so you can keep your AI try-on previews.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
       "expo-font",
       "expo-secure-store",
       "expo-web-browser"

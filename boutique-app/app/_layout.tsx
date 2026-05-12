@@ -14,7 +14,9 @@ import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPo
 import '@shared/polyfills/domExceptionNative';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { useAuthStore } from '@shared/store/useAuthStore';
+import { api } from '@shared/api/api';
 import * as Location from 'expo-location';
+import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -150,6 +152,37 @@ export default function RootLayout() {
 
     (async () => {
       try {
+        // Notification permission + register Expo push token with backend so
+        // server-side dispatch can ring this device.
+        if (Platform.OS !== 'web' && Constants.appOwnership !== 'expo') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+            const perm = await Notifications.getPermissionsAsync();
+            if (perm.status !== 'granted') {
+              await Notifications.requestPermissionsAsync();
+            }
+            try {
+              const tokenRes = await Notifications.getExpoPushTokenAsync();
+              const expoToken = tokenRes?.data;
+              if (expoToken) {
+                try {
+                  await api.post('/notifications/push-tokens', {
+                    expo_token: expoToken,
+                    platform: Platform.OS,
+                  });
+                } catch (err) {
+                  console.warn('Failed to register partner push token:', err);
+                }
+              }
+            } catch {
+              // token resolution only works on real devices with valid project config
+            }
+          } catch {
+            // ignore notifications wiring errors
+          }
+        }
+
         const locPerm = await Location.getForegroundPermissionsAsync();
         if (locPerm.status !== 'granted') {
           await Location.requestForegroundPermissionsAsync();
@@ -159,6 +192,37 @@ export default function RootLayout() {
       }
     })();
   }, [isAuthenticated, isReady]);
+
+  // Foreground push handler + notification-tap deep link.
+  useEffect(() => {
+    if (Platform.OS === 'web' || Constants.appOwnership === 'expo') return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+      const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+        const data = response.notification.request.content.data as {
+          action_type?: string | null;
+          type?: string | null;
+          bookingId?: number | string | null;
+        };
+        const action = data?.action_type ?? data?.type;
+        if (action === 'booking') {
+          router.push('/(tabs)/booking');
+        }
+      });
+      return () => sub.remove();
+    } catch {
+      return;
+    }
+  }, [router]);
 
   const onPartnerVideoCallRoute = segments[0] === 'video-call';
   useIncomingVideoRingPoller(

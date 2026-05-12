@@ -152,6 +152,7 @@ export default function TabLayout() {
         name="video-call"
         options={{
           href: null,
+          tabBarStyle: { display: 'none' },
         }}
       />
       <Tabs.Screen

@@ -1,3 +1,4 @@
+import logging
 from typing import Any, List, Optional
 from urllib.parse import quote, unquote
 
@@ -11,6 +12,7 @@ from app.core.config import settings
 from app.crud.crud_boutique import crud_boutique
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
+from app.models.booking import Booking
 from app.models.user import User
 from app.schemas.booking import (
     BookingBoutiqueSummary,
@@ -20,6 +22,41 @@ from app.schemas.booking import (
     BookingUpdate,
     BookingView,
 )
+from app.services import notifications as notifications_service
+
+logger = logging.getLogger(__name__)
+
+
+def _appointment_label(appointment_type: str) -> str:
+    return "video call" if appointment_type == "video" else "store visit"
+
+
+def _partner_user_ids_for_boutique(db: Session, boutique_id: int) -> list[int]:
+    rows = (
+        db.query(User.id)
+        .filter(User.role == "partner", User.boutique_id == boutique_id)
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def _notify_safe(db: Session, **kwargs) -> None:
+    """Best-effort dispatch — never let a notification failure break a booking
+    write. The endpoint commits before this is called."""
+    try:
+        notifications_service.dispatch(db, **kwargs)
+    except Exception as e:
+        logger.warning("notifications.dispatch failed: %s", e)
+
+
+def _booking_payload(booking: Booking) -> dict[str, Any]:
+    return {
+        "booking_id": booking.id,
+        "appointment_type": booking.appointment_type,
+        "scheduled_for": booking.scheduled_for,
+        "status": booking.status,
+        "location": booking.location,
+    }
 
 router = APIRouter()
 
@@ -234,6 +271,35 @@ def create_booking(
         boutique_id=dresses[0].boutique_id,
         obj_in=booking_payload,
     )
+
+    # Notify all partners of this boutique that a new booking request landed.
+    type_label = _appointment_label(booking.appointment_type)
+    buyer_name = (current_user.full_name or current_user.email or "A customer").strip()
+    boutique_name = (boutique.name if boutique else "your boutique") or "your boutique"
+    for partner_id in _partner_user_ids_for_boutique(db, booking.boutique_id):
+        _notify_safe(
+            db,
+            user_id=partner_id,
+            kind="booking_request_received",
+            title="New booking request",
+            body=f"{buyer_name} requested a {type_label} for {booking.scheduled_for}.",
+            action_type="booking",
+            action_id=booking.id,
+            payload=_booking_payload(booking),
+        )
+
+    # Also notify the buyer with a confirmation row so they have a paper trail.
+    _notify_safe(
+        db,
+        user_id=current_user.id,
+        kind="booking_requested",
+        title="Booking request sent",
+        body=f"Your {type_label} request to {boutique_name} is pending confirmation.",
+        action_type="booking",
+        action_id=booking.id,
+        payload=_booking_payload(booking),
+    )
+
     return serialize_booking(db, booking)
 
 
@@ -286,5 +352,59 @@ def update_booking(
             update={"location": booking.location or (boutique.location if boutique else None)}
         )
 
+    prev_status = booking.status
+    prev_scheduled_for = booking.scheduled_for
     booking = crud_booking.update(db, db_obj=booking, obj_in=booking_payload)
+
+    # Notify the other party of status / schedule changes.
+    status_changed = booking_in.status is not None and booking.status != prev_status
+    schedule_changed = (
+        booking_in.scheduled_for is not None and booking.scheduled_for != prev_scheduled_for
+    )
+    if status_changed or schedule_changed:
+        type_label = _appointment_label(booking.appointment_type)
+        acting_role = current_user.role  # 'partner' or 'buyer'
+        buyer_id = booking.user_id
+        partner_ids = _partner_user_ids_for_boutique(db, booking.boutique_id)
+        # Recipients = "the other side"
+        recipients: list[int] = []
+        if acting_role == "partner":
+            recipients = [buyer_id]
+        else:
+            recipients = list(partner_ids)
+
+        # Pick a sensible title/body for the most common status transitions.
+        if booking.status == "accepted":
+            title = "Booking accepted"
+            body = f"Your {type_label} is confirmed for {booking.scheduled_for}."
+            kind = "booking_accepted"
+        elif booking.status == "rejected":
+            title = "Booking declined"
+            body = f"Your {type_label} request was declined."
+            kind = "booking_rejected"
+        elif booking.status == "rescheduled":
+            title = "Booking rescheduled"
+            body = f"New time for your {type_label}: {booking.scheduled_for}."
+            kind = "booking_rescheduled"
+        elif booking.status == "completed":
+            title = "Booking completed"
+            body = f"Your {type_label} is marked complete."
+            kind = "booking_completed"
+        else:
+            title = "Booking updated"
+            body = f"Your {type_label} was updated. Check the latest details."
+            kind = "booking_updated"
+
+        for uid in recipients:
+            _notify_safe(
+                db,
+                user_id=uid,
+                kind=kind,
+                title=title,
+                body=body,
+                action_type="booking",
+                action_id=booking.id,
+                payload=_booking_payload(booking),
+            )
+
     return serialize_booking(db, booking)

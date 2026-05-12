@@ -49,12 +49,15 @@ export default function BookingScreen() {
       return;
     }
     const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
-    const canOpen = await Linking.canOpenURL(url);
-    if (!canOpen) {
-      Alert.alert('Google Maps', 'Could not open Google Maps.');
-      return;
+    // Skip canOpenURL: in production builds Android's package-visibility rules
+    // (API 30+) and iOS's LSApplicationQueriesSchemes restrictions can make
+    // canOpenURL return false even for valid https URLs. openURL itself will
+    // hand off to the system browser, which always exists.
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Google Maps', 'Could not open Google Maps. Please copy the address manually.');
     }
-    await Linking.openURL(url);
   }, []);
 
   useEffect(() => {

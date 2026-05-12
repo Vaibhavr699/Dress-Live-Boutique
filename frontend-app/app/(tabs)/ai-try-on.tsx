@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as MediaLibrary from 'expo-media-library';
 import { api } from '@shared/api/api';
 
 const MAX_UPLOAD_DIMENSION = 1280;
@@ -64,6 +65,7 @@ export default function AITryOnScreen() {
   const [dress, setDress] = useState<Dress | null>(null);
   const [dressLoading, setDressLoading] = useState(false);
   const [selectedDressImageIndex, setSelectedDressImageIndex] = useState(0);
+  const [latestGalleryUri, setLatestGalleryUri] = useState<string | null>(null);
 
   const normalizedDressId = useMemo(() => {
     const raw = typeof params.dressId === 'string' ? Number(params.dressId) : NaN;
@@ -179,6 +181,42 @@ export default function AITryOnScreen() {
     if (currentStep.id === 3) setCameraFacing('front');
     if (currentStep.id === 5 || currentStep.id === 6) setCameraFacing('back');
   }, [currentStep.id]);
+
+  // On mount: request camera + photo-library permissions upfront and fetch
+  // the user's most recent gallery photo so the thumbnail next to the
+  // capture button previews a real image instead of a generic placeholder.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!permission?.granted) {
+          await requestPermission();
+        }
+      } catch {
+        // best-effort
+      }
+      try {
+        const lib = await MediaLibrary.requestPermissionsAsync();
+        if (cancelled || !lib.granted) return;
+        const page = await MediaLibrary.getAssetsAsync({
+          first: 1,
+          sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+          mediaType: [MediaLibrary.MediaType.photo],
+        });
+        if (cancelled) return;
+        const asset = page.assets?.[0];
+        if (asset?.uri) {
+          setLatestGalleryUri(asset.uri);
+        }
+      } catch {
+        // ignore — fallback placeholder will show
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const createTryOnPreview = useCallback(async (fullBodyImageDataUrl: string) => {
     if (!normalizedDressId) {
@@ -517,16 +555,20 @@ export default function AITryOnScreen() {
               <View className="mb-10" style={{ paddingHorizontal: 20 }}>
                 <View className="flex-row justify-between items-center">
                   <TouchableOpacity
-                    className="overflow-hidden border border-black"
+                    onPress={handlePickFromGallery}
+                    activeOpacity={0.7}
+                    className="overflow-hidden border border-black items-center justify-center"
                     style={{ width: 50, height: 50 }}
                   >
-                    <Image
-                      source={
-                        activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/Dashboard image 1.png')
-                      }
-                      style={{ width: '100%', height: '100%' }}
-                      contentFit="cover"
-                    />
+                    {latestGalleryUri || activePreviewUri ? (
+                      <Image
+                        source={{ uri: (latestGalleryUri || activePreviewUri) as string }}
+                        style={{ width: '100%', height: '100%' }}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <Ionicons name="images-outline" size={22} color="#000" />
+                    )}
                   </TouchableOpacity>
                   <TouchableOpacity 
                      onPress={handleCapture}
