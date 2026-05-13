@@ -1,5 +1,25 @@
+# Pinned to match CatVTON's tested combo. If you bump any of these,
+# also bump CatVTON itself in the Dockerfile and re-test.
+
+# Worker runtime
 runpod==1.7.7
-Pillow==10.4.0
 requests==2.32.3
+
+# CatVTON's core stack (mirrors github.com/Zheng-Chong/CatVTON/requirements.txt
+# with gradio/matplotlib stripped — we don't need either in serverless mode)
+accelerate==0.31.0
+diffusers==0.29.2
+huggingface_hub==0.23.4
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+Pillow==10.3.0
+PyYAML==6.0.1
+scipy==1.13.1
+scikit-image==0.24.0
+torch==2.1.2
+torchvision==0.16.2
+transformers==4.27.3
+xformers==0.0.23.post1
+
+# Pose-based mask generation
 mediapipe==0.10.14
-numpy>=1.24.0

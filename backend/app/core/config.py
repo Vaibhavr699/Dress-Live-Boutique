@@ -39,6 +39,25 @@ class Settings(BaseSettings):
     BODYGRAM_API_KEY: Optional[str] = None
     BODYGRAM_ORG_ID: Optional[str] = None
 
+    # ── RunPod GPU inference ─────────────────────────────────────────────
+    # Off by default so a misconfigured deploy can't burn credits. Flip
+    # RUNPOD_ENABLED=true only after the budget guard has been verified.
+    RUNPOD_ENABLED: bool = False
+    RUNPOD_API_KEY: Optional[str] = None
+    RUNPOD_ENDPOINT_ID: Optional[str] = None
+    # Hard daily ceiling. Once today's estimated spend reaches this, the
+    # backend refuses further RunPod calls until UTC midnight and falls
+    # back to the free OpenCV path. Set 0 to disable the daily cap.
+    RUNPOD_DAILY_BUDGET_USD: float = 2.0
+    # Per-video-call cap so one runaway client can't drain the daily
+    # budget alone. 0 disables.
+    RUNPOD_PER_BOOKING_CALL_LIMIT: int = 30
+    # Estimated cost we attribute to each successful RunPod invocation.
+    # Used only by the budget tracker — we don't bill users; update if
+    # you switch GPU tier or model. CatVTON on RTX 4090 ≈ $0.002/call
+    # blended (warm + cold).
+    RUNPOD_COST_PER_CALL_USD: float = 0.002
+
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
         # Some deployments accidentally set SUPABASE_URL to a Postgres connection string.

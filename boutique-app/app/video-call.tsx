@@ -18,7 +18,11 @@ import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
-import { buildTryonSwitchPayload } from '@shared/videoCallSignals';
+import {
+  buildTryonSwitchPayload,
+  createTryonFrameReassembler,
+  parseTryonFrameMessage,
+} from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 
 type VideoCallStage = 'waiting' | 'analysis' | 'live';
@@ -112,6 +116,39 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
       ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
       : 'Waiting for customer…';
 
+  // ── Mirror of the customer's live AI try-on overlay ───────────────────
+  // The customer's app POSTs each frame to the backend, gets a rendered
+  // overlay back, and chunks it through the LK data channel. We reassemble
+  // here and paint it on top of the remote video so the advisor sees the
+  // exact same overlay the customer is seeing — no extra render cost on
+  // this side, just data-channel bandwidth.
+  const [tryOnOverlayUri, setTryOnOverlayUri] = React.useState<string | null>(null);
+  const reassemblerRef = React.useRef(createTryonFrameReassembler());
+
+  React.useEffect(() => {
+    if (!room) return;
+    const handler = (payload: Uint8Array) => {
+      let raw: string;
+      try { raw = new TextDecoder().decode(payload); } catch { return; }
+      const msg = parseTryonFrameMessage(raw);
+      if (!msg || msg.bookingId !== bookingId) return;
+      const result = reassemblerRef.current.ingest(msg);
+      if (result.complete) {
+        setTryOnOverlayUri(result.imageDataUrl);
+      }
+    };
+    room.on('dataReceived', handler as any);
+    return () => { room.off('dataReceived', handler as any); };
+  }, [room, bookingId]);
+
+  // Reset overlay (and any half-assembled chunks) whenever the advisor
+  // switches to a different dress — the customer is about to send fresh
+  // frames for the new garment and we don't want a stale overlay flashing.
+  React.useEffect(() => {
+    setTryOnOverlayUri(null);
+    reassemblerRef.current.reset();
+  }, [activeDressId]);
+
   // Re-send the active dress signal whenever the customer joins so they get
   // the current selection even if they connected after the advisor tapped.
   React.useEffect(() => {
@@ -140,6 +177,36 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
           <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
         </View>
       )}
+
+      {/* AI try-on overlay mirrored from the customer's render pipeline. */}
+      {tryOnOverlayUri ? (
+        <View
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          pointerEvents="none"
+        >
+          <Image
+            source={{ uri: tryOnOverlayUri }}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+          />
+          <View
+            style={{
+              position: 'absolute',
+              top: 10,
+              left: 10,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderRadius: 20,
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}
+          >
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4EA35D', marginRight: 6 }} />
+            <Text style={{ color: 'white', fontSize: 9, letterSpacing: 0.5 }}>Customer's AI Try-On</Text>
+          </View>
+        </View>
+      ) : null}
 
       {local ? (
         <View

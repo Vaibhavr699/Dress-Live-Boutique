@@ -17,6 +17,8 @@ from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
 from app.models.user import User
 from app.services import fashn as fashn_service
+from app.services import runpod_budget
+from app.services import runpod_catvton
 
 router = APIRouter()
 
@@ -46,15 +48,17 @@ class LiveTryOnFramePayload(BaseModel):
     quality: str = "live"
 
 
-# In-memory rate limiter, keyed by (booking_id, quality). Live and HD have
-# different cadence budgets so a slow Fashn call doesn't block snappy live
-# frames (and vice versa). Pruned on every request.
+# In-memory rate limiter, keyed by (booking_id, quality). Intervals are
+# tuned to the *expected* render time of the main path (CatVTON), not the
+# fallback — there's no point letting the client send frames faster than
+# the GPU can produce them. The OpenCV fallback finishes well inside both
+# windows so there's slack for emergency-mode renders too.
 _live_tryon_last_request: dict[tuple[int, str], float] = {}
 _LIVE_TRYON_INTERVAL_BY_QUALITY = {
-    "live": 1.0,
-    "hd": 5.0,
+    "live": 2.5,   # CatVTON 20-step warm call ≈ 1.5–2s + buffer
+    "hd": 8.0,    # CatVTON 50-step ≈ 4–6s, Fashn ≈ 10–30s — generous floor
 }
-_LIVE_TRYON_DEFAULT_INTERVAL = 1.0
+_LIVE_TRYON_DEFAULT_INTERVAL = 2.5
 
 
 def _decode_image_bytes(image_bytes: bytes):
@@ -138,7 +142,9 @@ def _download_image_bytes(url: str) -> bytes:
 
 # Garment bytes are heavy to re-download every frame during a live call.
 # Keep a small in-process LRU keyed by URL; entries are invalidated after
-# `_GARMENT_CACHE_TTL_SECONDS` so dress edits propagate within a minute.
+# `_GARMENT_CACHE_TTL_SECONDS` so dress edits propagate within a minute,
+# or immediately via `invalidate_garment_cache_for_dress` when a partner
+# updates the dress mid-call.
 _GARMENT_CACHE_MAX = 64
 _GARMENT_CACHE_TTL_SECONDS = 60.0
 _garment_cache: "collections.OrderedDict[str, tuple[float, bytes]]" = collections.OrderedDict()
@@ -161,6 +167,65 @@ def _get_garment_bytes_cached(url: str) -> bytes:
     while len(_garment_cache) > _GARMENT_CACHE_MAX:
         _garment_cache.popitem(last=False)
     return content
+
+
+def invalidate_garment_cache(*urls: Optional[str]) -> None:
+    """Drop cached garment bytes for the given URLs. Called by the dress
+    update endpoint so a partner-edited dress propagates to active live
+    try-on calls without waiting for the 60 s TTL."""
+    for url in urls:
+        if not url:
+            continue
+        _garment_cache.pop(url.strip(), None)
+
+
+# ── Temporal smoothing for live pose-warp ────────────────────────────────
+# MediaPipe runs per-frame and is jittery: shoulder/hip estimates drift by
+# a few pixels even when the buyer is still, which makes the warped dress
+# wobble. Keep a per-(booking, dress) cache of the last smoothed landmarks
+# and apply an exponential moving average so consecutive frames produce a
+# stable overlay. Entries decay after `_POSE_STATE_TTL_SECONDS` of idleness.
+_POSE_STATE_TTL_SECONDS = 30.0
+_POSE_SMOOTHING_ALPHA = 0.45  # weight on the *new* sample; lower = smoother
+_pose_state: dict[tuple[int, int], dict[str, Any]] = {}
+
+
+def _smooth_landmarks(
+    key: tuple[int, int],
+    current: dict[str, tuple[float, float, float]],
+) -> dict[str, tuple[float, float, float]]:
+    now = time.monotonic()
+    # Prune stale entries opportunistically.
+    stale = [k for k, v in _pose_state.items() if now - v["ts"] > _POSE_STATE_TTL_SECONDS]
+    for k in stale:
+        _pose_state.pop(k, None)
+
+    prev = _pose_state.get(key)
+    if prev is None:
+        _pose_state[key] = {"ts": now, "landmarks": dict(current)}
+        return current
+
+    alpha = _POSE_SMOOTHING_ALPHA
+    smoothed: dict[str, tuple[float, float, float]] = {}
+    prev_lm = prev["landmarks"]
+    for name, sample in current.items():
+        x, y, vis = sample
+        if name in prev_lm:
+            px, py, _ = prev_lm[name]
+            smoothed[name] = (alpha * x + (1 - alpha) * px, alpha * y + (1 - alpha) * py, vis)
+        else:
+            smoothed[name] = sample
+
+    _pose_state[key] = {"ts": now, "landmarks": smoothed}
+    return smoothed
+
+
+def reset_pose_state(booking_id: int) -> None:
+    """Drop smoothed landmark cache for a booking — call when a dress
+    switch happens so the new garment doesn't inherit the old pose lag."""
+    for key in list(_pose_state.keys()):
+        if key[0] == booking_id:
+            _pose_state.pop(key, None)
 
 
 def _fashn_tryon_enabled() -> bool:
@@ -267,11 +332,20 @@ def _extract_garment_rgba(garment_img):
     return garment_bgr, alpha
 
 
-def _compose_tryon_pose_warp(person_img_bgr, garment_img) -> tuple[Any, dict[str, Any]]:
+def _compose_tryon_pose_warp(
+    person_img_bgr,
+    garment_img,
+    *,
+    smoothing_key: Optional[tuple[int, int]] = None,
+) -> tuple[Any, dict[str, Any]]:
     """
     Phase 3 renderer: use MediaPipe pose landmarks (shoulders + hips) to build
     a perspective transform that warps the garment onto the body. Much better
     than the HOG bbox fit when the body is not perfectly facing the camera.
+
+    When `smoothing_key` is provided (booking_id, dress_id), landmarks are
+    EMA-smoothed against the previous frame for that key — kills the per-frame
+    jitter that makes the dress visibly wobble during a live call.
 
     Raises HTTPException if MediaPipe is unavailable or no pose is detected;
     callers should fall back to _compose_tryon_preview / center fallback.
@@ -316,16 +390,31 @@ def _compose_tryon_pose_warp(person_img_bgr, garment_img) -> tuple[Any, dict[str
         p = lm[idx.value]
         return (float(p.x) * w, float(p.y) * h, float(getattr(p, "visibility", 0.0) or 0.0))
 
-    ls = pt(L.LEFT_SHOULDER)   # left shoulder (subject's left = image right)
-    rs = pt(L.RIGHT_SHOULDER)
-    lh = pt(L.LEFT_HIP)
-    rh = pt(L.RIGHT_HIP)
+    raw_ls = pt(L.LEFT_SHOULDER)   # left shoulder (subject's left = image right)
+    raw_rs = pt(L.RIGHT_SHOULDER)
+    raw_lh = pt(L.LEFT_HIP)
+    raw_rh = pt(L.RIGHT_HIP)
 
     # Require all four keypoints with at least modest confidence — otherwise
     # the perspective transform will produce a broken polygon.
     min_vis = 0.35
-    if min(ls[2], rs[2], lh[2], rh[2]) < min_vis:
+    if min(raw_ls[2], raw_rs[2], raw_lh[2], raw_rh[2]) < min_vis:
         raise HTTPException(status_code=400, detail="Pose keypoints not confident enough for warp.")
+
+    raw_landmarks = {
+        "ls": raw_ls,
+        "rs": raw_rs,
+        "lh": raw_lh,
+        "rh": raw_rh,
+    }
+    if smoothing_key is not None:
+        smoothed = _smooth_landmarks(smoothing_key, raw_landmarks)
+        ls = smoothed["ls"]
+        rs = smoothed["rs"]
+        lh = smoothed["lh"]
+        rh = smoothed["rh"]
+    else:
+        ls, rs, lh, rh = raw_ls, raw_rs, raw_lh, raw_rh
 
     # In MediaPipe naming, LEFT_* refers to the subject's left side (so it
     # appears on the image's RIGHT for a forward-facing buyer). For the warp
@@ -810,18 +899,25 @@ async def preview_tryon_base64(
     )
 
 
-def _render_local_tryon(frame_image_bytes: bytes, garment_bytes: bytes) -> tuple[Any, dict[str, Any]]:
+def _render_local_tryon(
+    frame_image_bytes: bytes,
+    garment_bytes: bytes,
+    *,
+    smoothing_key: Optional[tuple[int, int]] = None,
+) -> tuple[Any, dict[str, Any]]:
     """OpenCV-only render path. Returns (bgr_image, details).
 
     Cascade (best → fallback):
-      1. pose-warp (MediaPipe shoulders + hips → perspective transform)
+      1. pose-warp (MediaPipe shoulders + hips → perspective transform),
+         with EMA smoothing across consecutive frames when `smoothing_key`
+         is supplied
       2. HOG bbox + scaled paste (no perspective)
       3. center paste (no person detection)
     """
     person_img_bgr = _decode_image_bytes(frame_image_bytes)
     garment_img = _decode_image_with_alpha(garment_bytes)
     try:
-        return _compose_tryon_pose_warp(person_img_bgr, garment_img)
+        return _compose_tryon_pose_warp(person_img_bgr, garment_img, smoothing_key=smoothing_key)
     except HTTPException:
         pass
     try:
@@ -830,25 +926,41 @@ def _render_local_tryon(frame_image_bytes: bytes, garment_bytes: bytes) -> tuple
         return _compose_tryon_center_fallback(person_img_bgr, garment_img)
 
 
+# CatVTON inference parameters scaled by quality. Live = fewer steps for
+# faster turn-around; HD = more steps + higher guidance for sharper output.
+# These map directly to the handler's `num_inference_steps` / `guidance_scale`
+# arguments.
+_CATVTON_PARAMS_BY_QUALITY: dict[str, dict[str, float]] = {
+    "live": {"num_inference_steps": 20, "guidance_scale": 2.5},
+    "hd":   {"num_inference_steps": 50, "guidance_scale": 3.0},
+}
+
+
 async def _build_live_tryon_response(
     *,
     db: Session,
     dress_id: int,
     frame_image_bytes: bytes,
     quality: str = "live",
+    booking_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Render a try-on for a live video frame.
 
-    quality='live' (default): OpenCV-only. ~0.5–1s per frame. Cartoonish but
-    snappy enough for continuous video overlay.
+    Render-path priority (same for both quality tiers):
+      1. RunPod CatVTON   — main path, $0.002/call estimate, photoreal
+      2. Fashn AI         — HD-only backup if CatVTON unavailable AND
+                            quality='hd' AND a Fashn key is configured
+      3. OpenCV pose-warp — emergency fallback for dev (RUNPOD_ENABLED=false),
+                            budget exhaustion, RunPod outages, etc.
 
-    quality='hd': try Fashn first (10–30s, photo-realistic) and fall back to
-    OpenCV if Fashn fails. Use this for the "Capture HD preview" / freeze
-    frame flow, not for continuous live updates.
+    quality='live' (default): 20-step CatVTON, ~1.5–2s warm. Drives the
+    auto-refreshing overlay during the call.
+    quality='hd':              50-step CatVTON (sharper) or Fashn freeze.
+                               Drives the "Capture HD preview" modal.
 
-    Skips strict full-body pose validation in both paths — live frames are
-    inherently variable.
+    Skips strict full-body pose validation — live frames are inherently
+    variable.
     """
     dress = crud_dress.get(db, id=dress_id)
     if not dress:
@@ -862,7 +974,48 @@ async def _build_live_tryon_response(
 
     garment_bytes = _get_garment_bytes_cached(garment_url)
 
-    if quality == "hd" and _fashn_tryon_enabled():
+    # Smooth landmarks across the live stream for this (booking, dress) pair —
+    # only relevant when we end up on the OpenCV emergency fallback. CatVTON
+    # and Fashn do their own pose handling.
+    smoothing_key = (booking_id, dress_id) if (quality == "live" and booking_id is not None) else None
+    cat_params = _CATVTON_PARAMS_BY_QUALITY.get(quality, _CATVTON_PARAMS_BY_QUALITY["live"])
+
+    image_data_url: Optional[str] = None
+    preview_details: dict[str, Any] = {}
+
+    # ── 1. CatVTON (main path) ─────────────────────────────────────────
+    if booking_id is not None:
+        decision = runpod_budget.check_budget(booking_id)
+        if decision.allowed:
+            try:
+                resized_frame = _resize_image_bytes_for_tryon(frame_image_bytes, max_side=768)
+                frame_data_url = _encode_image_bytes_data_url(resized_frame, "image/jpeg")
+                image_data_url = await runpod_catvton.run_tryon(
+                    api_key=settings.RUNPOD_API_KEY or "",
+                    endpoint_id=settings.RUNPOD_ENDPOINT_ID or "",
+                    person_image_data_url=frame_data_url,
+                    garment_image_url=garment_url,
+                    num_inference_steps=int(cat_params["num_inference_steps"]),
+                    guidance_scale=float(cat_params["guidance_scale"]),
+                    timeout_seconds=180.0 if quality == "hd" else 90.0,
+                )
+                runpod_budget.record_call(booking_id)
+                preview_details = {
+                    "renderer": "catvton",
+                    "catvton_steps": int(cat_params["num_inference_steps"]),
+                    "catvton_guidance": float(cat_params["guidance_scale"]),
+                    "runpod_spend_usd": round(
+                        runpod_budget.status_snapshot()["daily_spend_usd"], 4
+                    ),
+                }
+            except runpod_catvton.RunPodCatVTONError as e:
+                # Don't record_call — call didn't successfully consume our GPU time.
+                preview_details["catvton_error"] = str(e)
+        else:
+            preview_details["catvton_skipped_reason"] = decision.reason
+
+    # ── 2. Fashn AI (HD-only backup) ───────────────────────────────────
+    if image_data_url is None and quality == "hd" and _fashn_tryon_enabled():
         try:
             resized_frame = _resize_image_bytes_for_tryon(frame_image_bytes, max_side=768)
             frame_data_url = _encode_image_bytes_data_url(resized_frame, "image/jpeg")
@@ -872,15 +1025,29 @@ async def _build_live_tryon_response(
                 garment_image_url=garment_url,
                 timeout_seconds=float(settings.FASHN_TIMEOUT_SECONDS),
             )
-            preview_details = {"renderer": "fashn"}
+            preview_details["renderer"] = "fashn"
         except Exception as e:
-            preview_bgr, preview_details = _render_local_tryon(frame_image_bytes, garment_bytes)
-            image_data_url = _encode_jpeg_data_url(preview_bgr, quality=85)
             preview_details["fashn_error"] = str(e)
-    else:
-        # 'live' path — always OpenCV, always JPEG. Sub-second latency.
-        preview_bgr, preview_details = _render_local_tryon(frame_image_bytes, garment_bytes)
-        image_data_url = _encode_jpeg_data_url(preview_bgr, quality=80)
+
+    # ── 3. OpenCV emergency fallback ───────────────────────────────────
+    if image_data_url is None:
+        preview_bgr, local_details = _render_local_tryon(
+            frame_image_bytes, garment_bytes, smoothing_key=smoothing_key
+        )
+        image_data_url = _encode_jpeg_data_url(
+            preview_bgr, quality=85 if quality == "hd" else 80
+        )
+        # Merge local renderer details — the local renderer always sets
+        # `renderer`, which becomes the canonical signal that we degraded
+        # below the CatVTON/Fashn happy paths.
+        for k, v in local_details.items():
+            preview_details.setdefault(k, v)
+
+    # Quality field reflects what the *client* should treat the frame as:
+    # "hd" only when an actual photoreal pipeline rendered it (CatVTON HD
+    # mode or Fashn). Anything else, including CatVTON live mode, is "live".
+    rendered_with = preview_details.get("renderer")
+    is_hd = quality == "hd" and rendered_with in ("fashn", "catvton")
 
     return {
         "ok": True,
@@ -892,7 +1059,7 @@ async def _build_live_tryon_response(
         },
         "image_data_url": image_data_url,
         "details": preview_details,
-        "quality": "hd" if (quality == "hd" and _fashn_tryon_enabled() and preview_details.get("renderer") == "fashn") else "live",
+        "quality": "hd" if is_hd else "live",
     }
 
 
@@ -930,6 +1097,19 @@ def _compose_tryon_center_fallback(person_img_bgr, garment_img) -> tuple[Any, di
     }
 
 
+@router.get("/runpod-budget", response_model=dict)
+async def runpod_budget_status(
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Operator visibility into today's RunPod spend and remaining headroom.
+
+    Auth-gated (any logged-in user) so it's not publicly scrapable but you
+    can hit it from a phone/browser during a test session to see whether
+    the daily cap has been tripped.
+    """
+    return runpod_budget.status_snapshot()
+
+
 @router.post("/live-tryon-frame", response_model=dict)
 async def live_tryon_frame(
     *,
@@ -941,12 +1121,17 @@ async def live_tryon_frame(
     Live video call try-on triggered when the consultant switches a dress,
     or by the buyer's auto-capture loop sending fresh frames.
 
-    quality='live' (default) → OpenCV, sub-second response, ~1 frame/s budget.
-    quality='hd' → Fashn (photo-realistic), ~5s rate-limit budget; intended
-    for an explicit "Capture HD preview" button rather than the live feed.
+    quality='live' (default) → CatVTON 20-step on RunPod, ~1.5–2s warm.
+    quality='hd'             → CatVTON 50-step (sharper) or Fashn freeze.
 
-    Rate-limited per (booking_id, quality) so a slow HD render in flight does
-    not block snappy live frames.
+    OpenCV pose-warp is the emergency fallback for both tiers (used when
+    RUNPOD_ENABLED=false, the daily/per-booking budget is exhausted, or a
+    RunPod call fails outright). The client always gets a render — it just
+    won't be photoreal in degraded mode.
+
+    Rate-limited per (booking_id, quality): live=2.5s, hd=8s. Tuned to
+    CatVTON's expected warm-call latency so the client doesn't queue
+    frames faster than the GPU can produce them.
     """
     if current_user.role != "buyer":
         raise HTTPException(status_code=403, detail="Only buyers can request live try-on frames.")
@@ -986,5 +1171,6 @@ async def live_tryon_frame(
         dress_id=payload.dress_id,
         frame_image_bytes=frame_image_bytes,
         quality=quality,
+        booking_id=payload.booking_id,
     )
 

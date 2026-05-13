@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 from app.api import deps
+from app.api.v1.endpoints.ai import invalidate_garment_cache
 from app.core.config import settings
 from app.crud.crud_dress import crud_dress
 from app.schemas.dress import Dress, DressCreate, DressUpdate
@@ -169,7 +170,12 @@ def update_dress(
     dress = crud_dress.get(db, id=id)
     if not dress:
         raise HTTPException(status_code=404, detail="Dress not found")
+    prev_image_url = dress.image_url
+    prev_ai_url = dress.ai_model_url
     dress = crud_dress.update(db, db_obj=dress, obj_in=dress_in)
+    # Drop garment-cache entries so an in-progress live call sees the new
+    # image immediately instead of waiting for the 60s TTL.
+    invalidate_garment_cache(prev_image_url, prev_ai_url, dress.image_url, dress.ai_model_url)
     return dress
 
 

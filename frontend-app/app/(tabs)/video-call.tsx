@@ -20,7 +20,7 @@ import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
-import { parseTryonSwitchMessage } from '@shared/videoCallSignals';
+import { buildTryonFrameChunks, parseTryonSwitchMessage } from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { ensureLiveKitRegistered } from '@shared/livekitInit';
 
@@ -64,9 +64,18 @@ function loadLiveKitDeps(): LiveKitDeps | null {
   }
 }
 
+// Imperative handle exposed by BuyerRoomView so the parent can grab a
+// fresh ViewShot frame on demand (e.g. when the user taps "Capture HD"
+// and we want the exact pose they're holding right now, not whatever
+// the auto-capture loop happened to grab up to 2s ago).
+type BuyerRoomHandle = {
+  captureNow: () => Promise<string | null>;
+  publishTryonFrame: (params: { dressId: number; imageDataUrl: string }) => void;
+};
+
 // BuyerRoomView receives a stable onDressSwitch callback so React.memo
 // never re-renders this component due to try-on state changes in the parent.
-const BuyerRoomView = React.memo(function BuyerRoomView(props: {
+const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   deps: LiveKitDeps;
   bookingId: number;
   frameHeight: number;
@@ -75,13 +84,55 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
   tryOnLoading: boolean;
   captureActive: boolean;
   onLiveFrame: (dataUrl: string) => void;
-}) {
+}>(function BuyerRoomView(props, ref) {
   const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, onLiveFrame } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
   const viewShotRef = useRef<ViewShot | null>(null);
   const onLiveFrameRef = useRef(onLiveFrame);
   React.useEffect(() => { onLiveFrameRef.current = onLiveFrame; }, [onLiveFrame]);
+
+  // Shared frame-capture helper used by both the auto-loop and the parent's
+  // imperative captureNow(). Returns the JPEG data URL or null on failure /
+  // black-frame.
+  const captureFrame = React.useCallback(async (): Promise<string | null> => {
+    const v = viewShotRef.current;
+    if (!v || typeof v.capture !== 'function') return null;
+    try {
+      const uri = await v.capture();
+      if (!uri) return null;
+      const resized = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: 640 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+      if (!resized.base64) return null;
+      const sizeKb = (resized.base64.length * 0.75) / 1024;
+      if (sizeKb < 8) return null; // black-frame guard
+      return `data:image/jpeg;base64,${resized.base64}`;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  React.useImperativeHandle(ref, () => ({
+    captureNow: () => captureFrame(),
+    publishTryonFrame: ({ dressId, imageDataUrl }) => {
+      // Best-effort fan-out to other room participants (the advisor) so
+      // they see the same overlay on their copy of the buyer's video.
+      // Reliable delivery, chunked under the LK 15KB packet ceiling.
+      try {
+        const lp = room?.localParticipant;
+        if (!lp || typeof lp.publishData !== 'function') return;
+        const { chunks } = buildTryonFrameChunks({ bookingId, dressId, imageDataUrl });
+        for (const chunk of chunks) {
+          lp.publishData(chunk, { reliable: true } as any);
+        }
+      } catch {
+        // Drop silently — the buyer still sees their own overlay locally.
+      }
+    },
+  }), [captureFrame, room, bookingId]);
 
   // Remote camera track (advisor video)
   const tracks = deps.useTracks([deps.Track.Source.Camera], { onlySubscribed: false });
@@ -152,36 +203,18 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
     let cancelled = false;
 
     const captureOnce = async () => {
-      try {
-        const ref = viewShotRef.current;
-        if (!ref || typeof ref.capture !== 'function') return;
-        const uri = await ref.capture();
-        if (cancelled || !uri) return;
-        const resized = await ImageManipulator.manipulateAsync(
-          uri,
-          [{ resize: { width: 640 } }],
-          { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-        );
-        if (cancelled || !resized.base64) return;
-
-        // Black-frame heuristic: base64 length × 0.75 = byte count.
-        // Solid-black 640x* JPEG @ q=0.7 ≈ 3–6 KB; real video ≈ 40+ KB.
-        const sizeKb = (resized.base64.length * 0.75) / 1024;
-        if (sizeKb < 8) {
-          blackFrameStreakRef.current += 1;
-          if (__DEV__) {
-            console.log(`[tryon:capture] black-ish frame (${sizeKb.toFixed(1)} KB) streak=${blackFrameStreakRef.current}`);
-          }
-          if (blackFrameStreakRef.current >= 3) {
-            setCaptureDisabled(true);
-          }
-          return; // Do not upload a black frame.
+      const dataUrl = await captureFrame();
+      if (cancelled) return;
+      if (dataUrl == null) {
+        blackFrameStreakRef.current += 1;
+        if (__DEV__) {
+          console.log(`[tryon:capture] black-ish or failed frame, streak=${blackFrameStreakRef.current}`);
         }
-        blackFrameStreakRef.current = 0;
-        onLiveFrameRef.current(`data:image/jpeg;base64,${resized.base64}`);
-      } catch {
-        // Single capture failure is non-fatal — the next tick will retry.
+        if (blackFrameStreakRef.current >= 3) setCaptureDisabled(true);
+        return;
       }
+      blackFrameStreakRef.current = 0;
+      onLiveFrameRef.current(dataUrl);
     };
 
     // First capture after a short warmup so the video pipeline has frames to grab.
@@ -192,7 +225,7 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
       clearTimeout(initial);
       clearInterval(interval);
     };
-  }, [captureActive, localTrackSid, captureDisabled]);
+  }, [captureActive, localTrackSid, captureDisabled, captureFrame]);
 
   return (
     <View style={{ width: '100%', height: frameHeight }}>
@@ -313,7 +346,7 @@ const BuyerRoomView = React.memo(function BuyerRoomView(props: {
       </View>
     </View>
   );
-});
+}));
 
 export default function VideoCallScreen() {
   const router = useRouter();
@@ -355,6 +388,9 @@ export default function VideoCallScreen() {
   // Refs so the stable onDressSwitch callback always reads latest values
   const tryOnPhotoRef = useRef<string | null>(null);
   const bookingIdRef = useRef<number | null>(null);
+  // Imperative handle into BuyerRoomView for fresh captures + publishing
+  // overlay frames to the advisor over the LK data channel.
+  const buyerRoomHandleRef = useRef<BuyerRoomHandle | null>(null);
 
   const bookingId = useMemo(() => {
     const raw = params.bookingId;
@@ -476,8 +512,15 @@ export default function VideoCallScreen() {
   // ── AI Try-On: generate result for current dress ─────────────────────────
   // quality 'live' (default) → OpenCV path, sub-second response.
   // quality 'hd' → Fashn path, 10–30s, photo-realistic (Phase 4 freeze frame).
-  const generateTryOn = useCallback(async (dressId: number, quality: 'live' | 'hd' = 'live') => {
-    const photo = tryOnPhotoRef.current;
+  //
+  // `frameOverride` lets the caller supply a freshly captured frame (used
+  // by the HD lock-pose flow) instead of whatever the auto-loop last stored.
+  const generateTryOn = useCallback(async (
+    dressId: number,
+    quality: 'live' | 'hd' = 'live',
+    frameOverride?: string,
+  ) => {
+    const photo = frameOverride ?? tryOnPhotoRef.current;
     const bId = bookingIdRef.current;
     if (!photo || !bId) return;
 
@@ -502,6 +545,15 @@ export default function VideoCallScreen() {
         setTryOnResultUri(res.image_data_url);
         consecutiveFailuresRef.current = 0;
         setShowLightingHint(false);
+        // Fan the live overlay out to the advisor over the LK data channel
+        // so they see exactly what the buyer sees. HD freeze frames stay
+        // local to the buyer's modal — those are explicit captures, not
+        // continuous video.
+        if (quality === 'live') {
+          try {
+            buyerRoomHandleRef.current?.publishTryonFrame({ dressId, imageDataUrl: res.image_data_url });
+          } catch { /* non-fatal */ }
+        }
         // Phase 5 telemetry — dev only.
         if (__DEV__) {
           console.log(`[tryon] dress=${dressId} quality=${res?.quality ?? quality} latency=${elapsedMs}ms`);
@@ -526,20 +578,40 @@ export default function VideoCallScreen() {
   }, []);
 
   // ── Phase 4: HD freeze-frame ────────────────────────────────────────────
-  // Captures the current live frame and sends it through Fashn for a
-  // photo-realistic still. Opens a full-screen modal with the result.
+  // Lock-pose: when the user taps "Capture HD" we ALWAYS snap a fresh frame
+  // from the visible PiP (rather than reusing the last auto-captured one,
+  // which can be up to 2s old). This way the HD render reflects the exact
+  // pose they're holding when they tap, not whatever the loop happened to
+  // grab. Falls back to the cached frame if the imperative capture fails.
   const captureHdPreview = useCallback(async () => {
-    const photo = tryOnPhotoRef.current;
     const bId = bookingIdRef.current;
     const dressId = tryOnActiveDressIdRef.current;
-    if (!photo || !bId || !dressId) {
+    if (!bId || !dressId) {
       Alert.alert('Hold on', 'Pick a dress and let the live preview warm up first.');
       return;
     }
+
     setHdLoading(true);
     setHdError(null);
     setHdResultUri(null);
     setHdModalOpen(true);
+
+    let lockedFrame: string | null = null;
+    try {
+      lockedFrame = (await buyerRoomHandleRef.current?.captureNow()) ?? null;
+    } catch {
+      lockedFrame = null;
+    }
+    const photo = lockedFrame ?? tryOnPhotoRef.current;
+    if (!photo) {
+      setHdError('Could not capture a frame. Please make sure the camera is on and try again.');
+      setHdLoading(false);
+      return;
+    }
+    // Keep the cached frame in sync with what we just sent — useful if the
+    // user re-renders or switches dress while the modal is open.
+    if (lockedFrame) tryOnPhotoRef.current = lockedFrame;
+
     const startedAt = Date.now();
     try {
       const res = await api.post(
@@ -554,7 +626,7 @@ export default function VideoCallScreen() {
       ) as { image_data_url?: string | null; quality?: string };
       const elapsedMs = Date.now() - startedAt;
       if (__DEV__) {
-        console.log(`[tryon:hd] dress=${dressId} quality=${res?.quality ?? 'hd'} latency=${elapsedMs}ms`);
+        console.log(`[tryon:hd] dress=${dressId} quality=${res?.quality ?? 'hd'} latency=${elapsedMs}ms locked=${!!lockedFrame}`);
       }
       if (res?.image_data_url) {
         setHdResultUri(res.image_data_url);
@@ -774,6 +846,7 @@ export default function VideoCallScreen() {
                     onConnected={() => { setCallState('active'); setLkConnected(true); }}
                   >
                     <BuyerRoomView
+                      ref={buyerRoomHandleRef}
                       deps={deps}
                       bookingId={bookingId}
                       frameHeight={videoFrameHeight}
