@@ -56,20 +56,21 @@ RUN pip install --upgrade pip && \
     pip install -r /app/requirements.txt
 
 # Pre-pull CatVTON's attention weights (~1GB) so the first cold call
-# doesn't pay for the network fetch. SD-inpainting base (~5GB) is left
-# for first-call download to keep this image manageable.
+# doesn't pay for the network fetch.
 RUN python -c "from huggingface_hub import snapshot_download; \
     snapshot_download(repo_id='zhengchong/CatVTON', local_dir='/opt/models/catvton', local_dir_use_symlinks=False)"
 
-# Optional: also pre-pull the SD inpainting base. Uncomment if you'd
-# rather pay the disk for fast cold starts. Adds ~5GB to image size.
-# RUN python -c "from huggingface_hub import snapshot_download; \
-#     snapshot_download(repo_id='booksforcharlie/stable-diffusion-inpainting', \
-#                       local_dir='/opt/models/sd-inpainting', \
-#                       local_dir_use_symlinks=False)"
-# ENV CATVTON_BASE_MODEL=/opt/models/sd-inpainting
+# Pre-pull SD inpainting base (~5GB). Required for fast cold starts —
+# downloading at runtime pushed the worker's first-ready time past
+# RunPod's test deadline. Adds ~5GB to the image but storage is cheap
+# vs. timing out on every cold start.
+RUN python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download(repo_id='booksforcharlie/stable-diffusion-inpainting', \
+                      local_dir='/opt/models/sd-inpainting', \
+                      local_dir_use_symlinks=False)"
 
-ENV CATVTON_ATTN_REPO=/opt/models/catvton
+ENV CATVTON_BASE_MODEL=/opt/models/sd-inpainting \
+    CATVTON_ATTN_REPO=/opt/models/catvton
 
 COPY runpod-worker/handler.py /app/handler.py
 

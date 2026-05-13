@@ -9,7 +9,7 @@
     "gpuCount": 1,
     "gpuIds": "ADA_24",
     "allowedCudaVersions": ["12.7", "12.6", "12.5", "12.4", "12.3", "12.2", "12.1"],
-    "containerDiskInGb": 25,
+    "containerDiskInGb": 30,
     "presets": [
       {
         "name": "Cost-optimized (RTX 4090, autoscale-to-zero, FlashBoot)",
