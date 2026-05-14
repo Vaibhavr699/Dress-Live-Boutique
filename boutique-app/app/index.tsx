@@ -8,7 +8,6 @@ import { useAuthStore } from '@shared/store/useAuthStore';
 const PANEL_1 = require('../assets/images/boutique-hero-bg.png');
 const PANEL_2 = require('../assets/images/boutique-experience.png');
 const PANEL_3 = require('../assets/images/avatar.png');
-const BRAND_LOGO = require('../assets/images/Dress Live Seller.png');
 
 export default function BoutiqueLandingPage() {
   const insets = useSafeAreaInsets();
@@ -57,14 +56,19 @@ export default function BoutiqueLandingPage() {
         <Image source={PANEL_2} style={{ width: cardWidth, height: cardHeight, borderRadius: 2 }} contentFit="cover" />
         <View style={{ width: cardWidth, height: cardHeight, borderRadius: 2, overflow: 'hidden', backgroundColor: '#f3f4f6' }}>
           <Image source={PANEL_3} style={{ width: '100%', height: '100%' }} contentFit="cover" />
-          {/* Brand logo overlay on top of PANEL_3 — the seller-specific
-              "DL SELLER" mark stands in for the previous "Dress Live" text. */}
-          <View style={{ position: 'absolute', top: 10, left: 14, right: 14, alignItems: 'center' }}>
-            <Image
-              source={BRAND_LOGO}
-              style={{ width: Math.min(72, cardHeight * 0.45), height: Math.min(72, cardHeight * 0.45) }}
-              contentFit="contain"
-            />
+          <View style={{ position: 'absolute', top: 14, left: 14, right: 14, alignItems: 'center' }}>
+            <Text
+              style={{
+                color: '#000000',
+                fontFamily: 'PlayfairDisplay-SemiBold',
+                fontSize: Math.min(34, Math.max(24, cardWidth * 0.09)),
+                lineHeight: Math.min(34, Math.max(24, cardWidth * 0.09)),
+                textAlign: 'center',
+              }}
+              numberOfLines={1}
+            >
+              Dress Live
+            </Text>
           </View>
         </View>
         </View>

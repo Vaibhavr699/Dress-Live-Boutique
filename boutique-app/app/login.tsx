@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
-
-const BRAND_LOGO = require('../assets/images/Dress Live Seller.png');
 
 const LOGIN_TITLE_STYLE = {
   fontFamily: 'Helvetica Neue',
@@ -113,24 +111,15 @@ export default function LoginScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         <SafeAreaView className="flex-1 px-8 pb-12">
           {/* Back Button */}
-          <View className="flex-row justify-between items-center mb-4">
+          <View className="flex-row justify-between items-center mb-8">
             <TouchableOpacity onPress={() => router.replace('/')} className="-ml-2">
               <Ionicons name="chevron-back" size={24} color="#1A1A1A" />
             </TouchableOpacity>
           </View>
 
-          {/* Brand logo */}
-          <View className="items-center mb-2">
-            <Image
-              source={BRAND_LOGO}
-              style={{ width: 96, height: 96 }}
-              resizeMode="contain"
-            />
-          </View>
-
           {/* Dress Live Title */}
           <Text
-            className="text-black text-center mb-16"
+            className="text-black text-center mb-20"
             style={LOGIN_TITLE_STYLE}
           >
             Dress Live
