@@ -60,14 +60,30 @@ RUN pip install --upgrade pip && \
 RUN python -c "from huggingface_hub import snapshot_download; \
     snapshot_download(repo_id='zhengchong/CatVTON', local_dir='/opt/models/catvton', local_dir_use_symlinks=False)"
 
-# Pre-pull SD inpainting base (~5GB). Required for fast cold starts —
-# downloading at runtime pushed the worker's first-ready time past
-# RunPod's test deadline. Adds ~5GB to the image but storage is cheap
-# vs. timing out on every cold start.
+# Pre-pull SD inpainting base. Required for fast cold starts — downloading
+# at runtime pushed the worker's first-ready time past RunPod's test deadline.
+#
+# Switched from `booksforcharlie/stable-diffusion-inpainting` (community mirror
+# that ships .bin pickles only) to `stable-diffusion-v1-5/stable-diffusion-
+# inpainting` (the canonical replacement-mirror after RunwayML pulled the
+# original; ships .safetensors). Diffusers/CatVTON's loader was failing with
+# "no file named diffusion_pytorch_model.safetensors found in directory".
+#
+# allow_patterns is deliberately strict — only safetensors weights + config
+# files. Two benefits: (1) skips the duplicate .bin weights so the image
+# stays ~3GB smaller, (2) fails the build immediately if the new repo ever
+# drops its safetensors variants, instead of silently shipping a broken
+# image that surfaces the error only at runtime.
 RUN python -c "from huggingface_hub import snapshot_download; \
-    snapshot_download(repo_id='booksforcharlie/stable-diffusion-inpainting', \
+    snapshot_download(repo_id='stable-diffusion-v1-5/stable-diffusion-inpainting', \
                       local_dir='/opt/models/sd-inpainting', \
-                      local_dir_use_symlinks=False)"
+                      local_dir_use_symlinks=False, \
+                      allow_patterns=['*.json', '*.txt', '*.safetensors'])"
+
+# Sanity-check the download produced the file CatVTON's loader expects.
+# Fails the build loud rather than letting a broken image reach RunPod.
+RUN test -f /opt/models/sd-inpainting/unet/diffusion_pytorch_model.safetensors \
+    || (echo "ERROR: SD-inpainting safetensors missing after snapshot_download" && exit 1)
 
 ENV CATVTON_BASE_MODEL=/opt/models/sd-inpainting \
     CATVTON_ATTN_REPO=/opt/models/catvton
