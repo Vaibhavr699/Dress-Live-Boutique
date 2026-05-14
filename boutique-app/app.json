@@ -3,7 +3,7 @@
     "name": "Dress Live Partner",
     "slug": "boutique-partner",
     "version": "1.0.1",
-    "owner": "vaibhavr699",
+    "owner": "vaibhavr696",
     "orientation": "portrait",
     "icon": "./assets/images/Dress Live Seller.png",
     "scheme": "dress-live-partner",
@@ -82,7 +82,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "6aa0d63a-a895-4435-80b5-b58c3552d471"
+        "projectId": "f2d0d772-b35a-4e98-8171-d5741cdc636f"
       }
     }
   }
