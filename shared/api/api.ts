@@ -265,13 +265,16 @@ function createApiError(error: any) {
 }
 
 function logApiError(method: string, endpoint: string, apiError: ApiErrorMeta, rawError: unknown) {
-  console.error(`API ${method} Error [${endpoint}] (${BASE_URL}):`, {
-    publicMessage: apiError.message,
-    status: apiError.status ?? null,
-    detail: apiError.detail ?? null,
-    debugMessage: apiError.debugMessage ?? null,
-    rawError,
-  });
+  const status = apiError.status;
+  const isHandledClientError = typeof status === 'number' && status >= 400 && status < 500;
+  const detail = apiError.detail || apiError.debugMessage || apiError.message;
+  const summary = `[API ${method}] ${endpoint} → ${status ?? 'no-response'}: ${detail}`;
+
+  if (isHandledClientError) {
+    console.warn(summary);
+  } else {
+    console.error(summary, rawError);
+  }
 }
 
 async function postMultipartNative(endpoint: string, formData: FormData, options: any = {}) {

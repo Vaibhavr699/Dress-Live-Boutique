@@ -9,11 +9,13 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  Linking,
   useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import ViewShot from 'react-native-view-shot';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -411,6 +413,49 @@ export default function VideoCallScreen() {
     () => Math.max(360, Math.min(500, Math.round(screenHeight * 0.52))),
     [screenHeight],
   );
+
+  // ── Camera + microphone permissions ────────────────────────────────────
+  // Without explicit prompting + an explicit "denied" UI, the LiveKit room
+  // silently publishes nothing and the user just sees a black PiP with no
+  // hint that camera access is the problem. Field reports confirm this is
+  // exactly what was happening — auto-prompt the OS dialog on mount, and
+  // when permission is permanently denied (canAskAgain=false) show a clear
+  // gate with a button to jump into iOS/Android Settings.
+  const [cameraPerm, requestCameraPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+
+  const permsKnown = !!cameraPerm && !!micPerm;
+  const permsGranted = !!cameraPerm?.granted && !!micPerm?.granted;
+  const permsHardDenied =
+    (cameraPerm && !cameraPerm.granted && cameraPerm.canAskAgain === false) ||
+    (micPerm && !micPerm.granted && micPerm.canAskAgain === false);
+
+  // Auto-fire the OS prompt the first time we land on the screen so the
+  // user actually sees a dialog instead of guessing.
+  useEffect(() => {
+    if (!livekitSupported || Platform.OS === 'web') return;
+    if (cameraPerm && !cameraPerm.granted && cameraPerm.canAskAgain) {
+      void requestCameraPerm();
+    }
+    if (micPerm && !micPerm.granted && micPerm.canAskAgain) {
+      void requestMicPerm();
+    }
+  }, [livekitSupported, cameraPerm?.status, micPerm?.status]);
+
+  const handleOpenSettings = useCallback(() => {
+    void Linking.openSettings();
+  }, []);
+
+  const handleRetryPermissions = useCallback(async () => {
+    const c = await requestCameraPerm();
+    const m = await requestMicPerm();
+    if (!c.granted || !m.granted) {
+      Alert.alert(
+        'Still blocked',
+        'Tap “Open Settings” and enable Camera + Microphone for Dress Live, then come back and try again.',
+      );
+    }
+  }, [requestCameraPerm, requestMicPerm]);
 
   // ── Audio session ────────────────────────────────────────────────────────
   const audioSessionRef = useRef<any>(null);
@@ -818,6 +863,56 @@ export default function VideoCallScreen() {
                 <Text className="text-white/70 text-[12px] text-center leading-5">
                   Video calls need a development build with WebRTC.{'\n\n'}Run: npx expo run:android
                 </Text>
+              </View>
+            ) : !permsKnown ? (
+              <View className="flex-1 items-center justify-center px-8 bg-black">
+                <ActivityIndicator color="white" />
+                <Text className="text-white/60 text-[11px] mt-4">Checking camera & mic…</Text>
+              </View>
+            ) : permsHardDenied ? (
+              <View className="flex-1 items-center justify-center px-8 bg-black">
+                <View className="w-16 h-16 rounded-full bg-white/10 items-center justify-center mb-5">
+                  <MaterialCommunityIcons name="video-off-outline" size={28} color="white" />
+                </View>
+                <Text className="text-white text-[14px] font-medium text-center mb-2">
+                  Camera & microphone are blocked
+                </Text>
+                <Text className="text-white/65 text-[12px] text-center leading-5 mb-6">
+                  Open Settings → Dress Live → enable Camera and Microphone, then come back to this screen.
+                </Text>
+                <TouchableOpacity
+                  onPress={handleOpenSettings}
+                  activeOpacity={0.85}
+                  className="bg-white px-6 py-3 rounded-full"
+                >
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1.2px]">
+                    Open Settings
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleRetryPermissions} className="mt-4">
+                  <Text className="text-white/55 text-[10px] underline">I've enabled them — try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : !permsGranted ? (
+              <View className="flex-1 items-center justify-center px-8 bg-black">
+                <View className="w-16 h-16 rounded-full bg-white/10 items-center justify-center mb-5">
+                  <Ionicons name="videocam-outline" size={30} color="white" />
+                </View>
+                <Text className="text-white text-[14px] font-medium text-center mb-2">
+                  Allow camera & microphone
+                </Text>
+                <Text className="text-white/65 text-[12px] text-center leading-5 mb-6">
+                  Dress Live needs your camera so the stylist can see you, and your mic so you can talk during the call.
+                </Text>
+                <TouchableOpacity
+                  onPress={handleRetryPermissions}
+                  activeOpacity={0.85}
+                  className="bg-white px-6 py-3 rounded-full"
+                >
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1.2px]">
+                    Allow Access
+                  </Text>
+                </TouchableOpacity>
               </View>
             ) : tokenLoading ? (
               <View className="flex-1 items-center justify-center">

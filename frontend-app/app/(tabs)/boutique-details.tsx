@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { FadeInView } from '@/components/ui/fade-in-view';
+import { useFloatingHeart } from '@/components/ui/floating-heart';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -56,7 +57,15 @@ type Dress = {
 export default function BoutiqueDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+
+  // Floating heart animation — fires when adding to wishlist from a card.
+  // Wishlist is the middle (3rd of 5) bottom-tab, so targetX = 0 (centered)
+  // and targetY flies down to just above the safe-area inset.
+  const { overlay: heartOverlay, trigger: triggerHeartAnim } = useFloatingHeart({
+    targetX: 0,
+    targetY: height / 2 - (insets.bottom + 28),
+  });
   const addItem = useCartStore((state) => state.addItem);
   const isAuthenticated = useAuthStore((state: { isAuthenticated: boolean }) => state.isAuthenticated);
   const guestDressIds = useShortlistStore((s) => s.dressIds);
@@ -105,13 +114,23 @@ export default function BoutiqueDetailsScreen() {
 
   const handleToggleShortlist = async (dress: Dress) => {
     if (!isAuthenticated) {
+      const wasOn = guestDressIds.includes(dress.id);
       const r = toggleGuestShortlist(dress.id);
       if (!r.ok) {
         Alert.alert('Wishlist', 'You can select a maximum of 4 dresses.');
+        return;
       }
+      if (!wasOn) triggerHeartAnim();
       return;
     }
     const on = authShortlistIds.includes(dress.id);
+    // Client-side gate matching the backend's 4-dress cap so we don't
+    // fire the heart animation and immediately get a 400 alert.
+    if (!on && authShortlistIds.length >= 4) {
+      Alert.alert('Wishlist', 'You can save up to 4 dresses. Remove one first to add this.');
+      return;
+    }
+    if (!on) triggerHeartAnim();
     setShortlistBusyId(dress.id);
     try {
       if (on) {
@@ -255,6 +274,7 @@ export default function BoutiqueDetailsScreen() {
 
   return (
     <View className="flex-1 bg-white">
+      {heartOverlay}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}

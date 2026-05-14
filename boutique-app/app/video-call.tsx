@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,14 +8,16 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Linking,
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { Image } from 'expo-image';
+import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
 import {
@@ -392,6 +394,44 @@ export default function BoutiqueVideoCallScreen() {
 
   const videoFrameHeight = useMemo(() => Math.max(360, Math.min(500, Math.round(screenHeight * 0.52))), [screenHeight]);
 
+  // ── Camera + microphone permissions ────────────────────────────────────
+  // Without an explicit prompt + denied UI the LiveKit room silently
+  // publishes nothing and the partner just sees a black PiP. Auto-fire
+  // the OS dialog on mount; show a clear gate when access is blocked.
+  const [cameraPerm, requestCameraPerm] = useCameraPermissions();
+  const [micPerm, requestMicPerm] = useMicrophonePermissions();
+
+  const permsKnown = !!cameraPerm && !!micPerm;
+  const permsGranted = !!cameraPerm?.granted && !!micPerm?.granted;
+  const permsHardDenied =
+    (cameraPerm && !cameraPerm.granted && cameraPerm.canAskAgain === false) ||
+    (micPerm && !micPerm.granted && micPerm.canAskAgain === false);
+
+  useEffect(() => {
+    if (!livekitSupported || Platform.OS === 'web') return;
+    if (cameraPerm && !cameraPerm.granted && cameraPerm.canAskAgain) {
+      void requestCameraPerm();
+    }
+    if (micPerm && !micPerm.granted && micPerm.canAskAgain) {
+      void requestMicPerm();
+    }
+  }, [livekitSupported, cameraPerm?.status, micPerm?.status]);
+
+  const handleOpenSettings = useCallback(() => {
+    void Linking.openSettings();
+  }, []);
+
+  const handleRetryPermissions = useCallback(async () => {
+    const c = await requestCameraPerm();
+    const m = await requestMicPerm();
+    if (!c.granted || !m.granted) {
+      Alert.alert(
+        'Still blocked',
+        'Open Settings → Dress Live Partner → enable Camera and Microphone, then come back and try again.',
+      );
+    }
+  }, [requestCameraPerm, requestMicPerm]);
+
   const audioSessionRef = useRef<any>(null);
   useEffect(() => {
     audioSessionRef.current = deps?.AudioSession ?? null;
@@ -583,6 +623,44 @@ export default function BoutiqueVideoCallScreen() {
                   Video calls need a development build with WebRTC (Expo Go does not include LiveKit).{'\n\n'}
                   Run: npx expo run:android
                 </Text>
+              </View>
+            ) : !permsKnown ? (
+              <View className="bg-black w-full items-center justify-center rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
+                <ActivityIndicator color="white" />
+                <Text className="text-white/60 text-[11px] mt-4">Checking camera & mic…</Text>
+              </View>
+            ) : permsHardDenied ? (
+              <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
+                <View className="w-16 h-16 rounded-full bg-white/10 items-center justify-center mb-5">
+                  <MaterialCommunityIcons name="video-off-outline" size={28} color="white" />
+                </View>
+                <Text className="text-white text-[14px] font-medium text-center mb-2">
+                  Camera & microphone are blocked
+                </Text>
+                <Text className="text-white/65 text-[12px] text-center leading-5 mb-6">
+                  Open Settings → Dress Live Partner → enable Camera and Microphone, then come back to this screen.
+                </Text>
+                <TouchableOpacity onPress={handleOpenSettings} activeOpacity={0.85} className="bg-white px-6 py-3 rounded-full">
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1.2px]">Open Settings</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleRetryPermissions} className="mt-4">
+                  <Text className="text-white/55 text-[10px] underline">I've enabled them — try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : !permsGranted ? (
+              <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
+                <View className="w-16 h-16 rounded-full bg-white/10 items-center justify-center mb-5">
+                  <Ionicons name="videocam-outline" size={30} color="white" />
+                </View>
+                <Text className="text-white text-[14px] font-medium text-center mb-2">
+                  Allow camera & microphone
+                </Text>
+                <Text className="text-white/65 text-[12px] text-center leading-5 mb-6">
+                  You need camera + mic access so the customer can see and hear you on the live fitting call.
+                </Text>
+                <TouchableOpacity onPress={handleRetryPermissions} activeOpacity={0.85} className="bg-white px-6 py-3 rounded-full">
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1.2px]">Allow Access</Text>
+                </TouchableOpacity>
               </View>
             ) : tokenLoading ? (
               <View className="bg-black w-full items-center justify-center rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>

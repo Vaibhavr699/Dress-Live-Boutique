@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, Pressable, ActivityIndicator, Alert, GestureResponderEvent, useWindowDimensions } from 'react-native';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { useSwipeBackHandler } from '@/components/ui/edge-swipe-back';
+import { useFloatingHeart } from '@/components/ui/floating-heart';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -36,7 +37,7 @@ export default function ProductDetailsScreen() {
     coverImageUrl?: string;
   }>();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const isAuthenticated = useAuthStore((state: any) => state.isAuthenticated);
   const toggleGuest = useShortlistStore((state: any) => state.toggle);
   const [optionModalVisible, setOptionModalVisible] = useState(false);
@@ -45,7 +46,12 @@ export default function ProductDetailsScreen() {
   const [dress, setDress] = useState<any>(null);
   const [relatedImageUrls, setRelatedImageUrls] = useState<string[]>([]);
   const [isShortlisted, setIsShortlisted] = useState(false);
+  // How many dresses the user currently has shortlisted overall — used to
+  // gate the +1 action client-side so we don't fire the heart animation
+  // and then surprise the user with a "limit reached" alert from the API.
+  const [shortlistCount, setShortlistCount] = useState(0);
   const [shortlistLoading, setShortlistLoading] = useState(false);
+  const SHORTLIST_LIMIT = 4;
   const [viewerIndex, setViewerIndex] = useState(0);
   const [productImageIndex, setProductImageIndex] = useState(0);
   const [viewerZoom, setViewerZoom] = useState(1);
@@ -82,13 +88,13 @@ export default function ProductDetailsScreen() {
         if (isAuthenticated) {
           const shortlistData = await api.get('/shortlists/me');
           if (!isActive) return;
-          setIsShortlisted(
-            Array.isArray(shortlistData)
-              ? shortlistData.some((item: { dress_id: number }) => item.dress_id === Number(id))
-              : false
-          );
+          const arr = Array.isArray(shortlistData) ? shortlistData : [];
+          setShortlistCount(arr.length);
+          setIsShortlisted(arr.some((item: { dress_id: number }) => item.dress_id === Number(id)));
         } else {
-          setIsShortlisted(useShortlistStore.getState().dressIds.includes(Number(id)));
+          const guestIds = useShortlistStore.getState().dressIds;
+          setShortlistCount(guestIds.length);
+          setIsShortlisted(guestIds.includes(Number(id)));
         }
       } catch (error) {
         if (isActive) {
@@ -199,6 +205,14 @@ export default function ProductDetailsScreen() {
   const productImageHeight = (productImageWidth * 347) / 430;
 
 
+  // Floating heart animation — fires when the user *adds* a dress to
+  // favorites. Heart pops at center, flies to the header heart icon
+  // (top-right, just below the safe-area inset).
+  const { overlay: heartOverlay, trigger: triggerHeartAnimation } = useFloatingHeart({
+    targetX: width / 2 - 36,
+    targetY: -(height / 2 - (insets.top + 30)),
+  });
+
   const handleToggleWishlist = async () => {
     if (!dress?.id) {
       return;
@@ -208,21 +222,32 @@ export default function ProductDetailsScreen() {
       const wasShortlisted = isShortlisted;
       const result = toggleGuest(Number(dress.id));
       if (!result.ok) {
-        Alert.alert('Selection', 'You can select a maximum of 4 dresses.');
+        Alert.alert('Selection', `You can save up to ${SHORTLIST_LIMIT} dresses.`);
         return;
       }
       setIsShortlisted(!wasShortlisted);
+      setShortlistCount(useShortlistStore.getState().dressIds.length);
+      if (!wasShortlisted) triggerHeartAnimation();
       return;
     }
 
     const wasShortlisted = isShortlisted;
+    // Client-side gate so we never fire the heart animation followed by
+    // a "limit reached" alert from the API. The server still enforces.
+    if (!wasShortlisted && shortlistCount >= SHORTLIST_LIMIT) {
+      Alert.alert('Selection', `You can save up to ${SHORTLIST_LIMIT} dresses. Remove one first to add this.`);
+      return;
+    }
     setIsShortlisted(!wasShortlisted);
+    if (!wasShortlisted) triggerHeartAnimation();
     setShortlistLoading(true);
     try {
       if (wasShortlisted) {
         await api.delete(`/shortlists/me/${dress.id}`);
+        setShortlistCount((c) => Math.max(0, c - 1));
       } else {
         await api.post('/shortlists/me', { dress_id: dress.id });
+        setShortlistCount((c) => c + 1);
       }
     } catch (error) {
       setIsShortlisted(wasShortlisted);
@@ -392,6 +417,8 @@ export default function ProductDetailsScreen() {
 
   return (
     <FadeInView withTranslate={false} duration={260} style={{ flex: 1 }} className="bg-white">
+      {heartOverlay}
+
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
         {/* Header Image Section */}
         <View className="relative w-full" style={{ height: productImageHeight }}>
