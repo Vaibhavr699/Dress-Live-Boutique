@@ -457,9 +457,62 @@ export default function BoutiqueDashboard() {
       .slice(0, 4);
   }, [sortedBookings]);
 
+  const isInitialLoading = loading && !boutique;
+
+  if (isInitialLoading) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: '#FFFFFF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 32,
+          paddingTop: insets.top,
+        }}
+      >
+        <Text
+          style={{
+            color: '#111111',
+            fontSize: 18,
+            fontWeight: '700',
+            letterSpacing: 4,
+            textTransform: 'uppercase',
+            textAlign: 'center',
+          }}
+        >
+          Shop Dashboard
+        </Text>
+        <View
+          style={{
+            width: 84,
+            height: 2,
+            backgroundColor: '#111111',
+            opacity: 0.14,
+            marginTop: 20,
+            marginBottom: 22,
+          }}
+        />
+        <ActivityIndicator color="#111111" />
+        <Text
+          style={{
+            color: '#666666',
+            fontSize: 12,
+            letterSpacing: 1,
+            textTransform: 'uppercase',
+            textAlign: 'center',
+            marginTop: 18,
+          }}
+        >
+          Loading your shop
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-white">
-      <ScrollView 
+      <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ flexGrow: 1, paddingBottom: 100 }}
       >

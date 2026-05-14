@@ -241,6 +241,16 @@ export default function RootLayout() {
 
         // Default tap / "View" → open the booking tab.
         const action = data?.action_type ?? data?.type;
+        // Buyer joined or is ringing → jump straight into the call screen so
+        // the partner doesn't have to dig through the bookings tab.
+        if (action === 'video_call') {
+          if (Number.isFinite(bookingId)) {
+            router.push({ pathname: '/video-call', params: { bookingId: String(bookingId) } });
+          } else {
+            router.push('/(tabs)/booking');
+          }
+          return;
+        }
         if (action === 'booking') {
           router.push('/(tabs)/booking');
         }

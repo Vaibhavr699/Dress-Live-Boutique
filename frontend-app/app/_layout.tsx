@@ -241,9 +241,23 @@ export default function RootLayout() {
       const sub = Notifications.addNotificationResponseReceivedListener((response) => {
         const data = response.notification.request.content.data as {
           type?: string | null;
+          action_type?: string | null;
           bookingId?: number | string | null;
+          booking_id?: number | string | null;
         };
-        if (data?.type === 'booking') {
+        const action = data?.action_type ?? data?.type;
+        // Tap on an incoming video-call push → jump straight into the call room
+        // for that booking. The IncomingVideoCallBar polling path is still the
+        // fallback when the app was foreground and the user dismissed the push.
+        if (action === 'video_call') {
+          const rawId = data?.bookingId ?? data?.booking_id ?? null;
+          const id = typeof rawId === 'number' ? rawId : Number(rawId);
+          if (Number.isFinite(id)) {
+            router.push({ pathname: '/(tabs)/video-call', params: { bookingId: String(id) } });
+            return;
+          }
+        }
+        if (action === 'booking') {
           router.push('/(tabs)/booking');
         }
       });

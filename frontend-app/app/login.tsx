@@ -192,11 +192,11 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {/* Action Button */}
-          <TouchableOpacity 
+          <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleLogin}
             disabled={loading}
-            className="bg-[#1A1A1A] items-center justify-center mb-10"
+            className="bg-[#1A1A1A] items-center justify-center mb-10 flex-row"
             style={{
               width: '100%',
               height: 48,
@@ -207,7 +207,12 @@ export default function LoginScreen() {
             }}
           >
             {loading ? (
-              <ActivityIndicator color="white" />
+              <>
+                <ActivityIndicator color="white" />
+                <Text className="text-white text-sm font-bold tracking-[3px] uppercase ml-3">
+                  Signing In…
+                </Text>
+              </>
             ) : (
               <Text className="text-white text-sm font-bold tracking-[3px] uppercase">
                 Log In

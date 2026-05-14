@@ -1,5 +1,6 @@
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, cast
+from typing import Any, Literal, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -16,6 +17,8 @@ from app.schemas.video_call import (
     LiveKitTokenResponse,
     VideoRingBookingBody,
 )
+from app.services import notifications as notifications_service
+from app.utils.scheduled_for import parse_scheduled_for
 
 try:
     from livekit import api as livekit_api
@@ -23,9 +26,57 @@ except Exception:  # pragma: no cover
     livekit_api = None
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _RING_TTL = timedelta(minutes=5)
+
+# How early either party may join a video booking. Both /ring and /token are
+# gated on `scheduled_for - JOIN_WINDOW_BEFORE`. Bookings whose scheduled_for
+# string can't be parsed fall through to the permissive path (we don't 500 on
+# legacy data — see app/utils/scheduled_for.py).
+JOIN_WINDOW_BEFORE = timedelta(minutes=5)
+
+
+def _format_join_time(when: datetime) -> str:
+    """User-friendly local-ish time for the 403 detail message."""
+    return when.strftime("%a %d %b · %I:%M %p UTC").replace(" 0", " ").lstrip("0")
+
+
+def _assert_join_window(booking: Booking) -> None:
+    """Block calls that start more than JOIN_WINDOW_BEFORE before scheduled_for.
+
+    Permissive on parse failure so a malformed legacy `scheduled_for` doesn't
+    silently lock both parties out of a real booking.
+    """
+    when = parse_scheduled_for(booking.scheduled_for)
+    if when is None:
+        return  # unparsable → don't block
+
+    now = datetime.now(timezone.utc)
+    unlock_at = when - JOIN_WINDOW_BEFORE
+    if now < unlock_at:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Video call opens at {_format_join_time(unlock_at)} (5 min before the scheduled time).",
+        )
+
+
+def _other_party_user_id(db: Session, booking: Booking, current_user: User) -> Optional[int]:
+    """Return the user id on the opposite side of this booking, or None."""
+    if current_user.role == "buyer":
+        # Resolve a partner user attached to the boutique.
+        if not booking.boutique_id:
+            return None
+        partner = (
+            db.query(User)
+            .filter(User.boutique_id == booking.boutique_id, User.role == "partner")
+            .first()
+        )
+        return partner.id if partner else None
+    if current_user.role == "partner":
+        return booking.user_id
+    return None
 
 
 def _assert_booking_video_participant(db: Session, booking_id: int, current_user: User):
@@ -60,6 +111,11 @@ def get_livekit_token(
     Room name is deterministic: `booking-{booking_id}`.
     Buyer can only join their own booking room.
     Partner can only join rooms for bookings under their boutique.
+
+    Both sides are gated on the booking's scheduled time: tokens are not
+    issued more than `JOIN_WINDOW_BEFORE` ahead of `scheduled_for`. When a
+    buyer successfully picks up a token, the partner gets a push so they
+    know the customer has joined and is waiting.
     """
     if not settings.LIVEKIT_URL or not settings.LIVEKIT_API_KEY or not settings.LIVEKIT_API_SECRET:
         raise HTTPException(status_code=500, detail="LiveKit is not configured on the server.")
@@ -79,6 +135,9 @@ def get_livekit_token(
     else:
         raise HTTPException(status_code=403, detail="Not allowed to join booking rooms.")
 
+    # Block tokens issued more than 5 min before the scheduled time.
+    _assert_join_window(booking)
+
     room = f"booking-{booking_id}"
     identity = f"{current_user.role}-{current_user.id}"
 
@@ -96,6 +155,29 @@ def get_livekit_token(
         .to_jwt()
     )
 
+    # When the buyer pulls a token, tell the partner the customer is waiting.
+    # Best-effort — we never let a push failure block the token from being issued.
+    if current_user.role == "buyer":
+        partner_id = _other_party_user_id(db, booking, current_user)
+        if partner_id is not None:
+            buyer_name = (current_user.full_name or "").strip() or current_user.email or "Your customer"
+            try:
+                notifications_service.dispatch(
+                    db,
+                    user_id=partner_id,
+                    kind="video_call_buyer_joined",
+                    title="Customer is waiting",
+                    body=f"{buyer_name} joined the video call and is waiting for you.",
+                    action_type="video_call",
+                    action_id=booking.id,
+                    payload={
+                        "booking_id": booking.id,
+                        "scheduled_for": booking.scheduled_for,
+                    },
+                )
+            except Exception as exc:  # pragma: no cover — never fail the call over a notif
+                logger.warning("video_call_buyer_joined dispatch failed: %s", exc)
+
     return LiveKitTokenResponse(url=settings.LIVEKIT_URL, token=token, room=room, identity=identity)
 
 
@@ -106,9 +188,44 @@ def ring_video_call(
     body: VideoRingBookingBody,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
-    """Notify the other party that this user is in (or starting) the video session."""
+    """Notify the other party that this user is in (or starting) the video session.
+
+    Sets the booking's ring marker (so the 30s poller on the other end picks it
+    up) AND fires an immediate Expo push so the other party sees the call in
+    their notification bar without waiting on the poll. Both ends are gated by
+    `JOIN_WINDOW_BEFORE` against the booking's scheduled time.
+    """
     booking = _assert_booking_video_participant(db, body.booking_id, current_user)
+    _assert_join_window(booking)
     crud_booking.set_video_ring(db, db_obj=booking, from_user_id=current_user.id)
+
+    target_user_id = _other_party_user_id(db, booking, current_user)
+    if target_user_id is not None:
+        caller_name = (current_user.full_name or "").strip() or current_user.email or "Someone"
+        if current_user.role == "partner":
+            title = "Your boutique is calling"
+            body_text = f"{caller_name} is ready for your video fitting."
+        else:
+            title = "Customer is calling"
+            body_text = f"{caller_name} is on the line for the video fitting."
+        try:
+            notifications_service.dispatch(
+                db,
+                user_id=target_user_id,
+                kind="video_call_incoming",
+                title=title,
+                body=body_text,
+                action_type="video_call",
+                action_id=booking.id,
+                payload={
+                    "booking_id": booking.id,
+                    "scheduled_for": booking.scheduled_for,
+                    "caller_role": current_user.role,
+                },
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("video_call_incoming dispatch failed: %s", exc)
+
     return {"ok": True}
 
 

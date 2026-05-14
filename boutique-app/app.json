@@ -5,7 +5,7 @@
     "version": "1.0.1",
     "owner": "vaibhavr699",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/Dress Live Seller.png",
     "scheme": "dress-live-partner",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -26,8 +26,8 @@
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#F5E6E8",
-        "foregroundImage": "./assets/images/icon.png",
-        "monochromeImage": "./assets/images/icon.png"
+        "foregroundImage": "./assets/images/Dress Live Seller.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -48,8 +48,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "image": "./assets/images/Dress Live Seller.png",
+          "imageWidth": 220,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
           "dark": {
@@ -60,8 +60,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/splash-icon.png",
-          "color": "#1A1A1A"
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#C9302B"
         }
       ],
       [

@@ -160,6 +160,12 @@ _KIND_DEFAULTS: dict[str, dict[str, Optional[str]]] = {
     "booking_completed": {"channel_id": "bookings-high", "category_id": "booking-update", "sound": "default"},
     "booking_updated": {"channel_id": "bookings-high", "category_id": "booking-update", "sound": "default"},
     "booking_reminder": {"channel_id": "reminders", "category_id": "booking-update", "sound": "default"},
+    # Video-call lifecycle. Dedicated `video-call` channel with a phone-call-like
+    # vibration pattern (longer pulses, repeated) — registered on the client. iOS
+    # uses the booking-update category so the user still gets a "View" inline
+    # action and a tap opens the call screen.
+    "video_call_incoming": {"channel_id": "video-call", "category_id": "booking-update", "sound": "default"},
+    "video_call_buyer_joined": {"channel_id": "video-call", "category_id": "booking-update", "sound": "default"},
     # Future kinds
     "price_drop": {"channel_id": "recommendations", "category_id": None, "sound": None},
     "promotion": {"channel_id": "promotions", "category_id": None, "sound": None},

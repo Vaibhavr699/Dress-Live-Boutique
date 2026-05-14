@@ -517,11 +517,18 @@ export default function BoutiqueVideoCallScreen() {
         if (!mounted) return;
         setTokenData(data as any);
       })
-      .catch((error) => {
+      .catch((error: any) => {
         if (!mounted) return;
+        // 403 from the join-window gate carries a friendly "opens at HH:MM…"
+        // message. Pop back so the partner isn't stuck on a non-functional
+        // call screen when they tap "Join" too early.
+        const isTooEarly = error?.status === 403;
+        const msg = error?.detail
+          || (error instanceof Error ? error.message : 'Could not start video call. Check LiveKit configuration on the server.');
         Alert.alert(
-          'Video call',
-          error instanceof Error ? error.message : 'Could not start video call. Check LiveKit configuration on the server.'
+          isTooEarly ? 'Too early to start' : 'Video call',
+          typeof msg === 'string' ? msg : 'Could not start video call.',
+          [{ text: 'OK', onPress: () => { try { router.back(); } catch { /* no-op */ } } }],
         );
       })
       .finally(() => {

@@ -85,9 +85,10 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   tryOnOverlayUri: string | null;
   tryOnLoading: boolean;
   captureActive: boolean;
+  cameraOn: boolean;
   onLiveFrame: (dataUrl: string) => void;
 }>(function BuyerRoomView(props, ref) {
-  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, onLiveFrame } = props;
+  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, cameraOn, onLiveFrame } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
   const viewShotRef = useRef<ViewShot | null>(null);
@@ -328,7 +329,12 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
               {activeDressLabel}
             </Text>
           </View>
-          {captureDisabled ? (
+          {!cameraOn ? (
+            <View className="bg-[#FFECEC] px-2.5 py-1 rounded-full flex-row items-center">
+              <View className="w-1.5 h-1.5 rounded-full bg-[#C9302B] mr-1.5" />
+              <Text className="text-[#C9302B] text-[8px] uppercase tracking-[0.6px]">Camera Off</Text>
+            </View>
+          ) : captureDisabled ? (
             <View className="bg-[#FFF4EC] px-2.5 py-1 rounded-full flex-row items-center">
               <View className="w-1.5 h-1.5 rounded-full bg-[#C9491A] mr-1.5" />
               <Text className="text-[#C9491A] text-[8px] uppercase tracking-[0.6px]">Tap Snap</Text>
@@ -340,7 +346,11 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
             </View>
           )}
         </View>
-        {captureDisabled ? (
+        {!cameraOn ? (
+          <Text className="text-[#C9302B] text-[9px] mt-2 leading-3">
+            Your camera is off. Tap the camera button below to turn it on and start the live try-on.
+          </Text>
+        ) : captureDisabled ? (
           <Text className="text-[#A87A2A] text-[9px] mt-2 leading-3">
             Auto-capture is not working on this device. Tap “Snap manually” below to refresh the try-on.
           </Text>
@@ -485,10 +495,22 @@ export default function VideoCallScreen() {
     setTokenData(null);
     api.get(`/video-calls/token?booking_id=${bookingId}`)
       .then((data) => { if (mounted) setTokenData(data as TokenResponse); })
-      .catch((error) => { if (mounted) Alert.alert('Video call', error instanceof Error ? error.message : 'Could not start video call.'); })
+      .catch((error: any) => {
+        if (!mounted) return;
+        // 403 from the server's 5-min join-window gate carries a friendly
+        // "Video call opens at HH:MM…" detail string. Surface it AND pop the
+        // user back so they aren't stuck on a non-functional call screen.
+        const isTooEarly = error?.status === 403;
+        const msg = error?.detail || (error instanceof Error ? error.message : 'Could not start video call.');
+        Alert.alert(
+          isTooEarly ? 'Too early to join' : 'Video call',
+          typeof msg === 'string' ? msg : 'Could not start video call.',
+          [{ text: 'OK', onPress: () => { try { router.back(); } catch { /* no-op */ } } }],
+        );
+      })
       .finally(() => { if (mounted) setTokenLoading(false); });
     return () => { mounted = false; };
-  }, [bookingId]);
+  }, [bookingId, livekitSupported, router]);
 
   useEffect(() => {
     if (!bookingId) return;
@@ -948,7 +970,8 @@ export default function VideoCallScreen() {
                       onDressSwitch={stableOnDressSwitch}
                       tryOnOverlayUri={tryOnResultUri}
                       tryOnLoading={tryOnLoading}
-                      captureActive={callState === 'active' && tryOnActiveDressId != null}
+                      captureActive={callState === 'active' && tryOnActiveDressId != null && cameraOn}
+                      cameraOn={cameraOn}
                       onLiveFrame={stableOnLiveFrame}
                     />
                   </deps.LiveKitRoom>
@@ -1089,7 +1112,15 @@ export default function VideoCallScreen() {
 
               {/* Panel body */}
               <View className="p-5">
-                {!tryOnPhotoDataUrl ? (
+                {!cameraOn ? (
+                  /* Camera turned off — explain why nothing is happening */
+                  <View className="flex-row items-center py-3">
+                    <Feather name="video-off" size={14} color="#C9302B" />
+                    <Text className="text-[#C9302B] text-[11px] ml-3 flex-1">
+                      Camera is off. Turn it on to start the live try-on.
+                    </Text>
+                  </View>
+                ) : !tryOnPhotoDataUrl ? (
                   /* Waiting for first auto-capture */
                   <View className="flex-row items-center py-3">
                     <ActivityIndicator color="#1A1A1A" size="small" />

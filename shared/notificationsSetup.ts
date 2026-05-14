@@ -40,6 +40,19 @@ export async function setupNotifications({ role }: { role: AppRole }): Promise<v
           lightColor: '#1A1A1A',
           showBadge: true,
         }),
+        Notifications.setNotificationChannelAsync('video-call', {
+          name: 'Video calls',
+          description: 'Incoming video calls and call-status updates.',
+          importance: Notifications.AndroidImportance.MAX,
+          sound: 'default',
+          // Phone-call cadence: 1 s buzz, ~0.6 s rest, repeated. Falls through
+          // Do Not Disturb (MAX importance) the same way a real call would.
+          vibrationPattern: [0, 1000, 600, 1000, 600, 1000],
+          enableVibrate: true,
+          enableLights: true,
+          lightColor: '#FF3B30',
+          showBadge: true,
+        }),
         Notifications.setNotificationChannelAsync('reminders', {
           name: 'Reminders',
           description: 'Reminders for upcoming bookings.',
