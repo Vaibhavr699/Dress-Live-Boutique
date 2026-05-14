@@ -46,9 +46,13 @@ def _format_join_time(when: datetime) -> str:
 def _assert_join_window(booking: Booking) -> None:
     """Block calls that start more than JOIN_WINDOW_BEFORE before scheduled_for.
 
-    Permissive on parse failure so a malformed legacy `scheduled_for` doesn't
-    silently lock both parties out of a real booking.
+    DISABLED during testing — every booking is joinable any time. Re-enable by
+    deleting the `return` line below; the parser + helpers stay in place so
+    flipping it back on is a single-line change.
     """
+    return  # noqa: temporary opt-out so testers can join calls outside the 5-min window
+
+    # ── intentionally unreachable while gating is paused ─────────────────
     when = parse_scheduled_for(booking.scheduled_for)
     if when is None:
         return  # unparsable → don't block

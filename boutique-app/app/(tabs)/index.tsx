@@ -300,6 +300,7 @@ export default function BoutiqueDashboard() {
   const boutiqueId = user?.boutique_id ?? null;
   
   const [loading, setLoading] = useState(true);
+  const [boutiqueLoading, setBoutiqueLoading] = useState(true);
   const [dresses, setDresses] = useState<any[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [isStoreVisible, setIsStoreVisible] = useState(true);
@@ -354,6 +355,7 @@ export default function BoutiqueDashboard() {
     if (!boutiqueId) {
       setIsStoreVisible(false);
       setBoutique(null);
+      setBoutiqueLoading(false);
       return;
     }
 
@@ -363,6 +365,8 @@ export default function BoutiqueDashboard() {
       setBoutique(boutique);
     } catch (error) {
       console.error('Failed to fetch boutique visibility:', error);
+    } finally {
+      setBoutiqueLoading(false);
     }
   }, [boutiqueId]);
 
@@ -457,7 +461,11 @@ export default function BoutiqueDashboard() {
       .slice(0, 4);
   }, [sortedBookings]);
 
-  const isInitialLoading = loading && !boutique;
+  // Keep the full-screen loader up until BOTH the dress/bookings fetch AND the
+  // boutique fetch have settled. Without `boutiqueLoading` in the gate, the
+  // header/greeting card briefly renders with empty boutique fields whenever
+  // the dashboard-data fetch wins the race.
+  const isInitialLoading = loading || boutiqueLoading;
 
   if (isInitialLoading) {
     return (

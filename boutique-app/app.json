@@ -12,6 +12,7 @@
       "jsEngine": "hermes",
       "supportsTablet": true,
       "newArchEnabled": true,
+      "bundleIdentifier": "com.atul.boutique.partner",
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
