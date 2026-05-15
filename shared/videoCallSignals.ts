@@ -10,6 +10,7 @@
 
 export const TRYON_SWITCH_TYPE = 'tryon.switch' as const;
 export const TRYON_FRAME_TYPE = 'tryon.frame' as const;
+export const POSE_LANDMARKS_TYPE = 'pose.landmarks' as const;
 export const TRYON_SCHEMA_VERSION = 1;
 
 // LiveKit publishData has a hard limit of ~15KB per packet. We split the
@@ -156,6 +157,91 @@ export function parseTryonFrameMessage(raw: string): TryonFrameChunkMessage | nu
     dataUrlPart,
   };
 }
+
+// ── Pose landmark fan-out (buyer → advisor) ──────────────────────────────
+// The buyer's app polls /ai/live-pose-landmarks at ~5 Hz to drive its own
+// AR overlay. We re-broadcast those same landmarks over the data channel
+// so the advisor's app can render the EXACT SAME overlay on its copy of
+// the buyer's remote video — without each side hitting the backend
+// separately. One JSON envelope fits easily under LK's 15 KB packet
+// ceiling so no chunking is needed.
+
+export type PoseLandmarksMessage = {
+  type: typeof POSE_LANDMARKS_TYPE;
+  schemaVersion: typeof TRYON_SCHEMA_VERSION;
+  bookingId: number;
+  dressId: number;
+  ts: number;             // ms epoch, lets receivers stale-out old data
+  landmarks: {
+    image_left_shoulder: { x: number; y: number; visibility?: number };
+    image_right_shoulder: { x: number; y: number; visibility?: number };
+    image_left_hip: { x: number; y: number; visibility?: number };
+    image_right_hip: { x: number; y: number; visibility?: number };
+  };
+};
+
+export function buildPoseLandmarksPayload(params: {
+  bookingId: number;
+  dressId: number;
+  landmarks: PoseLandmarksMessage['landmarks'];
+}): Uint8Array {
+  const body: PoseLandmarksMessage = {
+    type: POSE_LANDMARKS_TYPE,
+    schemaVersion: TRYON_SCHEMA_VERSION,
+    bookingId: params.bookingId,
+    dressId: params.dressId,
+    ts: Date.now(),
+    landmarks: params.landmarks,
+  };
+  return new TextEncoder().encode(JSON.stringify(body));
+}
+
+export function parsePoseLandmarksMessage(raw: string): PoseLandmarksMessage | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const o = parsed as Record<string, unknown>;
+  if (o.type !== POSE_LANDMARKS_TYPE) return null;
+  const version = o.schemaVersion;
+  if (version !== undefined && version !== TRYON_SCHEMA_VERSION) return null;
+  const bookingId = o.bookingId;
+  const dressId = o.dressId;
+  const ts = o.ts;
+  const lm = o.landmarks;
+  if (typeof bookingId !== 'number' || !Number.isFinite(bookingId)) return null;
+  if (typeof dressId !== 'number' || !Number.isFinite(dressId)) return null;
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return null;
+  if (!lm || typeof lm !== 'object') return null;
+
+  const lmObj = lm as Record<string, unknown>;
+  const keys = ['image_left_shoulder', 'image_right_shoulder', 'image_left_hip', 'image_right_hip'] as const;
+  const out: PoseLandmarksMessage['landmarks'] = {} as any;
+  for (const k of keys) {
+    const v = lmObj[k];
+    if (!v || typeof v !== 'object') return null;
+    const vo = v as Record<string, unknown>;
+    if (typeof vo.x !== 'number' || typeof vo.y !== 'number') return null;
+    out[k] = {
+      x: vo.x,
+      y: vo.y,
+      ...(typeof vo.visibility === 'number' ? { visibility: vo.visibility } : {}),
+    };
+  }
+
+  return {
+    type: POSE_LANDMARKS_TYPE,
+    schemaVersion: TRYON_SCHEMA_VERSION,
+    bookingId,
+    dressId,
+    ts,
+    landmarks: out,
+  };
+}
+
 
 // ── Receiver-side reassembler ─────────────────────────────────────────────
 // Drop-in for partner views: feed each parsed chunk; get a complete data URL

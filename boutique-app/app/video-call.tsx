@@ -20,12 +20,10 @@ import { Image } from 'expo-image';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
-import {
-  buildTryonSwitchPayload,
-  createTryonFrameReassembler,
-  parseTryonFrameMessage,
-} from '@shared/videoCallSignals';
+import { buildTryonSwitchPayload } from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
+import { ARGarmentOverlay } from '../components/ar/ARGarmentOverlay';
+import { useReceivedPoseLandmarks } from '../components/ar/useReceivedPoseLandmarks';
 
 type VideoCallStage = 'waiting' | 'analysis' | 'live';
 
@@ -118,38 +116,28 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
       ? 'No customer video — they may have the camera off. Ask them to tap the camera icon on their phone.'
       : 'Waiting for customer…';
 
-  // ── Mirror of the customer's live AI try-on overlay ───────────────────
-  // The customer's app POSTs each frame to the backend, gets a rendered
-  // overlay back, and chunks it through the LK data channel. We reassemble
-  // here and paint it on top of the remote video so the advisor sees the
-  // exact same overlay the customer is seeing — no extra render cost on
-  // this side, just data-channel bandwidth.
-  const [tryOnOverlayUri, setTryOnOverlayUri] = React.useState<string | null>(null);
-  const reassemblerRef = React.useRef(createTryonFrameReassembler());
+  // ── Receive the buyer's live pose landmarks ─────────────────────────
+  // The buyer's app publishes ~5 Hz of torso keypoints over the LK data
+  // channel. We feed the latest sample into <ARGarmentOverlay> so the
+  // advisor sees the same dress warp on the buyer's remote video that
+  // the buyer sees on themselves. Same affine warp on both sides → same
+  // visual, no extra backend hit on the advisor side.
+  const receivedLandmarks = useReceivedPoseLandmarks({
+    room,
+    bookingId,
+    activeDressId,
+  });
 
-  React.useEffect(() => {
-    if (!room) return;
-    const handler = (payload: Uint8Array) => {
-      let raw: string;
-      try { raw = new TextDecoder().decode(payload); } catch { return; }
-      const msg = parseTryonFrameMessage(raw);
-      if (!msg || msg.bookingId !== bookingId) return;
-      const result = reassemblerRef.current.ingest(msg);
-      if (result.complete) {
-        setTryOnOverlayUri(result.imageDataUrl);
-      }
-    };
-    room.on('dataReceived', handler as any);
-    return () => { room.off('dataReceived', handler as any); };
-  }, [room, bookingId]);
+  // Measured size of the remote video container — drives the AR overlay's
+  // affine transform so the warp scales to whatever LiveKit is painting at.
+  const [remoteSize, setRemoteSize] = React.useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
-  // Reset overlay (and any half-assembled chunks) whenever the advisor
-  // switches to a different dress — the customer is about to send fresh
-  // frames for the new garment and we don't want a stale overlay flashing.
-  React.useEffect(() => {
-    setTryOnOverlayUri(null);
-    reassemblerRef.current.reset();
-  }, [activeDressId]);
+  // Active dress image URL, looked up from the selected dress.
+  const activeDressImageUrl = React.useMemo<string | null>(() => {
+    if (activeDressId == null) return null;
+    const d = bookingDresses.find((x) => x.id === activeDressId);
+    return d?.image_url ?? null;
+  }, [activeDressId, bookingDresses]);
 
   // Re-send the active dress signal whenever the customer joins so they get
   // the current selection even if they connected after the advisor tapped.
@@ -171,44 +159,39 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   }, [room, activeDressId, bookingDresses, bookingId]);
 
   return (
-    <View style={{ width: '100%', height: frameHeight }}>
+    <View
+      style={{ width: '100%', height: frameHeight }}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout;
+        if (width !== remoteSize.w || height !== remoteSize.h) {
+          setRemoteSize({ w: width, h: height });
+        }
+      }}
+    >
       {remote ? (
-        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} zOrder={0} />
+        <>
+          <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} zOrder={0} />
+          {/* AR garment overlay rendered locally from the buyer's
+              published pose landmarks. mirror={false} because the
+              advisor sees the buyer's video un-mirrored (it's a remote
+              feed) — landmarks come back in unmirrored image space so
+              no flip is needed here. */}
+          {remoteSize.w > 0 ? (
+            <ARGarmentOverlay
+              dressImageUrl={activeDressImageUrl}
+              landmarks={receivedLandmarks}
+              containerWidth={remoteSize.w}
+              containerHeight={remoteSize.h || frameHeight}
+              mirror={false}
+              visible={!!receivedLandmarks}
+            />
+          ) : null}
+        </>
       ) : (
         <View className="bg-black w-full items-center justify-center px-6" style={{ height: frameHeight }}>
           <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
         </View>
       )}
-
-      {/* AI try-on overlay mirrored from the customer's render pipeline. */}
-      {tryOnOverlayUri ? (
-        <View
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-          pointerEvents="none"
-        >
-          <Image
-            source={{ uri: tryOnOverlayUri }}
-            style={{ width: '100%', height: '100%' }}
-            contentFit="cover"
-          />
-          <View
-            style={{
-              position: 'absolute',
-              top: 10,
-              left: 10,
-              backgroundColor: 'rgba(0,0,0,0.55)',
-              borderRadius: 20,
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              flexDirection: 'row',
-              alignItems: 'center',
-            }}
-          >
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4EA35D', marginRight: 6 }} />
-            <Text style={{ color: 'white', fontSize: 9, letterSpacing: 0.5 }}>Customer's AI Try-On</Text>
-          </View>
-        </View>
-      ) : null}
 
       {local ? (
         <View

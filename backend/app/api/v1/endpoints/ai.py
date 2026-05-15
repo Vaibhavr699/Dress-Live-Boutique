@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import base64
 import collections
+import os
+import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -21,6 +24,102 @@ from app.services import runpod_budget
 from app.services import runpod_catvton
 
 router = APIRouter()
+
+
+# ── MediaPipe pose landmark detection ─────────────────────────────────────
+# As of mediapipe 0.10.20+ (and **always** on Python 3.13 wheels) the legacy
+# `mp.solutions.pose.Pose` API is gone. We use the Tasks API instead, which
+# loads a .task model file at startup and exposes a `PoseLandmarker.detect()`
+# call that's ~19 ms on Apple Silicon CPU for a 256-px frame.
+#
+# One detector is kept alive process-wide (init costs ~2 s) and guarded by a
+# threading.Lock so concurrent requests serialize through inference. The
+# rate limiter on /live-pose-landmarks already caps total throughput at
+# ~12 fps per booking, so lock contention is minimal in normal operation.
+
+_POSE_LANDMARK_MODEL_PATH = os.environ.get(
+    "POSE_LANDMARKER_MODEL_PATH",
+    str(Path(__file__).resolve().parents[4] / "models" / "pose_landmarker_lite.task"),
+)
+
+# Pose landmark indices — identical between solutions and tasks APIs.
+# https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
+POSE_LM_LEFT_SHOULDER = 11
+POSE_LM_RIGHT_SHOULDER = 12
+POSE_LM_LEFT_ELBOW = 13
+POSE_LM_RIGHT_ELBOW = 14
+POSE_LM_LEFT_WRIST = 15
+POSE_LM_RIGHT_WRIST = 16
+POSE_LM_LEFT_HIP = 23
+POSE_LM_RIGHT_HIP = 24
+POSE_LM_LEFT_KNEE = 25
+POSE_LM_RIGHT_KNEE = 26
+POSE_LM_LEFT_ANKLE = 27
+POSE_LM_RIGHT_ANKLE = 28
+
+_pose_landmarker: Any = None
+_pose_lock = threading.Lock()
+
+
+def _get_pose_landmarker() -> Any:
+    """Lazy-init the global PoseLandmarker. Caller holds `_pose_lock`."""
+    global _pose_landmarker
+    if _pose_landmarker is not None:
+        return _pose_landmarker
+    try:
+        from mediapipe.tasks import python as mp_tasks
+        from mediapipe.tasks.python import vision
+    except Exception as exc:
+        raise RuntimeError(f"MediaPipe Tasks unavailable: {exc}") from exc
+    if not Path(_POSE_LANDMARK_MODEL_PATH).is_file():
+        raise RuntimeError(
+            f"Pose model file not found at {_POSE_LANDMARK_MODEL_PATH}. "
+            "Run `scripts/download_pose_model.sh` or set "
+            "POSE_LANDMARKER_MODEL_PATH to override."
+        )
+    opts = vision.PoseLandmarkerOptions(
+        base_options=mp_tasks.BaseOptions(model_asset_path=_POSE_LANDMARK_MODEL_PATH),
+        running_mode=vision.RunningMode.IMAGE,
+        min_pose_detection_confidence=0.3,
+        min_pose_presence_confidence=0.3,
+        num_poses=1,
+    )
+    _pose_landmarker = vision.PoseLandmarker.create_from_options(opts)
+    return _pose_landmarker
+
+
+def _run_pose_on_image(img_bgr) -> Optional[list]:
+    """Run pose detection on a single BGR frame.
+
+    Returns the 33-element list of NormalizedLandmark objects (each exposes
+    `.x`, `.y`, `.z` in [0,1] image-space plus `.visibility` and `.presence`)
+    or None when no person is detected / MediaPipe is unavailable / the
+    model file is missing.
+
+    The interface deliberately matches what the old solutions API returned
+    via `pose_landmarks.landmark` — so existing callers swap from
+    `lm[L.LEFT_SHOULDER.value]` to `lm[POSE_LM_LEFT_SHOULDER]` and keep
+    the rest of their math untouched.
+    """
+    try:
+        import cv2
+        import mediapipe as mp
+    except Exception:
+        return None
+    h, w = img_bgr.shape[:2]
+    if h < 64 or w < 64:
+        return None
+    try:
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+        with _pose_lock:
+            detector = _get_pose_landmarker()
+            result = detector.detect(mp_image)
+    except Exception:
+        return None
+    if not result.pose_landmarks:
+        return None
+    return result.pose_landmarks[0]
 
 
 @dataclass
@@ -48,6 +147,16 @@ class LiveTryOnFramePayload(BaseModel):
     quality: str = "live"
 
 
+class LivePoseLandmarksPayload(BaseModel):
+    """Geometry-only request — used by the buyer-side AR overlay between
+    full diffusion renders. Returns just the 4 torso keypoints needed to
+    warp a flat garment PNG client-side. Much cheaper than diffusion, so
+    the client can poll this at 5–10 Hz and feel real-time."""
+
+    booking_id: int
+    frame_data_url: str
+
+
 # In-memory rate limiter, keyed by (booking_id, quality). Intervals are
 # tuned to the *expected* render time of the main path (CatVTON), not the
 # fallback — there's no point letting the client send frames faster than
@@ -59,6 +168,13 @@ _LIVE_TRYON_INTERVAL_BY_QUALITY = {
     "hd": 8.0,    # CatVTON 50-step ≈ 4–6s, Fashn ≈ 10–30s — generous floor
 }
 _LIVE_TRYON_DEFAULT_INTERVAL = 2.5
+
+# Separate, much tighter limiter for the pose-only endpoint. MediaPipe
+# `model_complexity=0` on a downscaled frame is ~20–40 ms, so the client
+# can safely sample 5–10×/sec. Keep a small floor so a misbehaving client
+# can't pin a CPU core.
+_live_pose_last_request: dict[int, float] = {}
+_LIVE_POSE_MIN_INTERVAL_SECONDS = 0.08  # ≈ 12 fps ceiling
 
 
 def _decode_image_bytes(image_bytes: bytes):
@@ -220,6 +336,56 @@ def _smooth_landmarks(
     return smoothed
 
 
+def _extract_torso_landmarks_normalized(
+    person_img_bgr,
+    *,
+    smoothing_key: Optional[tuple[int, int]] = None,
+    min_visibility: float = 0.30,
+) -> Optional[dict[str, Any]]:
+    """Run MediaPipe pose on the frame and return torso keypoints in
+    normalized [0,1] image-space (so the client can multiply by whatever
+    size it renders the PiP at).
+
+    Returns None when no usable pose is detected — callers should treat
+    that as "hide the AR overlay this frame and try again next sample".
+    """
+    h, w = person_img_bgr.shape[:2]
+    lm = _run_pose_on_image(person_img_bgr)
+    if lm is None:
+        return None
+
+    def pt_px(idx: int) -> tuple[float, float, float]:
+        p = lm[idx]
+        return (float(p.x) * w, float(p.y) * h, float(getattr(p, "visibility", 0.0) or 0.0))
+
+    raw = {
+        "ls": pt_px(POSE_LM_LEFT_SHOULDER),
+        "rs": pt_px(POSE_LM_RIGHT_SHOULDER),
+        "lh": pt_px(POSE_LM_LEFT_HIP),
+        "rh": pt_px(POSE_LM_RIGHT_HIP),
+    }
+    if min(raw["ls"][2], raw["rs"][2], raw["lh"][2], raw["rh"][2]) < min_visibility:
+        return None
+
+    if smoothing_key is not None:
+        raw = _smooth_landmarks(smoothing_key, raw)
+
+    def to_norm(p: tuple[float, float, float]) -> dict[str, float]:
+        return {"x": p[0] / w, "y": p[1] / h, "visibility": p[2]}
+
+    # MediaPipe `LEFT_*` is the subject's left side, which appears on the
+    # image's RIGHT for a forward-facing buyer. The client wants
+    # image-space corners, so swap names here once and the rendering side
+    # doesn't have to think about mirroring.
+    return {
+        "image_left_shoulder": to_norm(raw["rs"]),
+        "image_right_shoulder": to_norm(raw["ls"]),
+        "image_left_hip": to_norm(raw["rh"]),
+        "image_right_hip": to_norm(raw["lh"]),
+        "image_size": {"w": int(w), "h": int(h)},
+    }
+
+
 def reset_pose_state(booking_id: int) -> None:
     """Drop smoothed landmark cache for a booking — call when a dress
     switch happens so the new garment doesn't inherit the old pose lag."""
@@ -356,44 +522,22 @@ def _compose_tryon_pose_warp(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {e}")
 
-    try:
-        import mediapipe as mp
-    except Exception:
-        raise HTTPException(status_code=400, detail="Pose-warp unavailable on this server.")
-
-    if not hasattr(mp, "solutions"):
-        raise HTTPException(status_code=400, detail="Pose-warp unavailable on this server.")
-
     h, w = person_img_bgr.shape[:2]
     if h < 64 or w < 64:
         raise HTTPException(status_code=400, detail="Frame too small for pose-warp.")
 
-    img_rgb = person_img_bgr[:, :, ::-1]
-    mp_pose = mp.solutions.pose
-    # Lightest pose model for low-latency real-time use.
-    with mp_pose.Pose(
-        static_image_mode=True,
-        model_complexity=0,
-        enable_segmentation=False,
-        min_detection_confidence=0.3,
-        min_tracking_confidence=0.3,
-    ) as pose:
-        res = pose.process(img_rgb)
-
-    if not res.pose_landmarks or not res.pose_landmarks.landmark:
+    lm = _run_pose_on_image(person_img_bgr)
+    if lm is None:
         raise HTTPException(status_code=400, detail="No person detected for pose-warp.")
 
-    lm = res.pose_landmarks.landmark
-    L = mp_pose.PoseLandmark
-
-    def pt(idx) -> tuple[float, float, float]:
-        p = lm[idx.value]
+    def pt(idx: int) -> tuple[float, float, float]:
+        p = lm[idx]
         return (float(p.x) * w, float(p.y) * h, float(getattr(p, "visibility", 0.0) or 0.0))
 
-    raw_ls = pt(L.LEFT_SHOULDER)   # left shoulder (subject's left = image right)
-    raw_rs = pt(L.RIGHT_SHOULDER)
-    raw_lh = pt(L.LEFT_HIP)
-    raw_rh = pt(L.RIGHT_HIP)
+    raw_ls = pt(POSE_LM_LEFT_SHOULDER)   # subject's left = image right
+    raw_rs = pt(POSE_LM_RIGHT_SHOULDER)
+    raw_lh = pt(POSE_LM_LEFT_HIP)
+    raw_rh = pt(POSE_LM_RIGHT_HIP)
 
     # Require all four keypoints with at least modest confidence — otherwise
     # the perspective transform will produce a broken polygon.
@@ -625,38 +769,20 @@ def _validate_human_present(img_bgr) -> _PoseValidationResult:
     transient MediaPipe issue — Fashn AI will surface its own error if the
     image is unusable.
     """
-    try:
-        import mediapipe as mp
-    except Exception:
-        return _PoseValidationResult(ok=True)
-
     h, w = img_bgr.shape[:2]
     if h < 64 or w < 64:
         return _PoseValidationResult(ok=False, reason="Image is too small. Please pick a larger photo.")
 
-    if not hasattr(mp, "solutions"):
-        return _PoseValidationResult(ok=True)
-
     try:
-        img_rgb = img_bgr[:, :, ::-1]
-        mp_pose = mp.solutions.pose
-        with mp_pose.Pose(
-            static_image_mode=True,
-            model_complexity=0,
-            enable_segmentation=False,
-            min_detection_confidence=0.3,
-            min_tracking_confidence=0.3,
-        ) as pose:
-            res = pose.process(img_rgb)
-        if not res.pose_landmarks or not res.pose_landmarks.landmark:
-            return _PoseValidationResult(
-                ok=False,
-                reason="No person detected in the photo. Please pick a photo that clearly shows a person.",
-            )
-        return _PoseValidationResult(ok=True)
+        lm = _run_pose_on_image(img_bgr)
     except Exception:
-        # If detection fails for any reason, don't block the render.
         return _PoseValidationResult(ok=True)
+    if lm is None:
+        return _PoseValidationResult(
+            ok=False,
+            reason="No person detected in the photo. Please pick a photo that clearly shows a person.",
+        )
+    return _PoseValidationResult(ok=True)
 
 
 def _validate_full_body_pose(img_bgr) -> _PoseValidationResult:
@@ -669,57 +795,33 @@ def _validate_full_body_pose(img_bgr) -> _PoseValidationResult:
     - enough landmark visibility confidence
     - person occupies enough height in the frame
     """
-    try:
-        import mediapipe as mp
-    except Exception:
-        return _validate_full_body_hog(img_bgr)
-
     h, w = img_bgr.shape[:2]
     if h < 256 or w < 256:
         return _PoseValidationResult(ok=False, reason="Image is too small. Please take a clearer full-body photo.")
 
-    if not hasattr(mp, "solutions"):
+    lm = _run_pose_on_image(img_bgr)
+    if lm is None:
+        # MediaPipe unavailable OR no person found — fall back to the
+        # HOG detector for a coarse "is there a person" check rather
+        # than rejecting outright. Matches the prior behavior.
         return _validate_full_body_hog(img_bgr)
-
-    img_rgb = img_bgr[:, :, ::-1]  # BGR -> RGB
-
-    mp_pose = mp.solutions.pose
-    with mp_pose.Pose(
-        static_image_mode=True,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    ) as pose:
-        res = pose.process(img_rgb)
-
-    if not res.pose_landmarks or not res.pose_landmarks.landmark:
-        return _PoseValidationResult(
-            ok=False,
-            reason="No person detected. Please retake the photo with your full body in view.",
-        )
-
-    lm = res.pose_landmarks.landmark
-    # MediaPipe landmark indices
-    # https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
-    L = mp_pose.PoseLandmark
 
     def vis(landmark) -> float:
         v = getattr(landmark, "visibility", None)
         return float(v) if v is not None else 0.0
 
     required = {
-        "left_shoulder": L.LEFT_SHOULDER,
-        "right_shoulder": L.RIGHT_SHOULDER,
-        "left_hip": L.LEFT_HIP,
-        "right_hip": L.RIGHT_HIP,
-        "left_knee": L.LEFT_KNEE,
-        "right_knee": L.RIGHT_KNEE,
-        "left_ankle": L.LEFT_ANKLE,
-        "right_ankle": L.RIGHT_ANKLE,
+        "left_shoulder": POSE_LM_LEFT_SHOULDER,
+        "right_shoulder": POSE_LM_RIGHT_SHOULDER,
+        "left_hip": POSE_LM_LEFT_HIP,
+        "right_hip": POSE_LM_RIGHT_HIP,
+        "left_knee": POSE_LM_LEFT_KNEE,
+        "right_knee": POSE_LM_RIGHT_KNEE,
+        "left_ankle": POSE_LM_LEFT_ANKLE,
+        "right_ankle": POSE_LM_RIGHT_ANKLE,
     }
 
-    vis_map = {name: vis(lm[idx.value]) for name, idx in required.items()}
+    vis_map = {name: vis(lm[idx]) for name, idx in required.items()}
     # Must have at least one side of each joint pair visible enough.
     min_vis = 0.55
     if max(vis_map["left_shoulder"], vis_map["right_shoulder"]) < min_vis:
@@ -734,7 +836,7 @@ def _validate_full_body_pose(img_bgr) -> _PoseValidationResult:
     # Compute landmark bounding box for core points to estimate coverage
     pts = []
     for idx in required.values():
-        p = lm[idx.value]
+        p = lm[idx]
         pts.append((float(p.x) * w, float(p.y) * h, vis(p)))
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
@@ -1173,4 +1275,70 @@ async def live_tryon_frame(
         quality=quality,
         booking_id=payload.booking_id,
     )
+
+
+@router.post("/live-pose-landmarks", response_model=dict)
+async def live_pose_landmarks(
+    *,
+    payload: LivePoseLandmarksPayload,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Pose-only companion to /live-tryon-frame.
+
+    Returns just the 4 torso keypoints (shoulder L/R, hip L/R) in normalized
+    [0,1] image space so the buyer client can warp a flat garment PNG on top
+    of its local camera preview at ~5–10 fps — bridging the gap between
+    CatVTON snapshots without burning GPU minutes. EMA smoothing is applied
+    server-side per (booking_id, dress_id=0 sentinel) so consecutive samples
+    don't jitter.
+    """
+    if current_user.role != "buyer":
+        raise HTTPException(status_code=403, detail="Only buyers can request pose landmarks.")
+
+    booking = crud_booking.get(db, id=payload.booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found.")
+    if booking.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed for this booking.")
+    if booking.appointment_type != "video":
+        raise HTTPException(status_code=400, detail="This booking is not a video appointment.")
+
+    now = time.monotonic()
+    stale = [k for k, v in _live_pose_last_request.items() if now - v > 30]
+    for k in stale:
+        _live_pose_last_request.pop(k, None)
+
+    last = _live_pose_last_request.get(payload.booking_id, 0.0)
+    if now - last < _LIVE_POSE_MIN_INTERVAL_SECONDS:
+        # Pose endpoint is meant to feel chatty — return 200 with `ok:false`
+        # rather than a 429 so the client's polling loop doesn't have to
+        # special-case errors. The skipped flag tells it to keep the last
+        # known landmarks rather than hiding the overlay.
+        return {"ok": False, "skipped": True}
+    _live_pose_last_request[payload.booking_id] = now
+
+    try:
+        import cv2  # noqa: F401  (decoder dep — surface a clean 500 if absent)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Server missing image dependencies: {exc}")
+
+    frame_image_bytes = _decode_data_url_image_bytes(payload.frame_data_url)
+    img_bgr = _decode_image_bytes(frame_image_bytes)
+
+    started = time.monotonic()
+    landmarks = _extract_torso_landmarks_normalized(
+        img_bgr,
+        smoothing_key=(payload.booking_id, 0),
+    )
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+
+    if landmarks is None:
+        return {"ok": False, "reason": "no_pose", "elapsed_ms": elapsed_ms}
+
+    return {
+        "ok": True,
+        "landmarks": landmarks,
+        "elapsed_ms": elapsed_ms,
+    }
 

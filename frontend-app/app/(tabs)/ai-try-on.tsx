@@ -88,7 +88,7 @@ export default function AITryOnScreen() {
     {
       id: 3,
       type: 'camera',
-      instructions: 'TAKE A SELFIE! YOU’LL NEED GOOD LIHTING',
+      instructions: 'TAKE A SELFIE! YOU’LL NEED GOOD LIGHTING',
     },
     {
       id: 4,

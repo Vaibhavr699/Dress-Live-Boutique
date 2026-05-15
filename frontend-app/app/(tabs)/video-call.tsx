@@ -22,9 +22,11 @@ import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
-import { buildTryonFrameChunks, parseTryonSwitchMessage } from '@shared/videoCallSignals';
+import { buildPoseLandmarksPayload, buildTryonFrameChunks, parseTryonSwitchMessage } from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { ensureLiveKitRegistered } from '@shared/livekitInit';
+import { ARGarmentOverlay } from '../../components/ar/ARGarmentOverlay';
+import { useLivePoseLandmarks } from '../../components/ar/useLivePoseLandmarks';
 
 type CallState = 'waiting' | 'active';
 type TokenResponse = { url: string; token: string; room: string; identity: string };
@@ -87,8 +89,17 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   captureActive: boolean;
   cameraOn: boolean;
   onLiveFrame: (dataUrl: string) => void;
+  /** URL of the currently-selected dress image (parent looks it up
+   * from bookingDresses keyed on tryOnActiveDressId). When non-null
+   * and a pose is detected, we render the live AR garment overlay
+   * on the local PiP between CatVTON snapshots. */
+  activeDressImageUrl: string | null;
+  /** Numeric ID of the currently-selected dress — included in the
+   * pose-landmark payload we publish to the advisor so they know which
+   * dress to render their own AR overlay with. */
+  activeDressId: number | null;
 }>(function BuyerRoomView(props, ref) {
-  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, cameraOn, onLiveFrame } = props;
+  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, cameraOn, onLiveFrame, activeDressImageUrl, activeDressId } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
   const viewShotRef = useRef<ViewShot | null>(null);
@@ -153,6 +164,12 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   const local = localCamPub && localParticipant
     ? { participant: localParticipant, publication: localCamPub, source: deps.Track.Source.Camera }
     : null;
+
+  // Measured size of the main video frame — used to size the AR overlay
+  // so its affine transform maps normalized [0,1] landmarks into the
+  // correct pixel rect regardless of phone width.
+  const [mainSize, setMainSize] = React.useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
   const emptyMainMessage =
     remoteParticipants.length > 0
       ? 'Advisor joined without video. They may need to enable their camera.'
@@ -177,6 +194,40 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
     room.on('dataReceived', handler as any);
     return () => { room.off('dataReceived', handler as any); };
   }, [room, bookingId, onDressSwitch]);
+
+  // ── Live AR pose-tracking ──
+  // Independent of the 2 s CatVTON loop. Polls /ai/live-pose-landmarks at
+  // ~5 fps so <ARGarmentOverlay> can warp a flat garment PNG onto the
+  // local PiP in between photoreal snapshots. Disabled when the camera
+  // is off, no dress is selected, or the local track isn't published.
+  const livePose = useLivePoseLandmarks({
+    bookingId,
+    captureFrame,
+    enabled: cameraOn && !!activeDressImageUrl && !!localCamPub,
+  });
+
+  // ── Fan-out pose landmarks to the advisor ──
+  // Every time a fresh pose sample lands, broadcast it over the LK data
+  // channel so the advisor's app can render the EXACT same AR overlay on
+  // their copy of the buyer's remote video. Unreliable delivery is fine —
+  // we sample 5×/sec, dropping one is invisible, late delivery would be
+  // worse than miss. The payload is a tiny JSON envelope (≪ 1 KB) so no
+  // chunking is required.
+  React.useEffect(() => {
+    if (!room?.localParticipant) return;
+    if (!livePose.landmarks || activeDressId == null) return;
+    try {
+      const payload = buildPoseLandmarksPayload({
+        bookingId,
+        dressId: activeDressId,
+        landmarks: livePose.landmarks,
+      });
+      room.localParticipant.publishData(payload, { reliable: false } as any);
+    } catch {
+      // best-effort — local AR keeps working even if the advisor never
+      // receives a single sample.
+    }
+  }, [room, bookingId, activeDressId, livePose.landmarks]);
 
   // ── Auto-capture loop ──
   // While the buyer's local video is published AND a dress is active, grab a
@@ -230,88 +281,98 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
     };
   }, [captureActive, localTrackSid, captureDisabled, captureFrame]);
 
+  // Republish each fresh landmark sample over the LK data channel so the
+  // advisor's app can render the matching AR overlay on its copy of the
+  // buyer's remote video. One small JSON envelope (≪15 KB) per sample — no
+  // chunking needed. `reliable: false` because losing one sample is fine;
+  // the next one is ~200 ms away.
+  React.useEffect(() => {
+    if (!room?.localParticipant) return;
+    const lm = livePose.landmarks;
+    if (!lm || !activeDressImageUrl || activeDressId == null) return;
+    try {
+      const payload = buildPoseLandmarksPayload({
+        bookingId,
+        dressId: activeDressId,
+        landmarks: lm,
+      });
+      room.localParticipant.publishData(payload, { reliable: false } as any);
+    } catch {
+      // best-effort; the buyer's local AR is still fine on its own
+    }
+  }, [room, bookingId, livePose.landmarks, activeDressImageUrl, activeDressId]);
+
   return (
-    <View style={{ width: '100%', height: frameHeight }}>
-      {remote ? (
-        <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} zOrder={0} />
-      ) : (
-        <View className="flex-1 items-center justify-center px-8">
-          <Text className="text-white/60 text-[12px] text-center leading-5">{emptyMainMessage}</Text>
-        </View>
-      )}
-
-      {/* Live try-on overlay — covers main video with AI dressed result */}
-      {tryOnOverlayUri ? (
-        <View
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-          pointerEvents="none"
-        >
-          <Image
-            source={{ uri: tryOnOverlayUri }}
-            style={{ width: '100%', height: '100%' }}
-            contentFit="cover"
-          />
-          <View
-            style={{
-              position: 'absolute',
-              top: 10,
-              left: 10,
-              backgroundColor: 'rgba(0,0,0,0.55)',
-              borderRadius: 20,
-              paddingHorizontal: 10,
-              paddingVertical: 5,
-              flexDirection: 'row',
-              alignItems: 'center',
-            }}
-          >
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#4EA35D', marginRight: 6 }} />
-            <Text style={{ color: 'white', fontSize: 9, letterSpacing: 0.5 }}>AI Try-On</Text>
-          </View>
-        </View>
-      ) : tryOnLoading ? (
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.45)',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-          pointerEvents="none"
-        >
-          <ActivityIndicator color="white" size="large" />
-          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 10 }}>
-            Applying dress…
-          </Text>
-        </View>
-      ) : null}
-
-      {/* Visible local PiP. ViewShot wraps it so auto-capture grabs real
-          frames — off-screen LiveKit views don't get painted on either
-          platform, which produced black captures. The PiP itself is the
-          capture surface. */}
+    <View
+      style={{ width: '100%', height: frameHeight }}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout;
+        if (width !== mainSize.w || height !== mainSize.h) {
+          setMainSize({ w: width, h: height });
+        }
+      }}
+    >
+      {/* MAIN view = buyer's own camera with AR dress overlay composited on
+          top. This is the "live mirror" — the buyer sees themselves wearing
+          the currently-selected dress in real time. ViewShot still wraps
+          the raw VideoTrack (without the overlay) so any on-demand HD
+          capture path still gets the un-modified camera frame. */}
       {local ? (
-        <View
-          className="absolute right-4 top-4 border border-white/70 bg-white/90 overflow-hidden"
-          style={{ width: 168, height: 224, borderRadius: 18 }}
-        >
+        <>
           <ViewShot
             ref={viewShotRef}
             options={{ format: 'jpg', quality: 0.85, result: 'tmpfile' }}
-            style={{ width: '100%', height: '100%' }}
+            style={{ width: '100%', height: frameHeight }}
           >
             <deps.VideoTrack
               trackRef={local}
               mirror={true}
-              style={{ width: '100%', height: '100%' }}
-              zOrder={1}
+              style={{ width: '100%', height: frameHeight }}
+              zOrder={0}
             />
           </ViewShot>
+          {/* AR overlay outside the ViewShot so captures don't double-render. */}
+          {mainSize.w > 0 ? (
+            <ARGarmentOverlay
+              dressImageUrl={activeDressImageUrl}
+              landmarks={livePose.landmarks}
+              containerWidth={mainSize.w}
+              containerHeight={mainSize.h || frameHeight}
+              mirror={true}
+              visible={cameraOn}
+            />
+          ) : null}
+        </>
+      ) : (
+        <View className="flex-1 items-center justify-center px-8">
+          <Text className="text-white/60 text-[12px] text-center leading-5">
+            {cameraOn ? 'Starting your camera…' : 'Camera off'}
+          </Text>
         </View>
-      ) : null}
+      )}
+
+      {/* Advisor in a small corner PiP — buyer still needs to see who they
+          are talking to, but the focus is themselves wearing the dress. */}
+      {remote ? (
+        <View
+          className="absolute right-4 top-4 border border-white/70 bg-black/90 overflow-hidden"
+          style={{ width: 112, height: 152, borderRadius: 18 }}
+        >
+          <deps.VideoTrack
+            trackRef={remote}
+            mirror={false}
+            style={{ width: '100%', height: '100%' }}
+            zOrder={1}
+          />
+        </View>
+      ) : (
+        <View
+          className="absolute right-4 top-4 border border-white/70 bg-black/90 overflow-hidden items-center justify-center px-2"
+          style={{ width: 112, height: 152, borderRadius: 18 }}
+        >
+          <Text className="text-white/60 text-[9px] text-center leading-3">{emptyMainMessage}</Text>
+        </View>
+      )}
 
       <View
         className="absolute left-4 right-4 bottom-4 bg-white/95 border border-white/70 px-4 py-3"
@@ -413,6 +474,18 @@ export default function VideoCallScreen() {
 
   useEffect(() => { tryOnPhotoRef.current = tryOnPhotoDataUrl; }, [tryOnPhotoDataUrl]);
   useEffect(() => { bookingIdRef.current = bookingId; }, [bookingId]);
+
+  // Image URL of the currently-selected dress — fed to the AR overlay
+  // inside BuyerRoomView so the live garment warp can render between
+  // CatVTON snapshots. We pull from the same bookingDresses list the
+  // dress-switch UI consumes, so it stays in sync automatically.
+  // TODO: prefer dress.ai_model_url (background-removed) over image_url
+  // once the bookings serializer exposes it.
+  const activeDressImageUrl = useMemo<string | null>(() => {
+    if (tryOnActiveDressId == null) return null;
+    const match = bookingDresses.find((d) => d.id === tryOnActiveDressId);
+    return match?.image_url ?? null;
+  }, [tryOnActiveDressId, bookingDresses]);
 
   const deps = useMemo(() => {
     if (!livekitSupported) return null;
@@ -970,9 +1043,15 @@ export default function VideoCallScreen() {
                       onDressSwitch={stableOnDressSwitch}
                       tryOnOverlayUri={tryOnResultUri}
                       tryOnLoading={tryOnLoading}
-                      captureActive={callState === 'active' && tryOnActiveDressId != null && cameraOn}
+                      // Auto-CatVTON loop is OFF in real-time AR mode — no
+                      // tile renders its output anymore, so the bandwidth
+                      // and GPU minutes were pure waste. Manual HD captures
+                      // still work through buyerRoomHandleRef.captureNow().
+                      captureActive={false}
                       cameraOn={cameraOn}
                       onLiveFrame={stableOnLiveFrame}
+                      activeDressImageUrl={activeDressImageUrl}
+                      activeDressId={tryOnActiveDressId}
                     />
                   </deps.LiveKitRoom>
                 );
