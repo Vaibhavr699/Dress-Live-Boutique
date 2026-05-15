@@ -1,10 +1,17 @@
-from typing import List, Optional, Union, Any
-from pydantic import AnyHttpUrl, field_validator, model_validator
+from typing import List, Optional, Union
+from urllib.parse import urlparse
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _postgres_host_from_uri(uri: str) -> Optional[str]:
+    normalized = uri.replace("postgresql+psycopg2://", "postgresql://", 1)
+    return urlparse(normalized).hostname
+
+
 class Settings(BaseSettings):
-    PROJECT_NAME: str
+    PROJECT_NAME: str = "Dress Live Boutique API"
     BACKEND_CORS_ORIGINS: List[str] = []
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
@@ -16,10 +23,13 @@ class Settings(BaseSettings):
             return v
         return v
 
-    POSTGRES_SERVER: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
+    # Railway / Heroku often expose a single DATABASE_URL. Supabase also works
+    # when pasted as DATABASE_URL instead of the four POSTGRES_* fields below.
+    POSTGRES_SERVER: Optional[str] = None
+    POSTGRES_USER: Optional[str] = None
+    POSTGRES_PASSWORD: Optional[str] = None
+    POSTGRES_DB: Optional[str] = None
+    DATABASE_URL: Optional[str] = None
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
     SUPABASE_URL: Optional[str] = None
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
@@ -60,18 +70,46 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def assemble_db_connection(self) -> "Settings":
+        if self.DATABASE_URL and not self.SQLALCHEMY_DATABASE_URI:
+            self.SQLALCHEMY_DATABASE_URI = self.DATABASE_URL
+
+        db_host = self.POSTGRES_SERVER or (
+            _postgres_host_from_uri(self.SQLALCHEMY_DATABASE_URI)
+            if self.SQLALCHEMY_DATABASE_URI
+            else None
+        )
+
         # Some deployments accidentally set SUPABASE_URL to a Postgres connection string.
         # Normalize it back to the expected HTTPS Supabase project URL.
         if self.SUPABASE_URL and isinstance(self.SUPABASE_URL, str) and self.SUPABASE_URL.startswith("postgres"):
-            if self.POSTGRES_SERVER.endswith(".supabase.co"):
-                self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"
+            if db_host and db_host.endswith(".supabase.co"):
+                self.SUPABASE_URL = f"https://{db_host.split('.', 1)[0]}.supabase.co"
 
         if self.SQLALCHEMY_DATABASE_URI:
-            if not self.SUPABASE_URL and self.POSTGRES_SERVER.endswith(".supabase.co"):
-                self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"
+            if not self.SUPABASE_URL and db_host and db_host.endswith(".supabase.co"):
+                self.SUPABASE_URL = f"https://{db_host.split('.', 1)[0]}.supabase.co"
             return self
 
-        self.SQLALCHEMY_DATABASE_URI = f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
+        missing = [
+            name
+            for name, value in (
+                ("POSTGRES_SERVER", self.POSTGRES_SERVER),
+                ("POSTGRES_USER", self.POSTGRES_USER),
+                ("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD),
+                ("POSTGRES_DB", self.POSTGRES_DB),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "Set DATABASE_URL (or SQLALCHEMY_DATABASE_URI), or all of: "
+                + ", ".join(missing)
+            )
+
+        self.SQLALCHEMY_DATABASE_URI = (
+            f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_SERVER}/{self.POSTGRES_DB}"
+        )
         if not self.SUPABASE_URL and self.POSTGRES_SERVER.endswith(".supabase.co"):
             self.SUPABASE_URL = f"https://{self.POSTGRES_SERVER.split('.', 1)[0]}.supabase.co"
         return self
@@ -83,7 +121,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=True,
-        extra="ignore"
+        extra="ignore",
     )
 
 

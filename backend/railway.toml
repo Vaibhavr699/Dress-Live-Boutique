@@ -1,6 +1,11 @@
 # Railway config for the FastAPI backend.
 # In the service Settings, set Root Directory to `backend` (monorepo).
 # Config path from repo root: /backend/railway.toml
+#
+# Required Variables (Railway → Variables):
+#   SECRET_KEY          — openssl rand -hex 32
+#   DATABASE_URL        — Supabase connection string (URI), or POSTGRES_* × 4 + PROJECT_NAME
+# See backend/.env.example for the full list.
 
 [build]
 builder = "RAILPACK"
