@@ -12,6 +12,10 @@ builder = "RAILPACK"
 watchPatterns = ["/backend/**"]
 
 [deploy]
-startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+# Run Alembic migrations before serving. Alembic is idempotent — if the
+# DB is already at head, it is a no-op. If a migration fails, uvicorn
+# never starts, so we fail loudly rather than serve against a stale
+# schema (e.g. booking.started_at / ended_at added in d5e6f7a8b9c0).
+startCommand = "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/"
 restartPolicyType = "ON_FAILURE"
