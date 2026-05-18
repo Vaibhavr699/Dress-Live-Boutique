@@ -11,6 +11,13 @@
 export const TRYON_SWITCH_TYPE = 'tryon.switch' as const;
 export const TRYON_FRAME_TYPE = 'tryon.frame' as const;
 export const POSE_LANDMARKS_TYPE = 'pose.landmarks' as const;
+/**
+ * Bride → advisor: the short-lived token the advisor uses to subscribe to
+ * the bride's running Decart realtime session. Sent (a) when Decart first
+ * connects on the bride's device and (b) every time a new remote
+ * participant joins, so a late-arriving advisor still gets a token.
+ */
+export const DECART_SUBSCRIBE_TOKEN_TYPE = 'decart.subscribe_token' as const;
 export const TRYON_SCHEMA_VERSION = 1;
 
 // LiveKit publishData has a hard limit of ~15KB per packet. We split the
@@ -318,5 +325,59 @@ export function createTryonFrameReassembler(opts?: {
     reset() {
       pending.clear();
     },
+  };
+}
+
+
+// ── Decart subscribe-token broadcast ──────────────────────────────────────
+// Sent by the bride (only when the Decart pipeline is on) so the advisor
+// can subscribe to the bride's running Decart session and watch the same
+// transformed video. We re-broadcast on every new participant-joined event
+// (and once per token refresh) so an advisor who joins after the bride
+// still receives a usable token without us caching it on a server.
+
+export type DecartSubscribeTokenMessage = {
+  type: typeof DECART_SUBSCRIBE_TOKEN_TYPE;
+  schemaVersion: typeof TRYON_SCHEMA_VERSION;
+  bookingId: number;
+  /** Opaque Decart subscribe token (base64-encoded { sid, ip, port }).
+   * Caller hands this to the SDK's subscribe API; we never decode it
+   * client-side. */
+  token: string;
+};
+
+export function buildDecartSubscribeTokenPayload(params: {
+  bookingId: number;
+  token: string;
+}): Uint8Array {
+  const body: DecartSubscribeTokenMessage = {
+    type: DECART_SUBSCRIBE_TOKEN_TYPE,
+    schemaVersion: TRYON_SCHEMA_VERSION,
+    bookingId: params.bookingId,
+    token: params.token,
+  };
+  return new TextEncoder().encode(JSON.stringify(body));
+}
+
+export function parseDecartSubscribeTokenMessage(raw: string): DecartSubscribeTokenMessage | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const o = parsed as Record<string, unknown>;
+  if (o.type !== DECART_SUBSCRIBE_TOKEN_TYPE) return null;
+  if (o.schemaVersion !== TRYON_SCHEMA_VERSION) return null;
+  const bookingId = o.bookingId;
+  const token = o.token;
+  if (typeof bookingId !== 'number' || !Number.isFinite(bookingId)) return null;
+  if (typeof token !== 'string' || !token.trim()) return null;
+  return {
+    type: DECART_SUBSCRIBE_TOKEN_TYPE,
+    schemaVersion: TRYON_SCHEMA_VERSION,
+    bookingId,
+    token,
   };
 }

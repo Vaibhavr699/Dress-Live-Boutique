@@ -52,18 +52,26 @@ export type UseBuyerDecartVideoResult = {
   /** Set on transition to 'error'. Human-readable; safe to surface in a
    * discreet toast. */
   errorMessage: string | null;
-  /** The Decart-transformed stream. Caller wraps it in a LiveKit
-   * LocalVideoTrack and publishes that to the room exactly once. Stays
-   * stable across dress switches — only its frames change. */
+  /** The Decart-transformed stream. The bride RENDERS this locally so
+   * she sees herself wearing the dress. We do NOT republish it through
+   * LiveKit — react-native-webrtc rejects adding a remote-track as a
+   * sender to a different peer connection ("transceiver could not be
+   * added"). The consultant receives the same transformed stream by
+   * subscribing to Decart with the `subscribeToken` below. */
   transformedStream: any | null;
-  /** The raw camera stream we acquired. Caller may use this for the
-   * fallback (replaceTrack to this stream when Decart fails) and/or to
-   * extract the audio track if it wants to publish mic alongside. */
+  /** The raw camera stream we acquired. Kept so the caller can extract
+   * the audio track if needed (we leave audio handling to LiveKit by
+   * default — see the hook docs). */
   rawStream: any | null;
-  /** The 4 dresses returned by the backend, in booking order. Caller
-   * does not need to load these separately — they were preloaded by the
-   * token request. */
+  /** The 4 dresses returned by the backend, in booking order. */
   dresses: DecartSessionDress[];
+  /** Short-lived token the consultant uses to subscribe to this exact
+   * Decart session and watch the same transformed frames. The bride is
+   * expected to fan this out over LiveKit's data channel as soon as it
+   * lands; null until Decart's handshake completes. The SDK exposes
+   * this via realtime.subscribeToken (see
+   * @decartai/sdk/dist/realtime/subscribe-client.d.ts). */
+  subscribeToken: string | null;
   /** Apply a dress. Looks up `dressId` in the preloaded set, then calls
    * realtime.set with the image + prompt. Returns false if the id is
    * unknown (e.g. catalogue race) so the caller can ignore it. */
@@ -114,6 +122,7 @@ export function useBuyerDecartVideo({
   const [transformedStream, setTransformedStream] = useState<any | null>(null);
   const [rawStream, setRawStream] = useState<any | null>(null);
   const [dresses, setDresses] = useState<DecartSessionDress[]>([]);
+  const [subscribeToken, setSubscribeToken] = useState<string | null>(null);
 
   const realtimeRef = useRef<any>(null);
   const dressMapRef = useRef<Map<number, DecartSessionDress>>(new Map());
@@ -204,6 +213,11 @@ export function useBuyerDecartVideo({
           onRemoteStream: (s: any) => {
             if (cancelled || !mountedRef.current) return;
             setTransformedStream(s);
+            // subscribeToken is populated AFTER connect resolves, but the
+            // onRemoteStream callback can also fire after. Snapshot it
+            // here so consumers see it the moment the first frame lands.
+            const tok = (realtimeRef.current ?? realtime)?.subscribeToken ?? null;
+            if (tok) setSubscribeToken(tok);
             setStatus('connected');
           },
         });
@@ -213,6 +227,13 @@ export function useBuyerDecartVideo({
           return;
         }
         realtimeRef.current = realtime;
+        // After connect resolves the realtime client has its subscribeToken
+        // populated. Pick it up here in case onRemoteStream fires later
+        // (the consultant's subscribe call needs this token even before
+        // the bride sees her first transformed frame).
+        if (realtime.subscribeToken) {
+          setSubscribeToken(realtime.subscribeToken);
+        }
         realtime.on('error', (err: any) => {
           if (!mountedRef.current) return;
           setStatus('error');
@@ -241,6 +262,7 @@ export function useBuyerDecartVideo({
         return null;
       });
       setTransformedStream(null);
+      setSubscribeToken(null);
       setDresses([]);
       dressMapRef.current = new Map();
       setStatus('idle');
@@ -291,6 +313,7 @@ export function useBuyerDecartVideo({
     transformedStream,
     rawStream,
     dresses,
+    subscribeToken,
     switchDress,
     clearDress,
   };
