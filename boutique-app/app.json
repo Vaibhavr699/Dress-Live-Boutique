@@ -5,7 +5,7 @@
     "version": "1.0.1",
     "owner": "vaibhavr696",
     "orientation": "portrait",
-    "icon": "./assets/images/dress-live-seller.png",
+    "icon": "./assets/images/seller_app_logo.png",
     "scheme": "dress-live-partner",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -27,7 +27,7 @@
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#F4DCDC",
-        "foregroundImage": "./assets/images/dress-live-seller-foreground.png",
+        "foregroundImage": "./assets/images/seller_app_logo.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
@@ -49,7 +49,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/dress-live-seller.png",
+          "image": "./assets/images/seller_app_logo.png",
           "imageWidth": 220,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
@@ -61,7 +61,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/dress-live-seller-foreground.png",
+          "icon": "./assets/images/seller_app_logo.png",
           "color": "#1A1A1A"
         }
       ],
