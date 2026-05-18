@@ -25,6 +25,8 @@ import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
 import { buildPoseLandmarksPayload, buildTryonFrameChunks, parseTryonSwitchMessage } from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { ensureLiveKitRegistered } from '@shared/livekitInit';
+import { isBuyerDecartEnabled } from '@shared/decartConfig';
+import { useBuyerDecartVideo } from '@shared/hooks/useBuyerDecartVideo';
 import { ARGarmentOverlay } from '../../components/ar/ARGarmentOverlay';
 import { useLivePoseLandmarks } from '../../components/ar/useLivePoseLandmarks';
 
@@ -102,6 +104,68 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, cameraOn, onLiveFrame, activeDressImageUrl, activeDressId } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
+
+  // ── Decart Lucy 2.1 VTON pipeline (feature-flagged) ───────────────────
+  // When the bride env opts in, the local camera publishing is owned by
+  // this hook rather than by LiveKit's auto-publish. The transformed
+  // stream becomes the bride's single LiveKit video track for the entire
+  // call; dress switches just call realtime.set() on that same track.
+  //
+  // Flag-off behavior is the legacy pose-warp + PNG overlay path: this
+  // hook returns status='idle' immediately and does no work.
+  const decartEnabled = isBuyerDecartEnabled();
+  const decart = useBuyerDecartVideo({ enabled: decartEnabled && cameraOn, bookingId });
+
+  // Publish the Decart-transformed stream to LiveKit as our local video
+  // track. One publishTrack call per session — never replaced. The track
+  // object outlives every dress switch (Decart just changes the frames
+  // flowing through it).
+  React.useEffect(() => {
+    if (!decartEnabled || !room?.localParticipant) return;
+    const stream = decart.transformedStream;
+    if (!stream) return;
+    const mediaTrack = stream.getVideoTracks?.()[0];
+    if (!mediaTrack) return;
+
+    let publishedTrack: any = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const lkClient = require('livekit-client');
+        publishedTrack = new lkClient.LocalVideoTrack(mediaTrack);
+        if (cancelled) {
+          try { publishedTrack.stop(); } catch {}
+          return;
+        }
+        await room.localParticipant.publishTrack(publishedTrack);
+      } catch (e) {
+        if (__DEV__) console.warn('[decart] publishTrack failed', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (publishedTrack && room?.localParticipant) {
+        try { room.localParticipant.unpublishTrack(publishedTrack); } catch {}
+        try { publishedTrack.stop(); } catch {}
+      }
+    };
+  }, [decartEnabled, room, decart.transformedStream]);
+
+  // Forward dress switches into the Decart session. The data-channel
+  // handler below sets `activeDressId` via onDressSwitch → parent state →
+  // this prop, so reacting on activeDressId catches both consultant taps
+  // and parent-initiated state changes (e.g. if we ever add a bride-side
+  // dress picker).
+  React.useEffect(() => {
+    if (!decartEnabled || decart.status !== 'connected') return;
+    if (activeDressId == null) {
+      decart.clearDress();
+      return;
+    }
+    decart.switchDress(activeDressId);
+  }, [decartEnabled, decart.status, activeDressId, decart.switchDress, decart.clearDress]);
   const viewShotRef = useRef<ViewShot | null>(null);
   const onLiveFrameRef = useRef(onLiveFrame);
   React.useEffect(() => { onLiveFrameRef.current = onLiveFrame; }, [onLiveFrame]);
@@ -203,7 +267,10 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   const livePose = useLivePoseLandmarks({
     bookingId,
     captureFrame,
-    enabled: cameraOn && !!activeDressImageUrl && !!localCamPub,
+    // Skip pose detection entirely when Decart is doing the try-on —
+    // the dress is already baked into the video stream by the server,
+    // there's nothing left to warp client-side.
+    enabled: !decartEnabled && cameraOn && !!activeDressImageUrl && !!localCamPub,
   });
 
   // ── Fan-out pose landmarks to the advisor ──
@@ -214,6 +281,7 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   // worse than miss. The payload is a tiny JSON envelope (≪ 1 KB) so no
   // chunking is required.
   React.useEffect(() => {
+    if (decartEnabled) return;                 // consultant doesn't need landmarks when dress is in the video itself
     if (!room?.localParticipant) return;
     if (!livePose.landmarks || activeDressId == null) return;
     try {
@@ -227,7 +295,7 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
       // best-effort — local AR keeps working even if the advisor never
       // receives a single sample.
     }
-  }, [room, bookingId, activeDressId, livePose.landmarks]);
+  }, [decartEnabled, room, bookingId, activeDressId, livePose.landmarks]);
 
   // ── Auto-capture loop ──
   // While the buyer's local video is published AND a dress is active, grab a
@@ -287,6 +355,7 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   // chunking needed. `reliable: false` because losing one sample is fine;
   // the next one is ~200 ms away.
   React.useEffect(() => {
+    if (decartEnabled) return;                 // see note above
     if (!room?.localParticipant) return;
     const lm = livePose.landmarks;
     if (!lm || !activeDressImageUrl || activeDressId == null) return;
@@ -300,7 +369,7 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
     } catch {
       // best-effort; the buyer's local AR is still fine on its own
     }
-  }, [room, bookingId, livePose.landmarks, activeDressImageUrl, activeDressId]);
+  }, [decartEnabled, room, bookingId, livePose.landmarks, activeDressImageUrl, activeDressId]);
 
   return (
     <View
@@ -331,8 +400,11 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
               zOrder={0}
             />
           </ViewShot>
-          {/* AR overlay outside the ViewShot so captures don't double-render. */}
-          {mainSize.w > 0 ? (
+          {/* AR overlay outside the ViewShot so captures don't double-render.
+              Hidden when Decart is on — the dress is baked into the published
+              video track already, so a second client-side overlay would double
+              up and the bride would see herself wearing two dresses. */}
+          {!decartEnabled && mainSize.w > 0 ? (
             <ARGarmentOverlay
               dressImageUrl={activeDressImageUrl}
               landmarks={livePose.landmarks}
@@ -1025,13 +1097,19 @@ export default function VideoCallScreen() {
                     </View>
                   );
                 }
+                // When the bride's Decart pipeline is enabled, BuyerRoomView
+                // publishes the transformed track manually. Tell LiveKit not
+                // to auto-publish the raw camera, otherwise we'd briefly
+                // ship the un-transformed feed before Decart's onRemoteStream
+                // lands, and the consultant would see it.
+                const decartOwnsVideo = isBuyerDecartEnabled();
                 return (
                   <deps.LiveKitRoom
                     serverUrl={tokenData.url}
                     token={tokenData.token}
                     connect={true}
                     audio={micOn}
-                    video={cameraOn}
+                    video={cameraOn && !decartOwnsVideo}
                     options={{ adaptiveStream: { pixelDensity: 'screen' } }}
                     onConnected={() => { setCallState('active'); setLkConnected(true); }}
                   >
