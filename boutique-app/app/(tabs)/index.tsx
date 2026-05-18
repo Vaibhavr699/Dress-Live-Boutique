@@ -1,5 +1,13 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+  withDelay,
+} from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -293,6 +301,100 @@ function bookingStatusLabel(status: BookingStatus) {
   }
 }
 
+
+// Three-dot ping animation used while the dashboard data is loading. Each
+// dot pulses scale + opacity on a staggered phase, looping forever — much
+// more "alive" than a single spinner against the blank screen the user
+// otherwise saw during the post-login fetch.
+function PulsingDot({ delay }: { delay: number }) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = withDelay(
+      delay,
+      withRepeat(
+        withSequence(withTiming(1, { duration: 480 }), withTiming(0, { duration: 480 })),
+        -1,
+        false,
+      ),
+    );
+  }, [delay, progress]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.35 + progress.value * 0.65,
+    transform: [{ scale: 0.8 + progress.value * 0.4 }],
+  }));
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: '#111111',
+          marginHorizontal: 5,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+function DashboardLoader({ topInset }: { topInset: number }) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 32,
+        paddingTop: topInset,
+      }}
+    >
+      <Text
+        style={{
+          color: '#111111',
+          fontSize: 18,
+          fontWeight: '700',
+          letterSpacing: 4,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Shop Dashboard
+      </Text>
+      <View
+        style={{
+          width: 84,
+          height: 2,
+          backgroundColor: '#111111',
+          opacity: 0.14,
+          marginTop: 20,
+          marginBottom: 28,
+        }}
+      />
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <PulsingDot delay={0} />
+        <PulsingDot delay={160} />
+        <PulsingDot delay={320} />
+      </View>
+      <Text
+        style={{
+          color: '#666666',
+          fontSize: 11,
+          letterSpacing: 1.8,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+          marginTop: 22,
+        }}
+      >
+        Loading your shop
+      </Text>
+    </View>
+  );
+}
+
 export default function BoutiqueDashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -331,9 +433,12 @@ export default function BoutiqueDashboard() {
 
   const fetchDashboardData = useCallback(async () => {
     if (!boutiqueId) {
+      // Don't dismiss the loader yet — the user store is rehydrating
+      // from SecureStore and boutiqueId will arrive shortly. The dedicated
+      // useEffect below re-runs this fetch the moment boutiqueId lands,
+      // so the loader stays up exactly until real data is in hand.
       setDresses([]);
       setBookings([]);
-      setLoading(false);
       return;
     }
 
@@ -353,9 +458,10 @@ export default function BoutiqueDashboard() {
 
   const fetchBoutiqueVisibility = useCallback(async () => {
     if (!boutiqueId) {
+      // Same reasoning as fetchDashboardData — wait for the user store to
+      // rehydrate rather than rendering an empty dashboard.
       setIsStoreVisible(false);
       setBoutique(null);
-      setBoutiqueLoading(false);
       return;
     }
 
@@ -368,6 +474,33 @@ export default function BoutiqueDashboard() {
     } finally {
       setBoutiqueLoading(false);
     }
+  }, [boutiqueId]);
+
+  // Re-run the dashboard fetches the moment the auth store rehydrates and
+  // boutiqueId lands. Without this, the post-login race (Dashboard mounts
+  // first, useFocusEffect fires, boutiqueId is still null, early-returns
+  // never re-trigger) would leave the user staring at a blank dashboard
+  // until they tab away and come back. The loader stays up until both
+  // fetches complete because we no longer setLoading(false) on the
+  // no-boutiqueId branch above.
+  useEffect(() => {
+    if (!boutiqueId) return;
+    void fetchDashboardData();
+    void fetchBoutiqueVisibility();
+  }, [boutiqueId, fetchDashboardData, fetchBoutiqueVisibility]);
+
+  // Safety valve: if the user account genuinely has no boutique attached
+  // (i.e. boutiqueId stays null after the store has fully rehydrated), we
+  // would otherwise show a loader forever. After 3 s of no boutiqueId,
+  // give up and surface the empty state so the screen is at least
+  // navigable.
+  useEffect(() => {
+    if (boutiqueId) return;
+    const t = setTimeout(() => {
+      setLoading(false);
+      setBoutiqueLoading(false);
+    }, 3000);
+    return () => clearTimeout(t);
   }, [boutiqueId]);
 
   const refreshCurrentUser = useCallback(async () => {
@@ -468,54 +601,7 @@ export default function BoutiqueDashboard() {
   const isInitialLoading = loading || boutiqueLoading;
 
   if (isInitialLoading) {
-    return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: '#FFFFFF',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: 32,
-          paddingTop: insets.top,
-        }}
-      >
-        <Text
-          style={{
-            color: '#111111',
-            fontSize: 18,
-            fontWeight: '700',
-            letterSpacing: 4,
-            textTransform: 'uppercase',
-            textAlign: 'center',
-          }}
-        >
-          Shop Dashboard
-        </Text>
-        <View
-          style={{
-            width: 84,
-            height: 2,
-            backgroundColor: '#111111',
-            opacity: 0.14,
-            marginTop: 20,
-            marginBottom: 22,
-          }}
-        />
-        <ActivityIndicator color="#111111" />
-        <Text
-          style={{
-            color: '#666666',
-            fontSize: 12,
-            letterSpacing: 1,
-            textTransform: 'uppercase',
-            textAlign: 'center',
-            marginTop: 18,
-          }}
-        >
-          Loading your shop
-        </Text>
-      </View>
-    );
+    return <DashboardLoader topInset={insets.top} />;
   }
 
   return (
