@@ -20,8 +20,9 @@ import { Image } from 'expo-image';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
-import { buildTryonSwitchPayload } from '@shared/videoCallSignals';
+import { buildTryonSwitchPayload, parseDecartSubscribeTokenMessage } from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
+import { useConsultantDecartSubscribe } from '@shared/hooks/useConsultantDecartSubscribe';
 import { ARGarmentOverlay } from '../components/ar/ARGarmentOverlay';
 import { useReceivedPoseLandmarks } from '../components/ar/useReceivedPoseLandmarks';
 
@@ -128,6 +129,34 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
     activeDressId,
   });
 
+  // ── Receive the bride's Decart subscribe token ──────────────────────
+  // When the bride has Decart turned on, her app publishes a
+  // DECART_SUBSCRIBE_TOKEN message over the LK data channel. We stash
+  // the latest token here and the useConsultantDecartSubscribe hook
+  // turns it into a Decart-transformed stream we can render in place
+  // of (or alongside) the LK remote video. When Decart is OFF on the
+  // bride's side, no token ever arrives → hook stays idle → we fall
+  // back to the existing LK-remote + pose-warp overlay path.
+  const [decartSubscribeToken, setDecartSubscribeToken] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!room) return;
+    const handler = (payload: Uint8Array) => {
+      try {
+        const raw = new TextDecoder().decode(payload);
+        const msg = parseDecartSubscribeTokenMessage(raw);
+        if (!msg || msg.bookingId !== bookingId) return;
+        setDecartSubscribeToken(msg.token);
+      } catch {
+        // Other message types (pose landmarks, try-on frames) are
+        // handled by their own listeners — silently ignore here.
+      }
+    };
+    room.on('dataReceived', handler as any);
+    return () => { room.off('dataReceived', handler as any); };
+  }, [room, bookingId]);
+
+  const decartSubscribe = useConsultantDecartSubscribe({ token: decartSubscribeToken });
+
   // Measured size of the remote video container — drives the AR overlay's
   // affine transform so the warp scales to whatever LiveKit is painting at.
   const [remoteSize, setRemoteSize] = React.useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -168,7 +197,37 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
         }
       }}
     >
-      {remote ? (
+      {/* Main view priority:
+          1. Decart-subscribed stream (bride has Decart turned on AND
+             we successfully subscribed) — render straight from
+             RTCView, NO pose-warp overlay (dress is baked into the
+             stream already).
+          2. LK remote camera + pose-warp overlay (legacy path) — for
+             when the bride is on the older app version or Decart is
+             off on her side.
+          3. Empty-state placeholder. */}
+      {decartSubscribe.subscribedStream ? (
+        (() => {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const RTCView = require('@livekit/react-native-webrtc').RTCView as React.ComponentType<any>;
+          const url = decartSubscribe.subscribedStream.toURL?.();
+          return url ? (
+            <RTCView
+              streamURL={url}
+              style={{ width: '100%', height: frameHeight }}
+              objectFit="cover"
+              mirror={false}
+              zOrder={0}
+            />
+          ) : (
+            <View className="bg-black w-full items-center justify-center px-6" style={{ height: frameHeight }}>
+              <Text className="text-white/60 text-[11px] text-center leading-5">
+                AI try-on stream warming up…
+              </Text>
+            </View>
+          );
+        })()
+      ) : remote ? (
         <>
           <deps.VideoTrack trackRef={remote} mirror={false} style={{ width: '100%', height: frameHeight }} zOrder={0} />
           {/* AR garment overlay rendered locally from the buyer's
@@ -189,7 +248,13 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
         </>
       ) : (
         <View className="bg-black w-full items-center justify-center px-6" style={{ height: frameHeight }}>
-          <Text className="text-white/50 text-[11px] text-center leading-5">{emptyMainMessage}</Text>
+          <Text className="text-white/50 text-[11px] text-center leading-5">
+            {decartSubscribe.status === 'connecting'
+              ? 'Connecting AI try-on stream from customer…'
+              : decartSubscribe.status === 'error'
+              ? `AI try-on stream error · ${decartSubscribe.errorMessage ?? 'unknown'}`
+              : emptyMainMessage}
+          </Text>
         </View>
       )}
 
