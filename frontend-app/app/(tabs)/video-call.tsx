@@ -138,7 +138,16 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
           try { publishedTrack.stop(); } catch {}
           return;
         }
-        await room.localParticipant.publishTrack(publishedTrack);
+        // CRITICAL: tag the publication as source=Camera. Without this,
+        // LiveKit defaults to source=Unknown, and the consultant's
+        // useTracks([Track.Source.Camera]) query never finds the bride's
+        // video — so neither side sees her transformed feed. Same reason
+        // the local PiP query (publication.source === Camera) returns null
+        // and shows a blank box.
+        await room.localParticipant.publishTrack(publishedTrack, {
+          source: deps.Track.Source.Camera,
+          name: 'decart-vton',
+        });
       } catch (e) {
         if (__DEV__) console.warn('[decart] publishTrack failed', e);
       }
@@ -151,7 +160,7 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
         try { publishedTrack.stop(); } catch {}
       }
     };
-  }, [decartEnabled, room, decart.transformedStream]);
+  }, [decartEnabled, room, decart.transformedStream, deps]);
 
   // Forward dress switches into the Decart session. The data-channel
   // handler below sets `activeDressId` via onDressSwitch → parent state →
@@ -445,6 +454,23 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
           <Text className="text-white/60 text-[9px] text-center leading-3">{emptyMainMessage}</Text>
         </View>
       )}
+
+      {/* Decart diagnostic banner — only when feature flag is on. Shows
+          the current pipeline state so when the bride says "video isn't
+          working", we know whether the token fetch / Decart connect /
+          publish step failed. Removed entirely in the legacy code path. */}
+      {decartEnabled && decart.status !== 'connected' ? (
+        <View
+          className="absolute left-4 right-4 top-4 bg-black/80 border border-white/30 px-3 py-2"
+          style={{ borderRadius: 12 }}
+        >
+          <Text className="text-white text-[10px] tracking-[1.5px] uppercase" numberOfLines={2}>
+            {decart.status === 'error'
+              ? `AI try-on offline: ${decart.errorMessage ?? 'unknown'}`
+              : `AI try-on · ${decart.status}…`}
+          </Text>
+        </View>
+      ) : null}
 
       <View
         className="absolute left-4 right-4 bottom-4 bg-white/95 border border-white/70 px-4 py-3"
