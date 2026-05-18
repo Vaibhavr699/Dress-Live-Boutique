@@ -43,8 +43,48 @@ class Settings(BaseSettings):
     # Access token TTL for video rooms (minutes). Fittings often run 30–60+ minutes.
     LIVEKIT_TOKEN_TTL_MINUTES: int = 90
 
+    # Public base URL of the Next.js bride web-call app. Used to build the
+    # tokenized link sent in confirmation/reminder emails:
+    #   {WEB_CALL_BASE_URL}/call/{booking_id}?token=<JWT>
+    # Empty in dev = no link is added to emails (RN flow keeps working).
+    WEB_CALL_BASE_URL: Optional[str] = None
+
+    # LiveKit signs webhook requests with the same API key/secret as room
+    # tokens. The receiver verifies the Authorization header — no extra
+    # secret needed. Override per-host only if you split LiveKit projects.
+
     FASHN_API_KEY: Optional[str] = None
     FASHN_TIMEOUT_SECONDS: int = 120
+
+    # ── Decart realtime VTON (Lucy 2.1) ──────────────────────────────────
+    # Server-side only. `DECART_API_KEY` is the long-lived `dct_*` / `sk_*`
+    # secret used to mint short-lived per-session client tokens (`ek_*`)
+    # that the browser/RN client then hands to Decart's realtime SDK.
+    # Never ship `DECART_API_KEY` to a client.
+    DECART_API_KEY: Optional[str] = None
+    DECART_REALTIME_MODEL: str = "lucy-2.1-vton"
+    DECART_API_BASE: str = "https://api.decart.ai/v1"
+    # TTL for the per-session client token. Decart hard-caps `expiresIn`
+    # at 3600s (1 hour) — values above will 400. This only needs to last
+    # long enough for the bride to JOIN; once the realtime SDK has
+    # connected, session duration is governed by `maxSessionDuration`
+    # below, not by token TTL. Bride pulls a fresh one each click of Join.
+    DECART_CLIENT_TOKEN_TTL_MINUTES: int = 60
+    # Hard cap for one realtime session, in seconds. Decart enforces this
+    # server-side via `constraints.realtime.maxSessionDuration` — even if
+    # the room never finishes, Decart will close the stream at this limit.
+    DECART_MAX_SESSION_SECONDS: int = 60 * 90  # 90 min
+    # Daily USD ceiling across ALL Decart sessions. Once today's estimated
+    # spend reaches this, new sessions are refused until UTC midnight.
+    # Set 0 to disable the cap.
+    DECART_DAILY_BUDGET_USD: float = 100.0
+    # Per-booking session-second cap so one runaway client can't drain
+    # the daily budget alone. 0 disables.
+    DECART_PER_BOOKING_SECONDS_LIMIT: int = 60 * 90  # 90 min
+    # Estimated active-render cost ($/s) used by the budget tracker. The
+    # actual figure comes from Decart's billing page — tune after first
+    # invoices land. Lucy 2.1 VTON pay-as-you-go is roughly $0.02/s.
+    DECART_COST_PER_SECOND_USD: float = 0.02
 
     BODYGRAM_API_KEY: Optional[str] = None
     BODYGRAM_ORG_ID: Optional[str] = None

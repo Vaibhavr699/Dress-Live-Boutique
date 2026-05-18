@@ -3,6 +3,9 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+# (PostCallDress / PostCallView are defined further down — they piggy-back
+# on the existing BookingBoutiqueSummary.)
+
 
 class BookingBase(BaseModel):
     appointment_type: Literal["video", "in_store"]
@@ -92,3 +95,33 @@ class BookingView(Booking):
     @classmethod
     def default_dress_ids(cls, value):
         return value or []
+
+
+class PostCallDress(BaseModel):
+    """Single dress option on the post-call selection screen. `image_url`
+    is the catalogue photo (same as on the wishlist); `price` lets the
+    UI show it without a second fetch before the bride taps Buy."""
+    id: int
+    name: str
+    price: float
+    image_url: Optional[str] = None
+    colors: Optional[str] = None
+    sizes: Optional[str] = None
+
+
+class PostCallView(BaseModel):
+    """Payload for the bride's post-call dress-selection screen.
+
+    Returned by `GET /api/v1/bookings/{id}/post-call`. Includes booking
+    timing (so the UI can show "Your fitting at Boutique X — 32 min")
+    and the 4 dresses she tried. Tapping a dress hands off to the
+    existing checkout flow (handled client-side; this endpoint does NOT
+    create the order)."""
+    booking_id: int
+    status: str
+    boutique: Optional[BookingBoutiqueSummary] = None
+    scheduled_for: Optional[str] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    duration_seconds: Optional[int] = None
+    dresses: List[PostCallDress] = Field(default_factory=list)

@@ -242,8 +242,10 @@ export default function RootLayout() {
         const data = response.notification.request.content.data as {
           type?: string | null;
           action_type?: string | null;
+          kind?: string | null;
           bookingId?: number | string | null;
           booking_id?: number | string | null;
+          post_call?: boolean | null;
         };
         const action = data?.action_type ?? data?.type;
         // Tap on an incoming video-call push → jump straight into the call room
@@ -258,6 +260,18 @@ export default function RootLayout() {
           }
         }
         if (action === 'booking') {
+          // `booking_completed` push from the LiveKit `room_finished` webhook
+          // carries `post_call: true` — deep-link to the dress-picker rather
+          // than the generic bookings tab.
+          const isPostCall = data?.post_call === true || data?.kind === 'booking_completed';
+          if (isPostCall) {
+            const rawId = data?.bookingId ?? data?.booking_id ?? null;
+            const id = typeof rawId === 'number' ? rawId : Number(rawId);
+            if (Number.isFinite(id)) {
+              router.push({ pathname: '/post-call', params: { bookingId: String(id) } } as any);
+              return;
+            }
+          }
           router.push('/(tabs)/booking');
         }
       });
@@ -315,6 +329,8 @@ export default function RootLayout() {
         <Stack.Screen name="booking-history" options={{ gestureEnabled: true }} />
         <Stack.Screen name="notifications" options={{ gestureEnabled: true }} />
         <Stack.Screen name="video-call-summary" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="post-call" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="decart-spike" options={{ gestureEnabled: true, headerShown: false }} />
         <Stack.Screen
           name="modal"
           options={{ presentation: 'modal', animation: 'slide_from_bottom', title: 'Modal', headerShown: true }}

@@ -26,6 +26,9 @@ export default function ProfileScreen() {
     { label: 'MY MEASUREMENTS', route: '/profile-my-measurements' },
     { label: 'PAYMENT METHODS', route: '/profile-payment-methods' },
     // { label: 'BOOKING HISTORY', route: '/booking-history' },
+    // TEMP: dev-only entry to the Decart Lucy VTON 2.1 spike. Remove before
+    // shipping — this is just so we can reach /decart-spike without a deep link.
+    { label: 'DECART SPIKE (DEV)', route: '/decart-spike' },
   ];
 
   const handleLogout = () => {

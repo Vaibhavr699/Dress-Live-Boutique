@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Optional, cast
+from typing import Any, List, Literal, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -10,14 +10,22 @@ from app.core.config import settings
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_user import crud_user
 from app.models.booking import Booking
+from app.models.dress import Dress
 from app.models.user import User
 from app.schemas.video_call import (
+    DecartCredentials,
+    DecartTokenResponse,
     IncomingVideoRing,
     IncomingVideoRingResponse,
     LiveKitTokenResponse,
+    SessionDress,
     VideoRingBookingBody,
+    WebJoinResponse,
 )
+from app.services import decart as decart_service
+from app.services import decart_budget
 from app.services import notifications as notifications_service
+from app.utils.email_join_token import JoinTokenError, verify_join_token
 from app.utils.scheduled_for import parse_scheduled_for
 
 try:
@@ -159,6 +167,11 @@ def get_livekit_token(
         .to_jwt()
     )
 
+    # First successful token issuance for this booking = session has begun.
+    # Idempotent: subsequent joins leave `started_at` alone. This is the
+    # signal the LiveKit `room_finished` webhook later subtracts from.
+    crud_booking.mark_session_started(db, db_obj=booking)
+
     # When the buyer pulls a token, tell the partner the customer is waiting.
     # Best-effort — we never let a push failure block the token from being issued.
     if current_user.role == "buyer":
@@ -299,4 +312,266 @@ def get_incoming_video_ring(
             scheduled_for=booking.scheduled_for,
             rung_at=booking.video_ring_at,
         )
+    )
+
+
+# ── Decart realtime VTON ────────────────────────────────────────────────
+
+def _parse_selected_dress_ids(raw: Optional[str]) -> List[int]:
+    """`Booking.selected_dress_ids` is stored as a comma-separated string
+    (legacy schema). Parse it into a clean, de-duplicated, order-preserving
+    list of ints. Silently skips garbage tokens — try-on must not 500 over
+    a stray space."""
+    if not raw:
+        return []
+    seen: set[int] = set()
+    out: List[int] = []
+    for token in str(raw).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            dress_id = int(token)
+        except ValueError:
+            continue
+        if dress_id in seen:
+            continue
+        seen.add(dress_id)
+        out.append(dress_id)
+    return out
+
+
+def _build_dress_prompt(dress: Dress) -> str:
+    """Compose the short text prompt Decart pairs with the reference
+    image. Name alone is usually enough; description sharpens the result
+    when present. Trimmed to a sensible length so we don't waste tokens
+    on full marketing copy."""
+    name = (dress.name or "").strip()
+    desc = (dress.description or "").strip()
+    if not name and not desc:
+        return "wedding dress"
+    if name and desc:
+        text = f"{name} — {desc}"
+    else:
+        text = name or desc
+    return text[:240]
+
+
+def _load_session_dresses(db: Session, booking: Booking) -> List[SessionDress]:
+    """Hydrate the dress IDs stored on the booking into the shape the
+    bride client preloads + the consultant SDK references."""
+    ids = _parse_selected_dress_ids(booking.selected_dress_ids)
+    if not ids:
+        return []
+
+    rows = db.query(Dress).filter(Dress.id.in_(ids)).all()
+    by_id = {d.id: d for d in rows}
+
+    out: List[SessionDress] = []
+    for did in ids:                                   # preserve booking order
+        d = by_id.get(did)
+        if d is None:                                 # dress deleted since booking
+            continue
+        out.append(SessionDress(
+            id=d.id,
+            name=d.name,
+            image_url=d.image_url,
+            prompt=_build_dress_prompt(d),
+        ))
+    return out
+
+
+@router.get("/decart-token", response_model=DecartTokenResponse)
+async def get_decart_client_token(
+    *,
+    db: Session = Depends(deps.get_db),
+    booking_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Mint a short-lived Decart realtime client token for a video booking.
+
+    Buyer-only. The consultant's client never runs Decart — the bride
+    renders the VTON output on her device and publishes it to LiveKit,
+    so both parties see the same composited frame.
+
+    Validations (defense in depth):
+      - Caller is the booking's buyer.
+      - Booking is a `video` appointment in `accepted` status.
+      - Join window passes (`_assert_join_window` — currently disabled in
+        the existing /token endpoint; whatever rule that helper enforces
+        applies here too).
+      - Decart budget guard allows a new session for this booking.
+
+    Returns the `ek_*` short-lived token + the 4 selected dresses (with
+    image URLs preloaded by the client before the call starts).
+    """
+    booking = _assert_booking_video_participant(db, booking_id, current_user)
+    if current_user.role != "buyer":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the customer client runs the realtime try-on. "
+                   "Consultants don't receive a Decart token.",
+        )
+    _assert_join_window(booking)
+
+    decision = decart_budget.check_budget(booking_id=booking.id)
+    if not decision.allowed:
+        # 402 Payment Required communicates "budget exhausted" more
+        # precisely than 503; the client should fall back to a Decart-less
+        # plain video call rather than retry.
+        raise HTTPException(status_code=402, detail=decision.reason or "Decart budget exhausted.")
+
+    dresses = _load_session_dresses(db, booking)
+
+    try:
+        token = await decart_service.mint_client_token()
+    except decart_service.DecartConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except decart_service.DecartUpstreamError as exc:
+        logger.warning("Decart upstream error for booking %s: %s", booking.id, exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Realtime try-on provider is unavailable. The call can "
+                   "still proceed without virtual try-on.",
+        )
+
+    return DecartTokenResponse(
+        api_key=token.api_key,
+        expires_at=token.expires_at,
+        model=token.model,
+        max_session_seconds=int(settings.DECART_MAX_SESSION_SECONDS),
+        dresses=dresses,
+    )
+
+
+def _mint_livekit_token_for_booking(booking: Booking, user: User) -> LiveKitTokenResponse:
+    """Shared LiveKit-token construction so `/token` and `/web-join` stay
+    in sync. Identity carries role so consultant/bride map to distinct
+    participants in the room."""
+    if not settings.LIVEKIT_URL or not settings.LIVEKIT_API_KEY or not settings.LIVEKIT_API_SECRET:
+        raise HTTPException(status_code=500, detail="LiveKit is not configured on the server.")
+    if livekit_api is None:
+        raise HTTPException(status_code=500, detail="LiveKit server SDK is not installed.")
+
+    room = f"booking-{booking.id}"
+    identity = f"{user.role}-{user.id}"
+    token = (
+        livekit_api.AccessToken(settings.LIVEKIT_API_KEY, settings.LIVEKIT_API_SECRET)
+        .with_identity(identity)
+        .with_name(user.full_name or user.email or identity)
+        .with_ttl(timedelta(minutes=max(5, settings.LIVEKIT_TOKEN_TTL_MINUTES)))
+        .with_grants(livekit_api.VideoGrants(room_join=True, room=room))
+        .to_jwt()
+    )
+    return LiveKitTokenResponse(url=settings.LIVEKIT_URL, token=token, room=room, identity=identity)
+
+
+@router.get("/web-join", response_model=WebJoinResponse)
+async def web_join(
+    *,
+    db: Session = Depends(deps.get_db),
+    booking_id: int,
+    token: str,
+) -> Any:
+    """Single endpoint the Next.js bride page hits with her email-link JWT.
+
+    Returns everything she needs in one round-trip:
+      - LiveKit credentials (joins the `booking-{id}` room)
+      - Decart credentials  (opens the realtime VTON stream — only if
+        the server has DECART_API_KEY set; web page falls back to plain
+        video otherwise)
+      - The 4 dresses (with image URLs to preload before "Join" becomes
+        clickable)
+
+    Auth: the join JWT is the ONLY auth — no Authorization header. The
+    token is verified, the embedded `booking_id` is matched against the
+    URL param, and the user_id is matched against the booking's buyer.
+    A leaked-but-not-tampered token can only ever join the one booking
+    it was minted for.
+
+    On first call for a booking, `started_at` is stamped — same path as
+    the RN `/token` endpoint, so the LiveKit `room_finished` webhook
+    has a clean delta to compute Decart spend from.
+    """
+    try:
+        claims = verify_join_token(token)
+    except JoinTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    if claims.booking_id != booking_id:
+        # URL booking_id MUST match the token — otherwise a leaked token
+        # for booking 7 could be used to peek at booking 8's dresses.
+        raise HTTPException(status_code=401, detail="Token does not match booking.")
+
+    booking = crud_booking.get(db, id=booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.appointment_type != "video":
+        raise HTTPException(status_code=400, detail="This booking is not a video appointment.")
+    if booking.status not in {"accepted", "rescheduled"}:
+        raise HTTPException(
+            status_code=400,
+            detail="This appointment is not currently joinable.",
+        )
+    if booking.user_id != claims.user_id:
+        raise HTTPException(status_code=403, detail="Token user does not match booking.")
+
+    bride = crud_user.get(db, id=claims.user_id)
+    if bride is None or bride.role != "buyer":
+        raise HTTPException(status_code=403, detail="Token subject is not a buyer.")
+
+    # Time-window gate — same helper the RN flow uses (currently disabled
+    # via early return in `_assert_join_window`).
+    _assert_join_window(booking)
+
+    # LiveKit credentials first — never gated on Decart so the bride can
+    # fall through to a plain video call if Decart is misconfigured.
+    livekit_resp = _mint_livekit_token_for_booking(booking, bride)
+
+    # Stamp started_at on first join (same as RN /token endpoint).
+    crud_booking.mark_session_started(db, db_obj=booking)
+
+    dresses = _load_session_dresses(db, booking)
+
+    # Decart is optional — if the key isn't set or budget is exhausted,
+    # the web page still gets LiveKit + dresses and can render a plain
+    # video call without realtime try-on.
+    decart_creds: Optional[DecartCredentials] = None
+    if settings.DECART_API_KEY:
+        decision = decart_budget.check_budget(booking_id=booking.id)
+        if decision.allowed:
+            try:
+                allowed_origins = (
+                    [settings.WEB_CALL_BASE_URL] if settings.WEB_CALL_BASE_URL else None
+                )
+                tok = await decart_service.mint_client_token(
+                    allowed_origins=allowed_origins
+                )
+                decart_creds = DecartCredentials(
+                    api_key=tok.api_key,
+                    expires_at=tok.expires_at,
+                    model=tok.model,
+                    max_session_seconds=int(settings.DECART_MAX_SESSION_SECONDS),
+                )
+            except (decart_service.DecartConfigError, decart_service.DecartUpstreamError) as exc:
+                # Log but do not 502 — the call should still proceed without
+                # realtime try-on rather than blocking the bride entirely.
+                logger.warning(
+                    "Decart token mint failed for web-join booking %s: %s",
+                    booking.id,
+                    exc,
+                )
+        else:
+            logger.info(
+                "Decart budget refused web-join booking %s: %s",
+                booking.id,
+                decision.reason,
+            )
+
+    return WebJoinResponse(
+        livekit=livekit_resp,
+        decart=decart_creds,
+        dresses=dresses,
+        booking_id=booking.id,
+        scheduled_for=booking.scheduled_for,
     )

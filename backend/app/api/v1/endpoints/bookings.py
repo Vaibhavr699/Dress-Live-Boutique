@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, List, Optional
 from urllib.parse import quote, unquote
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import settings
+from app.core.email import send_email
 from app.crud.crud_boutique import crud_boutique
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
@@ -21,8 +23,11 @@ from app.schemas.booking import (
     BookingDressSummary,
     BookingUpdate,
     BookingView,
+    PostCallDress,
+    PostCallView,
 )
 from app.services import notifications as notifications_service
+from app.utils.email_join_token import mint_join_token
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,59 @@ def _notify_safe(db: Session, **kwargs) -> None:
         notifications_service.dispatch(db, **kwargs)
     except Exception as e:
         logger.warning("notifications.dispatch failed: %s", e)
+
+
+def _build_web_call_link(booking: Booking) -> Optional[str]:
+    """Build the bride's tokenized join link for the Next.js web call
+    page. Returns None when `WEB_CALL_BASE_URL` isn't configured (RN-only
+    deployments) — callers must skip the email/section in that case."""
+    base = (settings.WEB_CALL_BASE_URL or "").strip().rstrip("/")
+    if not base:
+        return None
+    token = mint_join_token(booking_id=booking.id, user_id=booking.user_id)
+    return f"{base}/call/{booking.id}?token={token}"
+
+
+async def _send_video_call_confirmation_email_safe(
+    db: Session, booking: Booking, boutique_name: str
+) -> None:
+    """Email the bride with the desktop call link when a video booking is
+    accepted. No-op if she has no email on file, or if no web URL is set.
+    Best-effort — bookings still succeed if Resend is down.
+    """
+    try:
+        if booking.appointment_type != "video":
+            return
+        link = _build_web_call_link(booking)
+        if not link:
+            return
+        bride = booking.user
+        if bride is None or not bride.email:
+            return
+
+        body = (
+            f"Hi,\n\n"
+            f"Your virtual fitting with {boutique_name} is confirmed for "
+            f"{booking.scheduled_for}.\n\n"
+            "When it's time, open this link on a computer with a webcam "
+            "(Chrome or Safari recommended):\n\n"
+            f"{link}\n\n"
+            "Tip: open it 1–2 minutes before the appointment so we can "
+            "check your camera and mic. No login required — the link "
+            "logs you in automatically.\n\n"
+            "— The Dress Live team"
+        )
+        await send_email(
+            to_email=bride.email,
+            subject="Your virtual fitting is confirmed — your join link",
+            text=body,
+        )
+    except Exception as exc:  # pragma: no cover — never break booking accept
+        logger.warning(
+            "video-call confirmation email failed for booking %s: %s",
+            booking.id,
+            exc,
+        )
 
 
 def _booking_payload(booking: Booking) -> dict[str, Any]:
@@ -234,6 +292,69 @@ def read_booking(
     return serialize_booking(db, booking)
 
 
+@router.get("/{booking_id}/post-call", response_model=PostCallView)
+def read_post_call(
+    *,
+    db: Session = Depends(deps.get_db),
+    booking_id: int,
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Post-call dress-selection payload for the bride.
+
+    Returned to the bride RN app (and later the web post-call screen)
+    after the LiveKit `room_finished` webhook has marked the booking
+    `completed`. Lists the 4 dresses she tried so she can tap one and
+    hand off to the existing checkout flow.
+
+    Buyer-only. Reachable when the booking is `completed` (the bride
+    actually finished the call) OR `accepted` (so the screen can still
+    render — useful when the bride opens the link before the webhook
+    lands, especially in dev where webhooks may not be set up).
+    """
+    booking = crud_booking.get(db, id=booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if current_user.role != "buyer":
+        raise HTTPException(status_code=403, detail="Not allowed.")
+    if booking.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to view this booking.")
+    if booking.appointment_type != "video":
+        raise HTTPException(status_code=400, detail="This booking is not a video appointment.")
+
+    dress_ids = [int(t) for t in (booking.selected_dress_ids or "").split(",") if t.strip().isdigit()]
+    rows = {d.id: d for d in [crud_dress.get(db, id=d) for d in dress_ids] if d}
+    dresses = [
+        PostCallDress(
+            id=rows[did].id,
+            name=rows[did].name,
+            price=rows[did].price,
+            image_url=rows[did].image_url,
+            colors=rows[did].colors,
+            sizes=rows[did].sizes,
+        )
+        for did in dress_ids
+        if did in rows
+    ]
+
+    boutique = crud_boutique.get(db, id=booking.boutique_id)
+    duration_seconds: Optional[int] = None
+    if booking.started_at and booking.ended_at:
+        duration_seconds = max(0, int((booking.ended_at - booking.started_at).total_seconds()))
+
+    return PostCallView(
+        booking_id=booking.id,
+        status=booking.status,
+        boutique=BookingBoutiqueSummary(
+            id=boutique.id, name=boutique.name, location=boutique.location
+        ) if boutique else None,
+        scheduled_for=booking.scheduled_for,
+        started_at=booking.started_at,
+        ended_at=booking.ended_at,
+        duration_seconds=duration_seconds,
+        dresses=dresses,
+    )
+
+
 @router.post("/", response_model=BookingView)
 def create_booking(
     *,
@@ -311,7 +432,7 @@ def create_booking(
 
 
 @router.put("/{booking_id}", response_model=BookingView)
-def update_booking(
+async def update_booking(
     *,
     db: Session = Depends(deps.get_db),
     booking_id: int,
@@ -423,5 +544,20 @@ def update_booking(
                 payload=_booking_payload(booking),
                 image_url=recipient_image,
             )
+
+    # When a partner accepts a VIDEO booking, fire off the bride's web
+    # call link in a confirmation email. Background task so a Resend
+    # hiccup can't block the API response.
+    if (
+        booking_in.status == "accepted"
+        and prev_status != "accepted"
+        and booking.appointment_type == "video"
+        and current_user.role == "partner"
+    ):
+        boutique = crud_boutique.get(db, id=booking.boutique_id)
+        boutique_name = (boutique.name if boutique else "your boutique") or "your boutique"
+        asyncio.create_task(
+            _send_video_call_confirmation_email_safe(db, booking, boutique_name)
+        )
 
     return serialize_booking(db, booking)
