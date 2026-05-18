@@ -250,9 +250,12 @@ export default function DecartSpikeScreen() {
 
       const realtime = await client.realtime.connect(rawStream, {
         model,
-        // initialState is optional — leave the bride wearing nothing
-        // (her real outfit) until the consultant taps a dress.
-        initialState: { prompt: { text: '', enhance: false } },
+        // Decart rejects an empty `prompt.text` (zod min:1). Connect with
+        // a neutral placeholder so the session opens cleanly — the user
+        // will replace it via setPrompt the moment they apply a dress.
+        // To actually achieve "no dress" later, call .set({ image: null })
+        // and OMIT the prompt entirely; do NOT pass prompt: ''.
+        initialState: { prompt: { text: 'person standing in a neutral room', enhance: false } },
         onRemoteStream: (transformedStream: any) => {
           remoteStreamRef.current = transformedStream;
           setRemoteStreamUrl(transformedStream.toURL?.() ?? null);
@@ -298,10 +301,14 @@ export default function DecartSpikeScreen() {
   const clearDress = useCallback(async () => {
     if (!realtimeRef.current) return;
     try {
-      log('info', '→ set({ prompt: "", image: null })  (no dress)');
-      await realtimeRef.current.set({ prompt: '', image: null });
+      // For "no dress": clear the image reference but keep a neutral prompt.
+      // Decart rejects empty prompt strings (zod min:1) — passing '' here
+      // would 422 the same way connect() did. The bride sees herself with
+      // no garment overlaid because we cleared the reference image.
+      log('info', '→ setImage(null)  (no dress — keep last prompt as fallback)');
+      await realtimeRef.current.setImage(null);
     } catch (e: any) {
-      log('error', `set() failed: ${e?.message || String(e)}`);
+      log('error', `setImage() failed: ${e?.message || String(e)}`);
     }
   }, [log]);
 
