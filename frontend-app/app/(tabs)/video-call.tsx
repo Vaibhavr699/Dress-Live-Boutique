@@ -116,51 +116,79 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   const decartEnabled = isBuyerDecartEnabled();
   const decart = useBuyerDecartVideo({ enabled: decartEnabled && cameraOn, bookingId });
 
-  // Publish the Decart-transformed stream to LiveKit as our local video
-  // track. One publishTrack call per session — never replaced. The track
-  // object outlives every dress switch (Decart just changes the frames
-  // flowing through it).
-  React.useEffect(() => {
-    if (!decartEnabled || !room?.localParticipant) return;
-    const stream = decart.transformedStream;
-    if (!stream) return;
-    const mediaTrack = stream.getVideoTracks?.()[0];
-    if (!mediaTrack) return;
+  // Visible publish-pipeline diagnostics. The previous version swallowed
+  // publishTrack errors into a __DEV__ console.warn that's invisible in
+  // preview builds — every failure rendered as a silently-blank video
+  // box on both ends. Now every step writes through this state so the
+  // banner can surface what's actually happening.
+  const [publishStatus, setPublishStatus] = React.useState<
+    'idle' | 'waiting-stream' | 'no-video-track' | 'publishing' | 'published' | 'error'
+  >('idle');
+  const [publishError, setPublishError] = React.useState<string | null>(null);
 
-    let publishedTrack: any = null;
+  // Publish the Decart-transformed stream to LiveKit as our local video
+  // track. The track stays for the whole call; dress switches only change
+  // the frames flowing through it (handled inside the Decart hook).
+  React.useEffect(() => {
+    if (!decartEnabled || !room?.localParticipant) {
+      setPublishStatus('idle');
+      return;
+    }
+    const stream = decart.transformedStream;
+    if (!stream) {
+      setPublishStatus('waiting-stream');
+      return;
+    }
+    const mediaTrack = stream.getVideoTracks?.()[0];
+    if (!mediaTrack) {
+      setPublishStatus('no-video-track');
+      setPublishError('Decart stream has no video tracks');
+      return;
+    }
+
     let cancelled = false;
+    let publishedTrack: any = null;
     (async () => {
+      setPublishStatus('publishing');
+      setPublishError(null);
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const lkClient = require('livekit-client');
-        publishedTrack = new lkClient.LocalVideoTrack(mediaTrack);
-        if (cancelled) {
-          try { publishedTrack.stop(); } catch {}
-          return;
-        }
-        // CRITICAL: tag the publication as source=Camera. Without this,
-        // LiveKit defaults to source=Unknown, and the consultant's
-        // useTracks([Track.Source.Camera]) query never finds the bride's
-        // video — so neither side sees her transformed feed. Same reason
-        // the local PiP query (publication.source === Camera) returns null
-        // and shows a blank box.
-        await room.localParticipant.publishTrack(publishedTrack, {
-          source: deps.Track.Source.Camera,
+        // Pass the MediaStreamTrack DIRECTLY. LiveKit's publishTrack
+        // signature accepts (LocalTrack | MediaStreamTrack), so we
+        // skip the LocalVideoTrack wrapping that was failing under
+        // the livekit-client UMD bundle when given a track from
+        // @livekit/react-native-webrtc.
+        //
+        // source uses the string literal 'camera' instead of
+        // deps.Track.Source.Camera so we don't crash if the UMD
+        // bundle's enum export wasn't picked up.
+        publishedTrack = await room.localParticipant.publishTrack(mediaTrack, {
+          source: 'camera',
           name: 'decart-vton',
         });
-      } catch (e) {
-        if (__DEV__) console.warn('[decart] publishTrack failed', e);
+        if (cancelled) {
+          try { await room.localParticipant.unpublishTrack(mediaTrack); } catch {}
+          return;
+        }
+        setPublishStatus('published');
+      } catch (e: any) {
+        if (cancelled) return;
+        setPublishStatus('error');
+        setPublishError(e?.message || String(e));
       }
     })();
 
     return () => {
       cancelled = true;
-      if (publishedTrack && room?.localParticipant) {
-        try { room.localParticipant.unpublishTrack(publishedTrack); } catch {}
-        try { publishedTrack.stop(); } catch {}
+      // unpublishTrack accepts either the LocalTrackPublication or the
+      // underlying MediaStreamTrack. Try both for safety.
+      if (room?.localParticipant) {
+        try { room.localParticipant.unpublishTrack(mediaTrack); } catch {}
+        if (publishedTrack?.track) {
+          try { room.localParticipant.unpublishTrack(publishedTrack.track); } catch {}
+        }
       }
     };
-  }, [decartEnabled, room, decart.transformedStream, deps]);
+  }, [decartEnabled, room, decart.transformedStream]);
 
   // Forward dress switches into the Decart session. The data-channel
   // handler below sets `activeDressId` via onDressSwitch → parent state →
@@ -456,18 +484,23 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
       )}
 
       {/* Decart diagnostic banner — only when feature flag is on. Shows
-          the current pipeline state so when the bride says "video isn't
-          working", we know whether the token fetch / Decart connect /
-          publish step failed. Removed entirely in the legacy code path. */}
-      {decartEnabled && decart.status !== 'connected' ? (
+          the current pipeline state (token fetch → Decart connect →
+          publish) so when something goes wrong we can read the failure
+          rather than guess. Disappears only when both Decart says
+          'connected' AND the publish step says 'published'. */}
+      {decartEnabled && (decart.status !== 'connected' || publishStatus !== 'published') ? (
         <View
-          className="absolute left-4 right-4 top-4 bg-black/80 border border-white/30 px-3 py-2"
+          className="absolute left-4 right-4 top-4 bg-black/85 border border-white/30 px-3 py-2"
           style={{ borderRadius: 12 }}
         >
-          <Text className="text-white text-[10px] tracking-[1.5px] uppercase" numberOfLines={2}>
+          <Text className="text-white text-[10px] tracking-[1.5px] uppercase" numberOfLines={3}>
             {decart.status === 'error'
-              ? `AI try-on offline: ${decart.errorMessage ?? 'unknown'}`
-              : `AI try-on · ${decart.status}…`}
+              ? `AI try-on offline · ${decart.errorMessage ?? 'unknown'}`
+              : decart.status !== 'connected'
+              ? `AI try-on · ${decart.status}…`
+              : publishStatus === 'error'
+              ? `Publish failed · ${publishError ?? 'unknown'}`
+              : `Publish · ${publishStatus}…`}
           </Text>
         </View>
       ) : null}
