@@ -133,7 +133,7 @@ export default function RootLayout() {
       typeof segments[0] === 'string' &&
       (
         segments[0].startsWith('profile-') ||
-        ['booking-history', 'notifications', 'video-call-summary'].includes(segments[0])
+        ['booking-history', 'notifications', 'video-call-summary', 'post-call', 'decart-spike'].includes(segments[0])
       );
     const hasRoleMismatch = isAuthenticated && !!user && user.role !== 'buyer';
 
@@ -155,7 +155,7 @@ export default function RootLayout() {
         typeof segments[0] === 'string' &&
         (
           segments[0].startsWith('profile-') ||
-          ['booking-history', 'notifications', 'video-call-summary'].includes(segments[0])
+          ['booking-history', 'notifications', 'video-call-summary', 'post-call', 'decart-spike'].includes(segments[0])
         )
       );
 
