@@ -26,8 +26,8 @@
       "newArchEnabled": true,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "backgroundColor": "#F5E6E8",
-        "foregroundImage": "./assets/images/dress-live-seller.png",
+        "backgroundColor": "#F4DCDC",
+        "foregroundImage": "./assets/images/dress-live-seller-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
@@ -61,8 +61,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/android-icon-monochrome.png",
-          "color": "#C9302B"
+          "icon": "./assets/images/dress-live-seller-foreground.png",
+          "color": "#1A1A1A"
         }
       ],
       [
