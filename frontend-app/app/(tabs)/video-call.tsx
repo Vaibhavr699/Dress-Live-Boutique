@@ -22,7 +22,12 @@ import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
 import type { VideoCallBookingDress } from '@shared/bookingForVideoCall';
-import { buildPoseLandmarksPayload, buildTryonFrameChunks, parseTryonSwitchMessage } from '@shared/videoCallSignals';
+import {
+  buildDecartSubscribeTokenPayload,
+  buildPoseLandmarksPayload,
+  buildTryonFrameChunks,
+  parseTryonSwitchMessage,
+} from '@shared/videoCallSignals';
 import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
 import { ensureLiveKitRegistered } from '@shared/livekitInit';
 import { isBuyerDecartEnabled } from '@shared/decartConfig';
@@ -116,79 +121,33 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
   const decartEnabled = isBuyerDecartEnabled();
   const decart = useBuyerDecartVideo({ enabled: decartEnabled && cameraOn, bookingId });
 
-  // Visible publish-pipeline diagnostics. The previous version swallowed
-  // publishTrack errors into a __DEV__ console.warn that's invisible in
-  // preview builds — every failure rendered as a silently-blank video
-  // box on both ends. Now every step writes through this state so the
-  // banner can surface what's actually happening.
-  const [publishStatus, setPublishStatus] = React.useState<
-    'idle' | 'waiting-stream' | 'no-video-track' | 'publishing' | 'published' | 'error'
-  >('idle');
-  const [publishError, setPublishError] = React.useState<string | null>(null);
-
-  // Publish the Decart-transformed stream to LiveKit as our local video
-  // track. The track stays for the whole call; dress switches only change
-  // the frames flowing through it (handled inside the Decart hook).
+  // ── Broadcast Decart's subscribe-token over the LiveKit data channel ──
+  // Architectural note (see app/decart-spike.tsx for context): we used to
+  // try to republish Decart's transformed MediaStreamTrack through
+  // LiveKit's separate peer connection. react-native-webrtc rejects that
+  // ("transceiver could not be added") because a remote-receiver track
+  // can't double as a sender on a different RTCPeerConnection. Instead,
+  // we ship Decart's subscribeToken to the consultant over LK data, and
+  // the consultant calls Decart's subscribe API to receive the SAME
+  // transformed stream straight from Decart's CDN. No republish hop.
+  //
+  // We re-broadcast on every remote-participant change so an advisor who
+  // joins after the bride still gets a usable token without us caching it
+  // server-side.
   React.useEffect(() => {
-    if (!decartEnabled || !room?.localParticipant) {
-      setPublishStatus('idle');
-      return;
+    if (!decartEnabled || !room?.localParticipant) return;
+    if (!decart.subscribeToken) return;
+    try {
+      const payload = buildDecartSubscribeTokenPayload({
+        bookingId,
+        token: decart.subscribeToken,
+      });
+      room.localParticipant.publishData(payload, { reliable: true } as any);
+    } catch {
+      // best-effort — if the advisor never gets the token, the call
+      // still works for audio + the bride still sees her own try-on.
     }
-    const stream = decart.transformedStream;
-    if (!stream) {
-      setPublishStatus('waiting-stream');
-      return;
-    }
-    const mediaTrack = stream.getVideoTracks?.()[0];
-    if (!mediaTrack) {
-      setPublishStatus('no-video-track');
-      setPublishError('Decart stream has no video tracks');
-      return;
-    }
-
-    let cancelled = false;
-    let publishedTrack: any = null;
-    (async () => {
-      setPublishStatus('publishing');
-      setPublishError(null);
-      try {
-        // Pass the MediaStreamTrack DIRECTLY. LiveKit's publishTrack
-        // signature accepts (LocalTrack | MediaStreamTrack), so we
-        // skip the LocalVideoTrack wrapping that was failing under
-        // the livekit-client UMD bundle when given a track from
-        // @livekit/react-native-webrtc.
-        //
-        // source uses the string literal 'camera' instead of
-        // deps.Track.Source.Camera so we don't crash if the UMD
-        // bundle's enum export wasn't picked up.
-        publishedTrack = await room.localParticipant.publishTrack(mediaTrack, {
-          source: 'camera',
-          name: 'decart-vton',
-        });
-        if (cancelled) {
-          try { await room.localParticipant.unpublishTrack(mediaTrack); } catch {}
-          return;
-        }
-        setPublishStatus('published');
-      } catch (e: any) {
-        if (cancelled) return;
-        setPublishStatus('error');
-        setPublishError(e?.message || String(e));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      // unpublishTrack accepts either the LocalTrackPublication or the
-      // underlying MediaStreamTrack. Try both for safety.
-      if (room?.localParticipant) {
-        try { room.localParticipant.unpublishTrack(mediaTrack); } catch {}
-        if (publishedTrack?.track) {
-          try { room.localParticipant.unpublishTrack(publishedTrack.track); } catch {}
-        }
-      }
-    };
-  }, [decartEnabled, room, decart.transformedStream]);
+  }, [decartEnabled, room, decart.subscribeToken, bookingId, remoteParticipants.length]);
 
   // Forward dress switches into the Decart session. The data-channel
   // handler below sets `activeDressId` via onDressSwitch → parent state →
@@ -418,12 +377,41 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
         }
       }}
     >
-      {/* MAIN view = buyer's own camera with AR dress overlay composited on
-          top. This is the "live mirror" — the buyer sees themselves wearing
-          the currently-selected dress in real time. ViewShot still wraps
-          the raw VideoTrack (without the overlay) so any on-demand HD
-          capture path still gets the un-modified camera frame. */}
-      {local ? (
+      {/* MAIN view. Two render paths:
+          - Decart on: render the transformed MediaStream straight from
+            the @livekit/react-native-webrtc RTCView. The bride's video
+            never enters LiveKit at all — only audio + data channel do.
+          - Decart off: existing path — local LiveKit VideoTrack wrapped
+            in ViewShot with the AR PNG overlay composited on top. */}
+      {decartEnabled ? (
+        decart.transformedStream ? (
+          (() => {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const RTCView = require('@livekit/react-native-webrtc').RTCView as React.ComponentType<any>;
+            const url = decart.transformedStream.toURL?.();
+            return url ? (
+              <RTCView
+                streamURL={url}
+                style={{ width: '100%', height: frameHeight }}
+                objectFit="cover"
+                mirror={true}
+              />
+            ) : (
+              <View className="flex-1 items-center justify-center px-8">
+                <Text className="text-white/60 text-[12px] text-center leading-5">
+                  Waiting for AI try-on stream…
+                </Text>
+              </View>
+            );
+          })()
+        ) : (
+          <View className="flex-1 items-center justify-center px-8">
+            <Text className="text-white/60 text-[12px] text-center leading-5">
+              {cameraOn ? 'Starting AI try-on…' : 'Camera off'}
+            </Text>
+          </View>
+        )
+      ) : local ? (
         <>
           <ViewShot
             ref={viewShotRef}
@@ -437,11 +425,8 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
               zOrder={0}
             />
           </ViewShot>
-          {/* AR overlay outside the ViewShot so captures don't double-render.
-              Hidden when Decart is on — the dress is baked into the published
-              video track already, so a second client-side overlay would double
-              up and the bride would see herself wearing two dresses. */}
-          {!decartEnabled && mainSize.w > 0 ? (
+          {/* AR overlay outside the ViewShot so captures don't double-render. */}
+          {mainSize.w > 0 ? (
             <ARGarmentOverlay
               dressImageUrl={activeDressImageUrl}
               landmarks={livePose.landmarks}
@@ -483,12 +468,10 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
         </View>
       )}
 
-      {/* Decart diagnostic banner — only when feature flag is on. Shows
-          the current pipeline state (token fetch → Decart connect →
-          publish) so when something goes wrong we can read the failure
-          rather than guess. Disappears only when both Decart says
-          'connected' AND the publish step says 'published'. */}
-      {decartEnabled && (decart.status !== 'connected' || publishStatus !== 'published') ? (
+      {/* Decart diagnostic banner — visible until both Decart says
+          'connected' AND we have a subscribeToken to hand to the advisor.
+          Hidden in the legacy code path entirely. */}
+      {decartEnabled && (decart.status !== 'connected' || !decart.subscribeToken) ? (
         <View
           className="absolute left-4 right-4 top-4 bg-black/85 border border-white/30 px-3 py-2"
           style={{ borderRadius: 12 }}
@@ -498,9 +481,7 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
               ? `AI try-on offline · ${decart.errorMessage ?? 'unknown'}`
               : decart.status !== 'connected'
               ? `AI try-on · ${decart.status}…`
-              : publishStatus === 'error'
-              ? `Publish failed · ${publishError ?? 'unknown'}`
-              : `Publish · ${publishStatus}…`}
+              : `AI try-on · waiting for subscribe token…`}
           </Text>
         </View>
       ) : null}
