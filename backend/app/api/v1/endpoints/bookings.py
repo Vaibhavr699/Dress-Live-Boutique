@@ -179,8 +179,22 @@ def _enqueue_video_call_requested(
     """
     if booking.appointment_type != "video":
         return
+    if booking.user is None or not booking.user.email:
+        logger.warning(
+            "skipping booking-requested email for booking %s: bride has no email on file",
+            booking.id,
+        )
+        return
     link = _build_web_call_link(booking)
-    if not link or booking.user is None or not booking.user.email:
+    if not link:
+        # Make the silent-failure mode loud. Saw this in production: emails
+        # weren't arriving because WEB_CALL_BASE_URL wasn't set in Railway.
+        # Without a log here the only symptom was "no email in inbox".
+        logger.warning(
+            "skipping booking-requested email for booking %s: WEB_CALL_BASE_URL is not configured "
+            "(set it in Railway → backend service → Variables, then redeploy)",
+            booking.id,
+        )
         return
     bg.add_task(
         _send_video_call_requested_email,
@@ -198,8 +212,18 @@ def _enqueue_video_call_confirmation(
     """Same pattern for the post-accept confirmation email."""
     if booking.appointment_type != "video":
         return
+    if booking.user is None or not booking.user.email:
+        logger.warning(
+            "skipping booking-confirmed email for booking %s: bride has no email on file",
+            booking.id,
+        )
+        return
     link = _build_web_call_link(booking)
-    if not link or booking.user is None or not booking.user.email:
+    if not link:
+        logger.warning(
+            "skipping booking-confirmed email for booking %s: WEB_CALL_BASE_URL is not configured",
+            booking.id,
+        )
         return
     bg.add_task(
         _send_video_call_confirmation_email,
