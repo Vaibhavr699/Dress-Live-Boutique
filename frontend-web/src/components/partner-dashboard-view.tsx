@@ -377,17 +377,11 @@ export function PartnerDashboardView({ page = "home" }: PartnerDashboardViewProp
                     {booking.language} • {booking.dress_ids.length} selected dress(es)
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {/* Video bookings that have already been accepted get a
-                        Join button that opens the laptop call page. */}
-                    {booking.appointment_type === "video" && booking.status === "accepted" ? (
-                      <button
-                        type="button"
-                        onClick={() => router.push(`/call/${booking.id}`)}
-                        className="rounded-full bg-emerald-600 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-white transition hover:bg-emerald-500"
-                      >
-                        Join call
-                      </button>
-                    ) : null}
+                    {/* Consultant joins video calls from the boutique-app
+                        tablet now (the spec's "Start session" tap there).
+                        The web /call/[id] page is the BRIDE's view via
+                        her email JWT link, not for partners. So no Join
+                        button here. */}
                     <button
                       type="button"
                       disabled={updatingBookingId === booking.id}

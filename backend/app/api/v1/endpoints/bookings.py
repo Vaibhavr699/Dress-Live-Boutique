@@ -107,6 +107,58 @@ async def _send_video_call_confirmation_email_safe(
         )
 
 
+async def _send_video_call_requested_email_safe(
+    db: Session, booking: Booking, boutique_name: str
+) -> None:
+    """Email the bride the moment she creates a video booking, BEFORE the
+    partner has accepted it. Per spec: "Bride receives 2 emails: immediate
+    confirmation with the call link...".
+
+    We embed the same tokenized join link as the post-accept email — the
+    link works as soon as the partner accepts (web-join accepts status in
+    {'accepted','rescheduled'}). If the bride opens the link before then
+    she'll see a friendly "not yet joinable" page. The link itself is
+    safe to leak ahead of time: the JWT also bakes in user_id + booking_id,
+    so a stolen link is useless to a different user.
+
+    Best-effort — failures here never break booking creation.
+    """
+    try:
+        if booking.appointment_type != "video":
+            return
+        link = _build_web_call_link(booking)
+        if not link:
+            return
+        bride = booking.user
+        if bride is None or not bride.email:
+            return
+
+        body = (
+            f"Hi,\n\n"
+            f"We received your virtual fitting request with {boutique_name} "
+            f"for {booking.scheduled_for}.\n\n"
+            "You'll hear back from the boutique shortly to confirm. In the "
+            "meantime, save this link — it's how you'll join the call from "
+            "your laptop or desktop at appointment time:\n\n"
+            f"{link}\n\n"
+            "(The same link will be in your confirmation email once the "
+            "boutique accepts. No login required — the link logs you in "
+            "automatically.)\n\n"
+            "— The Dress Live team"
+        )
+        await send_email(
+            to_email=bride.email,
+            subject="We got your fitting request — your join link inside",
+            text=body,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning(
+            "video-call requested email failed for booking %s: %s",
+            booking.id,
+            exc,
+        )
+
+
 def _booking_payload(booking: Booking) -> dict[str, Any]:
     return {
         "booking_id": booking.id,
@@ -356,7 +408,7 @@ def read_post_call(
 
 
 @router.post("/", response_model=BookingView)
-def create_booking(
+async def create_booking(
     *,
     db: Session = Depends(deps.get_db),
     booking_in: BookingCreate,
@@ -427,6 +479,15 @@ def create_booking(
         payload=_booking_payload(booking),
         image_url=boutique_image,
     )
+
+    # Spec step "Immediate confirmation with the call link" — fire the
+    # first of the two bride emails right now. The second (5-min reminder)
+    # is wired separately by a scheduled job. Background task so a slow
+    # Resend call can't block the booking creation response.
+    if booking.appointment_type == "video":
+        asyncio.create_task(
+            _send_video_call_requested_email_safe(db, booking, boutique_name)
+        )
 
     return serialize_booking(db, booking)
 
