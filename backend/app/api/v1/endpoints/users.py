@@ -116,6 +116,12 @@ async def _delete_storage_object(image_url: Optional[str]) -> None:
         if response.status_code not in (200, 204, 404):
             print(f"WARNING: Failed to delete Supabase object {object_path}: {response.text}")
 
+# Accept BOTH `/users` and `/users/` so clients that include a trailing
+# slash (the two RN apps both POST to `/users/`) don't get a 307
+# redirect. The redirect was working server-side but some clients drop
+# the JSON body or fail the CORS preflight on the follow-up request,
+# which made signup silently 422 from the user's perspective.
+@router.post("/", response_model=UserSchema, include_in_schema=False)
 @router.post("", response_model=UserSchema)
 async def create_user(
     request: Request,
