@@ -355,6 +355,8 @@ export function BrideCallView({
           {connectionState === ConnectionState.Connected ? "Connected" : connectionState}
           {" · "}
           {decart.status === "connected" ? "AI try-on live" : `AI try-on · ${decart.status}`}
+          {" · "}
+          {decart.subscribeToken ? "share-link ready" : "share-link pending"}
         </span>
         <span>booking #{bookingId}</span>
       </div>

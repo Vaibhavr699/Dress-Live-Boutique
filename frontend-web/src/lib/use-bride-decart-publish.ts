@@ -174,7 +174,31 @@ export function useBrideDecartPublish({
           return;
         }
         realtimeRef.current = realtime;
-        if (realtime.subscribeToken) setSubscribeToken(realtime.subscribeToken);
+        // subscribeToken is populated asynchronously by a websocket
+        // "sessionId" message inside the SDK (see
+        // @decartai/sdk/dist/realtime/client.js:127). It may not be set
+        // by the time `connect()` resolves, and the SDK doesn't emit an
+        // event for it. Poll until it shows up so the consultant can
+        // subscribe. Caps at 15s — past that, Decart is clearly stuck.
+        if (realtime.subscribeToken) {
+          setSubscribeToken(realtime.subscribeToken);
+        } else {
+          const start = Date.now();
+          const poll = setInterval(() => {
+            if (cancelled || !mountedRef.current) { clearInterval(poll); return; }
+            const tok = realtime?.subscribeToken ?? null;
+            if (tok) {
+              setSubscribeToken(tok);
+              clearInterval(poll);
+              return;
+            }
+            if (Date.now() - start > 15000) {
+              clearInterval(poll);
+              // Don't transition to error — the bride still sees her own
+              // try-on; only the consultant's view is degraded.
+            }
+          }, 200);
+        }
         if (typeof realtime.on === "function") {
           realtime.on("error", (err: { message?: string }) => {
             if (!mountedRef.current) return;
