@@ -30,7 +30,8 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app",
+        "EXPO_PUBLIC_DECART_BUYER_ENABLED": "true"
       },
       "android": {
         "buildType": "apk"
