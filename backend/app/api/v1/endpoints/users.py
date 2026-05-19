@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from app.api import deps
 from app.core.config import settings
 from app.core.email import send_email
+from app.core.email_templates import render_branded_email
 from app.crud.crud_boutique import crud_boutique
 from app.crud.crud_user import crud_user
 from app.models.user import User
@@ -196,15 +197,32 @@ async def create_user(
     # Send a welcome email (best-effort).
     try:
         if user.email and (user.role or "").strip().lower() == "buyer":
-            greeting = (user.full_name or "").strip() or "there"
+            greeting_name = (user.full_name or "").strip().split()[0] if user.full_name else "there"
             await send_email(
                 to_email=user.email,
                 subject="Welcome to Dress Live",
                 text=(
-                    f"Hi {greeting},\n\n"
-                    "Welcome to Dress Live. You can now browse boutiques, shortlist dresses, and book fittings.\n\n"
-                    "If you didn’t create this account, you can ignore this email.\n\n"
+                    f"Hi {greeting_name},\n\n"
+                    "Welcome to Dress Live. You can now browse boutiques, "
+                    "shortlist dresses, and book live virtual fittings with "
+                    "real consultants.\n\n"
+                    "If you didn't create this account, ignore this email.\n\n"
                     "— Dress Live"
+                ),
+                html=render_branded_email(
+                    preheader="Welcome to live virtual fittings on Dress Live.",
+                    title=f"Welcome, {greeting_name}",
+                    intro=(
+                        "Your Dress Live account is ready. Browse boutiques, "
+                        "shortlist the dresses you'd love to try, and book a "
+                        "live video fitting with a real consultant."
+                    ),
+                    paragraphs=[
+                        "Pick up to 4 dresses for each fitting — your consultant "
+                        "switches between them in real time while you see "
+                        "yourself wearing each one through the app's AI try-on.",
+                    ],
+                    footer_note="If you didn't create this account, ignore this email — nothing else happens.",
                 ),
             )
     except Exception:
@@ -247,7 +265,17 @@ async def send_password_reset_otp(
         subject="Your Dress Live password reset code",
         text=(
             f"Your password reset code is {code}.\n\n"
-            "It expires in 10 minutes. If you didn’t request this, you can ignore this email."
+            "It expires in 10 minutes. If you didn't request this, ignore this email."
+        ),
+        html=render_branded_email(
+            preheader="Password reset code inside.",
+            title="Password reset code",
+            intro=f"Your one-time code is {code}.",
+            paragraphs=[
+                "Type it into the Dress Live app to set a new password. "
+                "The code expires in 10 minutes.",
+            ],
+            footer_note="If you didn't request a reset, ignore this email — your password stays the same.",
         ),
     )
 
@@ -480,6 +508,13 @@ async def send_password_change_otp(
         to_email=current_user.email,
         subject="Your Dress Live verification code",
         text=f"Your verification code is {code}. It expires in 10 minutes.",
+        html=render_branded_email(
+            preheader="Verification code inside.",
+            title="Verification code",
+            intro=f"Your one-time code is {code}.",
+            paragraphs=["Enter it in the app to confirm the action. The code expires in 10 minutes."],
+            footer_note="If you didn't request this, ignore the email.",
+        ),
     )
 
     return {"success": True, "expires_in_seconds": 600}

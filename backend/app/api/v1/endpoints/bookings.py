@@ -1,16 +1,16 @@
-import asyncio
 import logging
 from typing import Any, List, Optional
 from urllib.parse import quote, unquote
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import settings
 from app.core.email import send_email
+from app.core.email_templates import paragraph_with_link, render_branded_email
 from app.crud.crud_boutique import crud_boutique
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
@@ -65,98 +65,150 @@ def _build_web_call_link(booking: Booking) -> Optional[str]:
     return f"{base}/call/{booking.id}?token={token}"
 
 
-async def _send_video_call_confirmation_email_safe(
-    db: Session, booking: Booking, boutique_name: str
+async def _send_video_call_confirmation_email(
+    bride_email: str,
+    bride_name: Optional[str],
+    boutique_name: str,
+    scheduled_for: str,
+    link: str,
 ) -> None:
-    """Email the bride with the desktop call link when a video booking is
-    accepted. No-op if she has no email on file, or if no web URL is set.
-    Best-effort — bookings still succeed if Resend is down.
+    """Bride email — the boutique has accepted the booking. Includes the
+    join CTA button + a plain-text fallback URL for clients that block
+    the button.
     """
-    try:
-        if booking.appointment_type != "video":
-            return
-        link = _build_web_call_link(booking)
-        if not link:
-            return
-        bride = booking.user
-        if bride is None or not bride.email:
-            return
+    title = "Your fitting is confirmed"
+    intro = (
+        f"{boutique_name} has accepted your request. "
+        f"Your virtual fitting is set for {scheduled_for}."
+    )
+    paragraphs = [
+        "When it's time, open this email on a computer with a webcam "
+        "(Chrome or Safari work best) and tap the button below. No login "
+        "needed — the link signs you in automatically.",
+        "Tip: open it a minute early so we can check your camera and mic "
+        "before your consultant joins.",
+    ]
+    html = render_branded_email(
+        preheader=f"Your fitting with {boutique_name} is confirmed.",
+        title=title,
+        intro=intro,
+        paragraphs=paragraphs,
+        cta_label="Open your fitting",
+        cta_url=link,
+        footer_note=f"If the button doesn't work, copy this link into your browser:\n{link}",
+    )
 
-        body = (
-            f"Hi,\n\n"
-            f"Your virtual fitting with {boutique_name} is confirmed for "
-            f"{booking.scheduled_for}.\n\n"
-            "When it's time, open this link on a computer with a webcam "
-            "(Chrome or Safari recommended):\n\n"
-            f"{link}\n\n"
-            "Tip: open it 1–2 minutes before the appointment so we can "
-            "check your camera and mic. No login required — the link "
-            "logs you in automatically.\n\n"
-            "— The Dress Live team"
-        )
-        await send_email(
-            to_email=bride.email,
-            subject="Your virtual fitting is confirmed — your join link",
-            text=body,
-        )
-    except Exception as exc:  # pragma: no cover — never break booking accept
-        logger.warning(
-            "video-call confirmation email failed for booking %s: %s",
-            booking.id,
-            exc,
-        )
+    greeting = f"Hi {bride_name.split()[0] if bride_name else 'there'},\n\n"
+    text = (
+        greeting
+        + f"{intro}\n\n"
+        + "When it's time, open this link on a computer with a webcam "
+        f"(Chrome or Safari work best):\n\n{link}\n\n"
+        + "No login needed — the link signs you in automatically. Tip: "
+        "open it a minute early so we can check your camera and mic.\n\n"
+        + "— The Dress Live team"
+    )
+    await send_email(
+        to_email=bride_email,
+        subject="Your virtual fitting is confirmed — your join link",
+        text=text,
+        html=html,
+    )
 
 
-async def _send_video_call_requested_email_safe(
-    db: Session, booking: Booking, boutique_name: str
+async def _send_video_call_requested_email(
+    bride_email: str,
+    bride_name: Optional[str],
+    boutique_name: str,
+    scheduled_for: str,
+    link: str,
 ) -> None:
-    """Email the bride the moment she creates a video booking, BEFORE the
-    partner has accepted it. Per spec: "Bride receives 2 emails: immediate
-    confirmation with the call link...".
-
-    We embed the same tokenized join link as the post-accept email — the
-    link works as soon as the partner accepts (web-join accepts status in
-    {'accepted','rescheduled'}). If the bride opens the link before then
-    she'll see a friendly "not yet joinable" page. The link itself is
-    safe to leak ahead of time: the JWT also bakes in user_id + booking_id,
-    so a stolen link is useless to a different user.
-
-    Best-effort — failures here never break booking creation.
+    """Bride email — booking just created, awaiting boutique acceptance.
+    Sends the same JWT join link so she has it ready when she gets the
+    confirmation email later.
     """
-    try:
-        if booking.appointment_type != "video":
-            return
-        link = _build_web_call_link(booking)
-        if not link:
-            return
-        bride = booking.user
-        if bride is None or not bride.email:
-            return
+    title = "We've got your fitting request"
+    intro = (
+        f"You asked for a virtual fitting with {boutique_name} on "
+        f"{scheduled_for}. They'll confirm shortly."
+    )
+    paragraphs = [
+        "We've already prepared your private link below. Save this email — "
+        "you'll use the same link when the boutique accepts, and on the "
+        "day of your fitting.",
+    ]
+    html = render_branded_email(
+        preheader=f"Your fitting request with {boutique_name} is in.",
+        title=title,
+        intro=intro,
+        paragraphs=paragraphs,
+        cta_label="Save your join link",
+        cta_url=link,
+        footer_note=(
+            "The link logs you in automatically — no password needed. "
+            "If the boutique hasn't accepted yet, you'll see a friendly "
+            '"not yet" message when you open it.'
+        ),
+    )
 
-        body = (
-            f"Hi,\n\n"
-            f"We received your virtual fitting request with {boutique_name} "
-            f"for {booking.scheduled_for}.\n\n"
-            "You'll hear back from the boutique shortly to confirm. In the "
-            "meantime, save this link — it's how you'll join the call from "
-            "your laptop or desktop at appointment time:\n\n"
-            f"{link}\n\n"
-            "(The same link will be in your confirmation email once the "
-            "boutique accepts. No login required — the link logs you in "
-            "automatically.)\n\n"
-            "— The Dress Live team"
-        )
-        await send_email(
-            to_email=bride.email,
-            subject="We got your fitting request — your join link inside",
-            text=body,
-        )
-    except Exception as exc:  # pragma: no cover
-        logger.warning(
-            "video-call requested email failed for booking %s: %s",
-            booking.id,
-            exc,
-        )
+    greeting = f"Hi {bride_name.split()[0] if bride_name else 'there'},\n\n"
+    text = (
+        greeting
+        + f"{intro}\n\n"
+        + "Save this link — you'll use it to join the fitting from your "
+        f"laptop:\n\n{link}\n\n"
+        + "The link logs you in automatically. We'll email you again the "
+        "moment the boutique accepts.\n\n"
+        + "— The Dress Live team"
+    )
+    await send_email(
+        to_email=bride_email,
+        subject="We got your fitting request — your join link inside",
+        text=text,
+        html=html,
+    )
+
+
+def _enqueue_video_call_requested(
+    bg: BackgroundTasks, booking: Booking, boutique_name: str
+) -> None:
+    """Defer the booking-created email to a FastAPI BackgroundTask.
+    Replaces the previous asyncio.create_task fire-and-forget, which
+    could be cancelled when the request worker returned (and was the
+    most likely cause of "I'm not getting any booking emails").
+    """
+    if booking.appointment_type != "video":
+        return
+    link = _build_web_call_link(booking)
+    if not link or booking.user is None or not booking.user.email:
+        return
+    bg.add_task(
+        _send_video_call_requested_email,
+        booking.user.email,
+        booking.user.full_name,
+        boutique_name,
+        booking.scheduled_for,
+        link,
+    )
+
+
+def _enqueue_video_call_confirmation(
+    bg: BackgroundTasks, booking: Booking, boutique_name: str
+) -> None:
+    """Same pattern for the post-accept confirmation email."""
+    if booking.appointment_type != "video":
+        return
+    link = _build_web_call_link(booking)
+    if not link or booking.user is None or not booking.user.email:
+        return
+    bg.add_task(
+        _send_video_call_confirmation_email,
+        booking.user.email,
+        booking.user.full_name,
+        boutique_name,
+        booking.scheduled_for,
+        link,
+    )
 
 
 def _booking_payload(booking: Booking) -> dict[str, Any]:
@@ -412,6 +464,7 @@ async def create_booking(
     *,
     db: Session = Depends(deps.get_db),
     booking_in: BookingCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     if current_user.role != "buyer":
@@ -480,14 +533,12 @@ async def create_booking(
         image_url=boutique_image,
     )
 
-    # Spec step "Immediate confirmation with the call link" — fire the
-    # first of the two bride emails right now. The second (5-min reminder)
-    # is wired separately by a scheduled job. Background task so a slow
-    # Resend call can't block the booking creation response.
-    if booking.appointment_type == "video":
-        asyncio.create_task(
-            _send_video_call_requested_email_safe(db, booking, boutique_name)
-        )
+    # Spec step "Immediate confirmation with the call link" — queue the
+    # first of the two bride emails. Uses FastAPI BackgroundTasks (which
+    # owns the task lifecycle properly) rather than the previous
+    # asyncio.create_task which got orphaned when the request worker
+    # returned, dropping the email silently.
+    _enqueue_video_call_requested(background_tasks, booking, boutique_name)
 
     return serialize_booking(db, booking)
 
@@ -498,6 +549,7 @@ async def update_booking(
     db: Session = Depends(deps.get_db),
     booking_id: int,
     booking_in: BookingUpdate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     booking = crud_booking.get(db, id=booking_id)
@@ -606,9 +658,11 @@ async def update_booking(
                 image_url=recipient_image,
             )
 
-    # When a partner accepts a VIDEO booking, fire off the bride's web
-    # call link in a confirmation email. Background task so a Resend
-    # hiccup can't block the API response.
+    # When a partner accepts a VIDEO booking, queue the bride's
+    # confirmation email (with the join link CTA). Uses FastAPI
+    # BackgroundTasks so the task lifecycle survives past the response —
+    # the previous asyncio.create_task was the reason confirmation emails
+    # were silently dropping.
     if (
         booking_in.status == "accepted"
         and prev_status != "accepted"
@@ -617,8 +671,6 @@ async def update_booking(
     ):
         boutique = crud_boutique.get(db, id=booking.boutique_id)
         boutique_name = (boutique.name if boutique else "your boutique") or "your boutique"
-        asyncio.create_task(
-            _send_video_call_confirmation_email_safe(db, booking, boutique_name)
-        )
+        _enqueue_video_call_confirmation(background_tasks, booking, boutique_name)
 
     return serialize_booking(db, booking)

@@ -18,12 +18,13 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import settings
 from app.core.email import send_email
+from app.core.email_templates import render_branded_email
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_user import crud_user
 from app.models.booking import Booking
@@ -75,7 +76,11 @@ def _build_post_call_link(booking_id: int) -> Optional[str]:
 
 
 async def _send_completion_email_safe(
-    db: Session, booking: Booking, duration_seconds: int
+    bride_email: str,
+    bride_name: str | None,
+    booking_id: int,
+    duration_seconds: int,
+    post_call_link: str | None,
 ) -> None:
     """Email the bride that her session is ready for dress selection.
 
@@ -84,30 +89,43 @@ async def _send_completion_email_safe(
     trigger an infinite delivery loop with duplicated DB writes.
     """
     try:
-        bride = crud_user.get(db, id=booking.user_id)
-        if not bride or not bride.email:
-            return
-
-        post_call_link = _build_post_call_link(booking.id)
-        link_block = f"\n\nPick your favorite: {post_call_link}\n" if post_call_link else ""
-
+        title = "Your fitting is complete"
         intro = (
-            "Your virtual fitting is complete. Open the Dress Live app to "
-            "choose the dress you loved most — you can checkout in a few taps."
+            "Thanks for trying everything on. Now pick the one you loved most — "
+            "you can checkout in a few taps from your phone."
         )
-        body = (
-            f"Hi,\n\n{intro}{link_block}\n"
-            f"Session duration: {_format_duration(duration_seconds)}\n\n"
-            "— The Dress Live team"
+        details = f"Session length · {_format_duration(duration_seconds)}"
+        paragraphs = [details]
+        html = render_branded_email(
+            preheader="Pick the dress you loved most.",
+            title=title,
+            intro=intro,
+            paragraphs=paragraphs,
+            cta_label="Open the app" if post_call_link else None,
+            cta_url=post_call_link,
+            footer_note=(
+                "Open the Dress Live app on your phone — the post-call screen "
+                "shows the dresses you just tried."
+            ),
+        )
+
+        greeting = f"Hi {bride_name.split()[0] if bride_name else 'there'},\n\n"
+        text_link = f"\n\nOpen the app: {post_call_link}\n" if post_call_link else "\n"
+        text = (
+            greeting
+            + intro
+            + text_link
+            + f"\n{details}\n\n— The Dress Live team"
         )
 
         await send_email(
-            to_email=bride.email,
+            to_email=bride_email,
             subject="Your virtual fitting is complete — pick your favorite dress",
-            text=body,
+            text=text,
+            html=html,
         )
     except Exception as exc:  # pragma: no cover — log and swallow
-        logger.warning("Completion email dispatch failed for booking %s: %s", booking.id, exc)
+        logger.warning("Completion email dispatch failed for booking %s: %s", booking_id, exc)
 
 
 def _send_completion_push_safe(db: Session, booking: Booking) -> None:
@@ -135,6 +153,7 @@ def _send_completion_push_safe(db: Session, booking: Booking) -> None:
 @router.post("/livekit", response_model=dict)
 async def livekit_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(deps.get_db),
 ) -> Any:
@@ -220,10 +239,20 @@ async def livekit_webhook(
         decart_budget.record_session_seconds(booking.id, duration_seconds)
 
     _send_completion_push_safe(db, booking)
-    # Fire-and-forget the email so a slow Resend call doesn't make
-    # LiveKit time out and retry the webhook. Errors are logged inside.
-    import asyncio
-    asyncio.create_task(_send_completion_email_safe(db, booking, duration_seconds))
+    # Queue the completion email via FastAPI BackgroundTasks so a slow
+    # Resend call can't make LiveKit time out and retry the webhook.
+    # Previously used asyncio.create_task which got orphaned when the
+    # webhook returned — the email frequently never sent.
+    bride = crud_user.get(db, id=booking.user_id)
+    if bride and bride.email:
+        background_tasks.add_task(
+            _send_completion_email_safe,
+            bride.email,
+            bride.full_name,
+            booking.id,
+            duration_seconds,
+            _build_post_call_link(booking.id),
+        )
 
     logger.info(
         "LiveKit room_finished: booking=%s duration=%ss spend=$%.4f",
