@@ -95,6 +95,34 @@ export function BrideCallView({
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
   const remoteAudioTracksRef = useRef<Set<RemoteTrack>>(new Set());
   const consultantVideoRef = useRef<HTMLVideoElement | null>(null);
+  const consultantVideoTrackRef = useRef<RemoteTrack | null>(null);
+  // Ref callback so we can re-attach an already-subscribed track if the
+  // <video> element mounts AFTER trackSubscribed fired (e.g. the JSX cell
+  // remounted because of a parent re-render).
+  const setConsultantVideoEl = useCallback((el: HTMLVideoElement | null) => {
+    consultantVideoRef.current = el;
+    const track = consultantVideoTrackRef.current;
+    if (el && track) {
+      try { track.attach(el); } catch {}
+    }
+  }, []);
+
+  // Decart action funnel — kept in a ref so the LiveKit setup effect doesn't
+  // need `decart` in its deps. Without this, the `decart` object literal
+  // returned by the publish hook changes every render (incl. when this very
+  // effect's own setConnectionState fires), tearing down and recreating the
+  // Room mid-handshake; consultant tracks never settle, and the subscribe-
+  // token publishData races the teardown.
+  const decartActionsRef = useRef({
+    switchDress: decart.switchDress,
+    clearDress: decart.clearDress,
+  });
+  useEffect(() => {
+    decartActionsRef.current = {
+      switchDress: decart.switchDress,
+      clearDress: decart.clearDress,
+    };
+  }, [decart.switchDress, decart.clearDress]);
 
   useEffect(() => {
     if (stage !== "in-call" || !joinData) return;
@@ -113,9 +141,9 @@ export function BrideCallView({
       const msg = parseTryonSwitchMessageFromBytes(payload);
       if (!msg || msg.bookingId !== bookingId) return;
       if (msg.dressId == null) {
-        decart.clearDress();
+        decartActionsRef.current.clearDress();
       } else {
-        decart.switchDress(msg.dressId);
+        decartActionsRef.current.switchDress(msg.dressId);
       }
     };
     const handleTrackSubscribed = (track: RemoteTrack) => {
@@ -124,16 +152,23 @@ export function BrideCallView({
         el.autoplay = true;
         audioContainerRef.current?.appendChild(el);
         remoteAudioTracksRef.current.add(track);
-      } else if (track.kind === Track.Kind.Video && consultantVideoRef.current) {
+      } else if (track.kind === Track.Kind.Video) {
         // Consultant publishes their own camera so the bride can see
-        // who she's talking to (PiP in the corner).
-        track.attach(consultantVideoRef.current);
+        // who she's talking to (PiP in the corner). Stash the track even
+        // if the element isn't ready yet — the ref-callback will attach
+        // it when the <video> mounts.
+        consultantVideoTrackRef.current = track;
+        if (consultantVideoRef.current) {
+          track.attach(consultantVideoRef.current);
+        }
       }
     };
     const handleTrackUnsubscribed = (track: RemoteTrack) => {
       track.detach().forEach((el) => el.remove());
       if (track.kind === Track.Kind.Audio) {
         remoteAudioTracksRef.current.delete(track);
+      } else if (track.kind === Track.Kind.Video && consultantVideoTrackRef.current === track) {
+        consultantVideoTrackRef.current = null;
       }
     };
     const handleParticipantDisconnected = () => {
@@ -177,21 +212,30 @@ export function BrideCallView({
       r.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
       r.disconnect();
     };
-  }, [stage, joinData, bookingId, decart]);
+    // `decart` deliberately excluded — its actions are funnelled through
+    // decartActionsRef so this effect can stay mounted for the call's
+    // lifetime instead of cycling on every parent render.
+  }, [stage, joinData, bookingId]);
 
   // ── 4. When Decart's subscribeToken lands, broadcast it to consultant
+  // Re-broadcast on every participantConnected so a consultant who joins
+  // (or rejoins) after the bride still gets a usable token — LK data
+  // channel doesn't replay missed messages.
   useEffect(() => {
     if (!room || !decart.subscribeToken || bookingId == null) return;
-    try {
-      const payload = buildDecartSubscribeTokenPayload({
-        bookingId,
-        token: decart.subscribeToken,
-      });
-      room.localParticipant.publishData(payload, { reliable: true });
-    } catch {
-      // best-effort — if the consultant doesn't get the token, the
-      // bride still sees herself; only the consultant's view is broken.
-    }
+    const token = decart.subscribeToken;
+    const publish = () => {
+      try {
+        const payload = buildDecartSubscribeTokenPayload({ bookingId, token });
+        room.localParticipant.publishData(payload, { reliable: true });
+      } catch {
+        // best-effort — if the consultant doesn't get the token, the
+        // bride still sees herself; only the consultant's view is broken.
+      }
+    };
+    publish();
+    room.on(RoomEvent.ParticipantConnected, publish);
+    return () => { room.off(RoomEvent.ParticipantConnected, publish); };
   }, [room, decart.subscribeToken, bookingId]);
 
   // ── 5. Render the bride's transformed video fullscreen ─────────────────
@@ -297,7 +341,7 @@ export function BrideCallView({
         {/* Consultant in a corner PiP */}
         <div className="absolute right-4 top-4 w-40 h-56 rounded-xl overflow-hidden border border-white/30 bg-black/80">
           <video
-            ref={consultantVideoRef}
+            ref={setConsultantVideoEl}
             autoPlay
             playsInline
             className="w-full h-full object-cover"
