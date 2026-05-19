@@ -157,10 +157,13 @@ export function useBrideDecartPublish({
           onRemoteStream: (stream: MediaStream) => {
             if (cancelled || !mountedRef.current) return;
             setTransformedStream(stream);
-            // subscribeToken is populated on the client at connect time
-            // (or shortly after). Capture both in onRemoteStream and
-            // again right after connect resolves, whichever fires first.
-            const tok = (realtimeRef.current ?? realtime)?.subscribeToken ?? null;
+            // Pull subscribeToken from the ref ONLY — we cannot close over
+            // `realtime` here because the SDK fires onRemoteStream
+            // synchronously inside the connect() call, before the `const
+            // realtime = await ...` binding is initialized (TDZ). The
+            // post-connect block below covers the case where ref isn't set
+            // yet on the first frame.
+            const tok = realtimeRef.current?.subscribeToken ?? null;
             if (tok) setSubscribeToken(tok);
             setStatus("connected");
           },
