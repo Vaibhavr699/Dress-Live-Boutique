@@ -342,19 +342,47 @@ def _parse_selected_dress_ids(raw: Optional[str]) -> List[int]:
 
 
 def _build_dress_prompt(dress: Dress) -> str:
-    """Compose the short text prompt Decart pairs with the reference
-    image. Name alone is usually enough; description sharpens the result
-    when present. Trimmed to a sensible length so we don't waste tokens
-    on full marketing copy."""
+    """Compose the short text prompt Decart pairs with the reference image.
+
+    Phrasing matters here — Lucy 2.1 VTON treats the prompt as styling
+    intent, not identity. "Blue Lace A-Line Dress — chiffon mermaid..."
+    can confuse the model into generating a generic model wearing that
+    description (different face, different body). Wrapping the dress
+    description in "wearing a/an ..." keeps the focus on the OUTFIT and
+    lets the model treat the input video as the identity source — which
+    is what we want for try-on.
+    """
     name = (dress.name or "").strip()
     desc = (dress.description or "").strip()
-    if not name and not desc:
-        return "wedding dress"
     if name and desc:
-        text = f"{name} — {desc}"
+        # Avoid duplicating the name if the description already includes it
+        if name.lower() in desc.lower():
+            outfit = desc
+        else:
+            outfit = f"{name} — {desc}"
     else:
-        text = name or desc
-    return text[:240]
+        outfit = name or desc or "wedding dress"
+    # Prefix forces a styling interpretation, not a person generation.
+    return f"wearing {outfit}"[:240]
+
+
+def _pick_dress_reference_image(dress: Dress) -> Optional[str]:
+    """Choose the URL Decart fetches as the garment reference.
+
+    `ai_model_url` is the boutique-uploaded background-removed variant
+    intended for AI try-on — exactly what Decart wants. The catalog
+    `image_url` is usually a full-body marketing photo of a different
+    model wearing the dress; if we hand THAT to Decart it'll try to
+    transfer the whole person+outfit onto the bride and we end up with
+    "random faces wearing random dresses". Prefer ai_model_url when
+    set, fall back to image_url so older catalog entries still work
+    (they just look rougher).
+    """
+    candidate = (dress.ai_model_url or "").strip()
+    if candidate:
+        return candidate
+    fallback = (dress.image_url or "").strip()
+    return fallback or None
 
 
 def _load_session_dresses(db: Session, booking: Booking) -> List[SessionDress]:
@@ -375,7 +403,7 @@ def _load_session_dresses(db: Session, booking: Booking) -> List[SessionDress]:
         out.append(SessionDress(
             id=d.id,
             name=d.name,
-            image_url=d.image_url,
+            image_url=_pick_dress_reference_image(d),
             prompt=_build_dress_prompt(d),
         ))
     return out
