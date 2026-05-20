@@ -3,9 +3,9 @@
     "name": "Dress Live Partner",
     "slug": "boutique-partner",
     "version": "1.0.1",
-    "owner": "vaibhavr696",
+    "owner": "atul_kumar007",
     "orientation": "portrait",
-    "icon": "./assets/images/seller_app_logo.png",
+    "icon": "./assets/images/newsellericon.png",
     "scheme": "dress-live-partner",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -26,9 +26,9 @@
       "newArchEnabled": true,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "backgroundColor": "#F4DCDC",
-        "foregroundImage": "./assets/images/seller_app_logo.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/newsellericon.png",
+        "monochromeImage": "./assets/images/newsellericon.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -49,9 +49,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/seller_app_logo.png",
-          "imageWidth": 220,
-          "resizeMode": "contain",
+          "image": "./assets/images/newsellericon.png",
+          "imageWidth": 200,
           "backgroundColor": "#ffffff",
           "dark": {
             "backgroundColor": "#ffffff"
@@ -61,7 +60,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/seller_app_logo.png",
+          "icon": "./assets/images/newsellericon.png",
           "color": "#1A1A1A"
         }
       ],
@@ -82,7 +81,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "f2d0d772-b35a-4e98-8171-d5741cdc636f"
+        "projectId": "4533a2d6-e03f-4e32-b63b-fc93a4d92aa8"
       }
     }
   }
