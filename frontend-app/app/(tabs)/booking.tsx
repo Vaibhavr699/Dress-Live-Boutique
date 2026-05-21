@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking, RefreshControl } from 'react-native';
 import { FadeInView } from '@/components/ui/fade-in-view';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -65,6 +65,10 @@ export default function BookingScreen() {
     return unsub;
   }, []);
 
+  // Stamp the last successful fetch so the focus-effect can skip refetches
+  // when the buyer bounces between tabs quickly.
+  const lastBookingsFetchRef = useRef<number>(0);
+
   const loadBookings = useCallback(async () => {
     if (!useAuthStore.getState().token) {
       setBookings([]);
@@ -77,6 +81,7 @@ export default function BookingScreen() {
       const next = Array.isArray(data) ? (data as Booking[]) : [];
       setBookings(next);
       setBookingHistoryFromApi(next as any);
+      lastBookingsFetchRef.current = Date.now();
       next
         .filter((booking) => ['requested', 'accepted', 'rescheduled'].includes(booking.status))
         .forEach((booking) => {
@@ -97,13 +102,30 @@ export default function BookingScreen() {
     }
   }, [setBookingHistoryFromApi, upsertNotification]);
 
+  // Skip the booking refetch if we loaded within the last 30s. Booking
+  // status can change (partner accepts/rejects) so the gate is shorter
+  // than the catalog one. Pull-to-refresh below bypasses the gate.
+  const BOOKINGS_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
       if (!hydrated) return;
+      const now = Date.now();
+      if (now - lastBookingsFetchRef.current < BOOKINGS_STALE_MS) return;
       setLoading(true);
       loadBookings();
     }, [loadBookings, token, hydrated])
   );
+
+  // Manual pull-to-refresh.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadBookings();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadBookings]);
 
   const cancelBooking = async (id: number) => {
     setUpdatingId(id);
@@ -215,10 +237,18 @@ export default function BookingScreen() {
           </Text>
         </FadeInView>
       ) : (
-        <ScrollView 
-          showsVerticalScrollIndicator={false} 
+        <ScrollView
+          showsVerticalScrollIndicator={false}
           className="flex-1"
           contentContainerStyle={{ paddingTop: 24, paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#1A1A1A"
+              colors={['#1A1A1A']}
+            />
+          }
         >
           {bookings.map((booking) => {
             const isActionable = booking.status === 'accepted' || booking.status === 'rescheduled';

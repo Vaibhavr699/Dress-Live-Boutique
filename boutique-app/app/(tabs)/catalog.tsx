@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, useWindowDimensions } from 'react-native';
+import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, useWindowDimensions, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -84,6 +84,19 @@ export default function CatalogScreen() {
     }
   };
 
+  // Manual pull-to-refresh for the catalog list. Reuses fetchDresses but
+  // keeps `loading` (the full-screen spinner) untouched so only the small
+  // pull-to-refresh control spins.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetchDresses();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchDresses]);
+
   const filteredDresses = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return dresses;
@@ -96,6 +109,14 @@ export default function CatalogScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: 110 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#1A1A1A"
+            colors={['#1A1A1A']}
+          />
+        }
       >
         <View style={{ paddingHorizontal: 20 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
@@ -188,7 +209,7 @@ export default function CatalogScreen() {
                       // Preserve the "top crop" while ensuring no bottom grey gap.
                       style={{ width: cardWidth, height: imageCardHeight + imageTopOffset, marginTop: -imageTopOffset }}
                       contentFit="cover"
-                      cachePolicy="none"
+                      cachePolicy="memory-disk"
                     />
                   </View>
 

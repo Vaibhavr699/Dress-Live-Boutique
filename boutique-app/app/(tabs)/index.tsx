@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert, AppState, RefreshControl } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -414,10 +414,39 @@ export default function BoutiqueDashboard() {
   } | null>(null);
   const [timeGreeting, setTimeGreeting] = useState(getTimeGreeting);
 
+  // Refresh the time-of-day greeting once a minute, but only while the app
+  // is in the foreground. Without the AppState guard, the interval kept
+  // ticking (and re-rendering the entire dashboard subtree) while the
+  // partner had the app backgrounded — a small but constant battery /
+  // perf cost. Also recompute on resume so a partner who left the app
+  // open overnight sees "Good morning" right away instead of waiting up
+  // to a minute for the next tick.
   useEffect(() => {
     setTimeGreeting(getTimeGreeting());
-    const id = setInterval(() => setTimeGreeting(getTimeGreeting()), 60_000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id != null) return;
+      id = setInterval(() => setTimeGreeting(getTimeGreeting()), 60_000);
+    };
+    const stop = () => {
+      if (id != null) {
+        clearInterval(id);
+        id = null;
+      }
+    };
+    if (AppState.currentState === 'active') start();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        setTimeGreeting(getTimeGreeting());
+        start();
+      } else {
+        stop();
+      }
+    });
+    return () => {
+      stop();
+      sub.remove();
+    };
   }, []);
 
   const avatarUri = useMemo(() => {
@@ -430,6 +459,12 @@ export default function BoutiqueDashboard() {
   }, [user?.profile_image_url, user?.profile_image_uri, boutique?.logo_url]);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Tracks the last successful dashboard refresh so the focus-effect can
+  // skip refetches that arrive within the staleness window (see useFocusEffect
+  // below). Mutation paths (delete dress, accept booking, etc.) call
+  // fetchDashboardData directly and the stamp below keeps the gate honest.
+  const lastDashboardFetchRef = useRef<number>(0);
 
   const fetchDashboardData = useCallback(async () => {
     if (!boutiqueId) {
@@ -449,6 +484,7 @@ export default function BoutiqueDashboard() {
       ]);
       setDresses(Array.isArray(dressData) ? dressData : []);
       setBookings(Array.isArray(bookingData) ? (bookingData as Booking[]) : []);
+      lastDashboardFetchRef.current = Date.now();
     } catch (error) {
       console.error('Failed to fetch boutique dashboard data:', error);
     } finally {
@@ -539,13 +575,60 @@ export default function BoutiqueDashboard() {
     [boutiqueId, isStoreVisible]
   );
 
+  // Staleness gate: when the partner switches tabs (Bookings → Dashboard
+  // and back) the dashboard previously fired 3 API calls on every focus,
+  // even if they came back 2 seconds later. Skip the refetch if we
+  // refreshed within the last 30s. Mutation paths (handleDeleteDress, etc.)
+  // call fetchDashboardData directly and that path stamps the ref too, so
+  // a focus event right after a mutation correctly skips its own refetch.
+  const DASHBOARD_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      if (now - lastDashboardFetchRef.current < DASHBOARD_STALE_MS) return;
       void refreshCurrentUser();
       fetchDashboardData();
       fetchBoutiqueVisibility();
     }, [refreshCurrentUser, fetchDashboardData, fetchBoutiqueVisibility])
   );
+
+  // Subscription status banner. Poll on focus (cheap) so a partner whose
+  // card got declined mid-month sees a Reactivate prompt right away.
+  // We don't gate the dashboard itself — only publish actions on the
+  // backend — so this banner is the partner's signal that "you're
+  // still logged in but can't list dresses until you fix billing".
+  const [subStatus, setSubStatus] = useState<'none' | 'active' | 'past_due' | 'canceled' | 'incomplete' | null>(null);
+  const refreshSubStatus = useCallback(async () => {
+    try {
+      const res = (await api.get('/partners/subscription/status')) as { status?: string };
+      const next = (res?.status ?? 'none') as 'none' | 'active' | 'past_due' | 'canceled' | 'incomplete';
+      setSubStatus(next);
+    } catch {
+      // Best-effort.
+    }
+  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      void refreshSubStatus();
+    }, [refreshSubStatus])
+  );
+
+  // Manual pull-to-refresh — bypasses the 30s staleness gate so the
+  // partner can force-pull fresh data on demand (e.g. after a buyer paid
+  // on another device).
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refreshCurrentUser(),
+        fetchDashboardData(),
+        fetchBoutiqueVisibility(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshCurrentUser, fetchDashboardData, fetchBoutiqueVisibility]);
 
   const selectedDressForDelete = dresses[0] ?? null;
 
@@ -609,6 +692,14 @@ export default function BoutiqueDashboard() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ flexGrow: 1, paddingBottom: 100 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#1A1A1A"
+            colors={['#1A1A1A']}
+          />
+        }
       >
         {/* Header */}
         <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 20, paddingBottom: 16 }} className="border-b border-[#F0F0F0]">
@@ -618,22 +709,40 @@ export default function BoutiqueDashboard() {
             >
             Shop Dashboard
           </Text>
-            {/* <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => router.push('/notifications')}
-              className="absolute right-0 top-0 w-10 h-10 items-center justify-center"
-            >
-              <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
-              {unreadCount > 0 ? (
-                <View className="absolute top-1 right-1 min-w-[18px] h-[18px] rounded-full bg-black items-center justify-center px-1">
-                  <Text className="text-white text-[9px] font-bold">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-            </TouchableOpacity> */}
+            {/* Notification bell intentionally hidden — push notifications are the
+                single source of truth; no in-app inbox surface for partners right now. */}
           </View>
         </View>
+
+        {/* Subscription nudge — only shown when billing needs the partner's
+            attention. Active and 'none' (never subscribed, can't really
+            happen post-signup but defensive) hide the banner. */}
+        {subStatus === 'past_due' || subStatus === 'canceled' || subStatus === 'incomplete' ? (
+          <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
+            <View className="bg-[#FFF4EC] border border-[#FFD3B7] px-4 py-3 flex-row items-start">
+              <Ionicons name="alert-circle-outline" size={18} color="#C9491A" style={{ marginRight: 10, marginTop: 1 }} />
+              <View className="flex-1">
+                <Text className="text-[#C9491A] text-[12px] font-bold uppercase tracking-[0.5px] mb-1">
+                  {subStatus === 'past_due' ? 'Payment failed' : 'Subscription needed'}
+                </Text>
+                <Text className="text-[#7A3E1C] text-[11px] leading-4 mb-3">
+                  {subStatus === 'past_due'
+                    ? 'Your last payment failed. Update your card to keep listings live.'
+                    : 'Activate your plan to publish dresses and accept bookings.'}
+                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/subscribe' as any)}
+                  className="bg-[#C9491A] px-3 py-2 self-start"
+                >
+                  <Text className="text-white text-[10px] uppercase tracking-[1px]">
+                    {subStatus === 'past_due' ? 'Update payment' : 'Activate plan'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         {/* Greeting + Shop Status Card (Figma-style) */}
         <View style={{ paddingHorizontal: 20, paddingTop: 24, marginBottom: 10 }}>
@@ -764,7 +873,7 @@ export default function BoutiqueDashboard() {
                   }
                   style={{ width: '100%', height: 148 }}
                   contentFit="cover"
-                  cachePolicy="none"
+                  cachePolicy="memory-disk"
                 />
                 <View className="px-4 flex-row items-center justify-between" style={{ height: 48 }}>
                   <View className="flex-1 pr-4">
@@ -816,7 +925,7 @@ export default function BoutiqueDashboard() {
                         >
                             <View className="flex-row items-center flex-1">
                                 <View className="overflow-hidden mr-4" style={{ width: 70, height: 70 }}>
-                                    <Image 
+                                    <Image
                                         source={
                                           order.dresses?.[0]?.image_url
                                             ? { uri: order.dresses[0].image_url }
@@ -824,6 +933,7 @@ export default function BoutiqueDashboard() {
                                         }
                                         style={{ width: '100%', height: '100%' }}
                                         contentFit="cover"
+                                        cachePolicy="memory-disk"
                                     />
                                 </View>
                                 <View className="flex-1">
@@ -917,7 +1027,12 @@ export default function BoutiqueDashboard() {
                             <View className="flex-row items-center flex-1">
                                 <View className="bg-[#F7F7F7] mr-4 overflow-hidden" style={{ width: 48, height: 48 }}>
                                   {fitting.customer?.profile_image_url ? (
-                                    <Image source={{ uri: fitting.customer.profile_image_url }} style={{ width: '100%', height: '100%' }} />
+                                    <Image
+                                      source={{ uri: fitting.customer.profile_image_url }}
+                                      style={{ width: '100%', height: '100%' }}
+                                      contentFit="cover"
+                                      cachePolicy="memory-disk"
+                                    />
                                   ) : null}
                                 </View>
                                 <View className="flex-1">

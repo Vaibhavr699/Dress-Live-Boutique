@@ -89,6 +89,28 @@ class Settings(BaseSettings):
     BODYGRAM_API_KEY: Optional[str] = None
     BODYGRAM_ORG_ID: Optional[str] = None
 
+    # ── Stripe (Connect marketplace) ─────────────────────────────────────
+    # Test mode for now. Buyer pays via PaymentSheet → PaymentIntent with
+    # transfer_data.destination=boutique.stripe_account_id; platform keeps
+    # `PLATFORM_FEE_BPS` basis points as application_fee_amount.
+    STRIPE_SECRET_KEY: Optional[str] = None
+    STRIPE_PUBLISHABLE_KEY: Optional[str] = None
+    STRIPE_WEBHOOK_SECRET: Optional[str] = None
+    # Basis points the platform keeps from each order. 500 = 5%.
+    PLATFORM_FEE_BPS: int = 500
+    STRIPE_CURRENCY: str = "eur"
+    # URLs Stripe redirects the partner back to after Connect onboarding.
+    # These are mobile deep links handled by the boutique-app's expo-router.
+    STRIPE_CONNECT_RETURN_URL: str = "dress-live-partner://stripe-return"
+    STRIPE_CONNECT_REFRESH_URL: str = "dress-live-partner://stripe-refresh"
+
+    # ── Stripe Billing (partner subscriptions) ───────────────────────────
+    # Recurring Price ids minted in the Stripe dashboard (one per plan).
+    # The signup wizard's plan picker maps `monthly|annual` → these.
+    # If unset, /partners/subscription/checkout 500s with a clear error.
+    STRIPE_PRICE_MONTHLY: Optional[str] = None
+    STRIPE_PRICE_ANNUAL: Optional[str] = None
+
     # ── RunPod GPU inference ─────────────────────────────────────────────
     # Off by default so a misconfigured deploy can't burn credits. Flip
     # RUNPOD_ENABLED=true only after the budget guard has been verified.

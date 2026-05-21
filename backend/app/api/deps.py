@@ -56,3 +56,33 @@ def get_current_active_superuser(
             status_code=400, detail="The user doesn't have enough privileges"
         )
     return current_user
+
+
+def require_active_subscription(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """Block partner-mutation routes when the boutique doesn't have an
+    active Stripe subscription. 402 Payment Required is the semantically
+    correct status (client should redirect to /subscribe). Buyers are
+    waved through — this only gates partner roles. Superusers bypass the
+    check so an admin can fix things server-side."""
+    if current_user.is_superuser:
+        return current_user
+    if current_user.role != "partner":
+        # Non-partners shouldn't ever hit this dep, but if they do we
+        # don't want to silently allow it. Fall through to 403.
+        raise HTTPException(status_code=403, detail="Only partners can call this endpoint.")
+    if not current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Partner is not linked to a boutique.")
+    from app.models.boutique import Boutique  # local import to avoid cycles
+    boutique = db.query(Boutique).filter(Boutique.id == current_user.boutique_id).first()
+    if boutique is None:
+        raise HTTPException(status_code=404, detail="Boutique not found.")
+    if boutique.subscription_status != "active":
+        raise HTTPException(
+            status_code=402,
+            detail="Your Dress Live Partner subscription is not active. "
+                   "Reactivate from the wallet to publish dresses.",
+        )
+    return current_user

@@ -166,6 +166,11 @@ _KIND_DEFAULTS: dict[str, dict[str, Optional[str]]] = {
     # action and a tap opens the call screen.
     "video_call_incoming": {"channel_id": "video-call", "category_id": "booking-update", "sound": "default"},
     "video_call_buyer_joined": {"channel_id": "video-call", "category_id": "booking-update", "sound": "default"},
+    "video_call_partner_joined": {"channel_id": "video-call", "category_id": "booking-update", "sound": "default"},
+    # Order / payment lifecycle. `bookings-high` channel reuses the same
+    # high-importance heads-up display we already approved with the user.
+    "order_paid": {"channel_id": "bookings-high", "category_id": "booking-update", "sound": "default"},
+    "order_refunded": {"channel_id": "bookings-high", "category_id": "booking-update", "sound": "default"},
     # Future kinds
     "price_drop": {"channel_id": "recommendations", "category_id": None, "sound": None},
     "promotion": {"channel_id": "promotions", "category_id": None, "sound": None},

@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -103,12 +103,19 @@ export default function BookingsScreen() {
   const [rescheduleSlots, setRescheduleSlots] = useState<Record<number, string>>({});
   // const [search, setSearch] = useState('');
 
+  // Stamp the last successful fetch so the focus-effect can skip refetches
+  // inside the staleness window. updateBooking mutates the local list
+  // optimistically, so it doesn't need to call loadBookings — but if any
+  // path ever does, it should stamp this ref too.
+  const lastBookingsFetchRef = useRef<number>(0);
+
   const loadBookings = useCallback(async () => {
     try {
       const data = await api.get('/bookings/partner');
       const next = Array.isArray(data) ? (data as any[]).filter(isValidBooking) : [];
       setBookings(next);
       setActionError(null);
+      lastBookingsFetchRef.current = Date.now();
     } catch (error) {
       console.error('Failed to load partner bookings:', error);
       setActionError(error instanceof Error ? error.message : 'Could not load booking inbox.');
@@ -117,8 +124,14 @@ export default function BookingsScreen() {
     }
   }, []);
 
+  // Skip the full booking refetch if we loaded within the last 30s. Every
+  // tab switch (Dashboard → Bookings → Dashboard → ...) used to re-fetch
+  // the entire partner inbox.
+  const BOOKINGS_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      if (now - lastBookingsFetchRef.current < BOOKINGS_STALE_MS) return;
       setLoading(true);
       loadBookings();
     }, [loadBookings])
@@ -238,6 +251,19 @@ export default function BookingsScreen() {
   const isBookingLocked = (booking: Booking) =>
     booking.status === 'rejected' || booking.status === 'completed';
 
+  // Manual pull-to-refresh — bypasses the 30s staleness gate. Doesn't
+  // flip `loading` (which shows the full-screen spinner); just spins the
+  // tiny refresh control in the scroll header.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadBookings();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadBookings]);
+
   const matchesSearch = (booking: Booking) => {
     return true;
     // const q = search.trim().toLowerCase();
@@ -252,6 +278,14 @@ export default function BookingsScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: insets.top + 10, paddingBottom: insets.bottom + 110 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#1A1A1A"
+            colors={['#1A1A1A']}
+          />
+        }
       >
         <View className="border-b border-[#EFEFEF] px-6 pb-6 pt-3 items-center">
           <Text className="text-[15px] font-semibold tracking-[0.1px] text-black">Calendar</Text>
@@ -347,51 +381,70 @@ export default function BookingsScreen() {
                     <Text className="text-[11px] text-black/85 leading-5">{dressSummary(booking)}</Text>
                   </View>
 
-                  <View className="flex-row mt-2">
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      disabled={updatingBookingId === booking.id}
-                      onPress={() => updateBooking(booking.id, { status: 'accepted' })}
-                      className="flex-1 border border-[#1A1A1A] py-4 items-center justify-center mr-1"
-                    >
-                      <Text className="text-[10px] text-black/80">
-                        Accept Call Request
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      disabled={updatingBookingId === booking.id}
-                      onPress={() => updateBooking(booking.id, { status: 'rejected' })}
-                      className="flex-1 bg-[#C9491A] py-4 items-center justify-center ml-1"
-                    >
-                      <Text className="text-[10px] text-white">
-                        Reject Call Request
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
+                  {(() => {
+                    const isUpdating = updatingBookingId === booking.id;
+                    return (
+                      <>
+                        <View className="flex-row mt-2">
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            disabled={isUpdating}
+                            onPress={() => updateBooking(booking.id, { status: 'accepted' })}
+                            className="flex-1 border border-[#1A1A1A] py-4 items-center justify-center mr-1"
+                            style={{ opacity: isUpdating ? 0.55 : 1 }}
+                          >
+                            {isUpdating ? (
+                              <ActivityIndicator color="#1A1A1A" size="small" />
+                            ) : (
+                              <Text className="text-[10px] text-black/80">Accept Call Request</Text>
+                            )}
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            disabled={isUpdating}
+                            onPress={() => updateBooking(booking.id, { status: 'rejected' })}
+                            className="flex-1 bg-[#C9491A] py-4 items-center justify-center ml-1"
+                            style={{ opacity: isUpdating ? 0.55 : 1 }}
+                          >
+                            {isUpdating ? (
+                              <ActivityIndicator color="#FFFFFF" size="small" />
+                            ) : (
+                              <Text className="text-[10px] text-white">Reject Call Request</Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
 
-                  <View className="mt-3 flex-row items-center">
-                    <TextInput
-                      value={rescheduleSlots[booking.id] ?? booking.scheduled_for}
-                      onChangeText={(value) =>
-                        setRescheduleSlots((current) => ({
-                          ...current,
-                          [booking.id]: value,
-                        }))
-                      }
-                      placeholder="Enter a new date and time"
-                      placeholderTextColor="#999999"
-                      className="flex-1 border border-[#E5E5E5] px-4 py-3 text-[11px] text-black mr-2"
-                    />
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      disabled={updatingBookingId === booking.id}
-                      onPress={() => handleReschedule(booking)}
-                      className="border border-[#1A1A1A] px-4 py-3"
-                    >
-                      <Text className="text-[10px] text-black/80">Reschedule</Text>
-                    </TouchableOpacity>
-                  </View>
+                        <View className="mt-3 flex-row items-center">
+                          <TextInput
+                            value={rescheduleSlots[booking.id] ?? booking.scheduled_for}
+                            onChangeText={(value) =>
+                              setRescheduleSlots((current) => ({
+                                ...current,
+                                [booking.id]: value,
+                              }))
+                            }
+                            placeholder="Enter a new date and time"
+                            placeholderTextColor="#999999"
+                            editable={!isUpdating}
+                            className="flex-1 border border-[#E5E5E5] px-4 py-3 text-[11px] text-black mr-2"
+                          />
+                          <TouchableOpacity
+                            activeOpacity={0.85}
+                            disabled={isUpdating}
+                            onPress={() => handleReschedule(booking)}
+                            className="border border-[#1A1A1A] px-4 py-3"
+                            style={{ opacity: isUpdating ? 0.55 : 1, minWidth: 92, minHeight: 38, alignItems: 'center', justifyContent: 'center' }}
+                          >
+                            {isUpdating ? (
+                              <ActivityIndicator color="#1A1A1A" size="small" />
+                            ) : (
+                              <Text className="text-[10px] text-black/80">Reschedule</Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </>
+                    );
+                  })()}
                 </View>
               ))}
             </View>
@@ -426,7 +479,7 @@ export default function BookingsScreen() {
                                 }
                                 style={{ width: '100%', height: '100%' }}
                                 contentFit="cover"
-                                cachePolicy="none"
+                                cachePolicy="memory-disk"
                                 onError={(e) =>
                                   console.log('Booking customer image failed', {
                                     url: customerImageUrl,
@@ -523,7 +576,7 @@ export default function BookingsScreen() {
                                 }
                                 style={{ width: '100%', height: '100%' }}
                                 contentFit="cover"
-                                cachePolicy="none"
+                                cachePolicy="memory-disk"
                                 onError={(e) =>
                                   console.log('Booking customer image failed', {
                                     url: customerImageUrl,
@@ -590,7 +643,7 @@ export default function BookingsScreen() {
                           }
                           style={{ width: '100%', height: '100%' }}
                           contentFit="cover"
-                          cachePolicy="none"
+                          cachePolicy="memory-disk"
                           onError={(e) =>
                             console.log('Selected booking customer image failed', {
                               url: selectedBooking.customer?.profile_image_url,

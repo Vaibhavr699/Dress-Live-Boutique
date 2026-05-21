@@ -407,7 +407,11 @@ export default function SignupScreen() {
 
       const freshUser = await api.get('/users/me');
       setUser(freshUser as any);
-      router.replace('/(tabs)');
+      // Send the new partner straight to the subscription paywall.
+      // /(tabs) won't actually let them publish anything until the
+      // backend's require_active_subscription guard sees subscription_status='active',
+      // so we make payment the next step instead of a dead-end dashboard.
+      router.replace({ pathname: '/subscribe', params: { plan } } as any);
     } catch (error: any) {
       Alert.alert('Signup Failed', error.message || 'An unexpected error occurred');
     } finally {

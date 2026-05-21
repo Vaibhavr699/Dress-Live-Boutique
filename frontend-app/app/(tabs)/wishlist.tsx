@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, Alert, StyleSheet, RefreshControl } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -83,6 +83,10 @@ export default function WishlistScreen() {
   const removeGuest = useShortlistStore((state) => state.remove);
   const [wishlistItems, setWishlistItems] = useState<Dress[]>([]);
   const [loading, setLoading] = useState(true);
+  // Per-item "removing" lock so the heart icon can show a disabled state
+  // and we drop double-taps that would race the optimistic removal.
+  const [removingIds, setRemovingIds] = useState<Set<number>>(new Set());
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadWishlist = useCallback(async () => {
     try {
@@ -132,18 +136,39 @@ export default function WishlistScreen() {
   );
 
   const removeFromWishlist = async (dressId: number) => {
+    if (removingIds.has(dressId)) return;
     if (!isAuthenticated) {
       removeGuest(dressId);
       setWishlistItems((prev) => prev.filter((item) => item.id !== dressId));
       return;
     }
+    setRemovingIds((prev) => {
+      const next = new Set(prev);
+      next.add(dressId);
+      return next;
+    });
     try {
       await api.delete(`/shortlists/me/${dressId}`);
       setWishlistItems((prev) => prev.filter((item) => item.id !== dressId));
     } catch (error) {
       Alert.alert('Wishlist', error instanceof Error ? error.message : 'Could not remove this dress.');
+    } finally {
+      setRemovingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(dressId);
+        return next;
+      });
     }
   };
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadWishlist();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadWishlist]);
 
   const isEmpty = wishlistItems.length === 0;
 
@@ -193,6 +218,14 @@ export default function WishlistScreen() {
           estimatedItemSize={148}
           contentContainerStyle={{ paddingTop: 28, paddingBottom: 100 }}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#1A1A1A"
+              colors={['#1A1A1A']}
+            />
+          }
           renderItem={({ item, index }: ListRenderItemInfo<Dress>) => {
             const imageSource = item.image_url
               ? { uri: item.image_url }
@@ -276,14 +309,20 @@ export default function WishlistScreen() {
                       activeOpacity={0.7}
                       hitSlop={{ top: 14, bottom: 14, left: 28, right: 8 }}
                       onPress={() => removeFromWishlist(item.id)}
+                      disabled={removingIds.has(item.id)}
                       style={{
                         justifyContent: 'center',
                         alignItems: 'center',
                         minHeight: 36,
                         paddingVertical: 8,
+                        opacity: removingIds.has(item.id) ? 0.4 : 1,
                       }}
                     >
-                      <Ionicons name="heart" size={17} color="#000000" />
+                      {removingIds.has(item.id) ? (
+                        <ActivityIndicator color="#1A1A1A" size="small" />
+                      ) : (
+                        <Ionicons name="heart" size={17} color="#000000" />
+                      )}
                     </TouchableOpacity>
                   </View>
                 </View>

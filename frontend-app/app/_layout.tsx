@@ -1,6 +1,7 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import 'react-native-reanimated';
 import 'react-native-gesture-handler';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -295,9 +296,24 @@ export default function RootLayout() {
     return <BootScreen />;
   }
 
+  // Publishable key is safe to ship in the client; the SDK refuses to do
+  // anything sensitive without a server-minted PaymentIntent client_secret.
+  // We hardcode an env-driven fallback so dev builds without the env var
+  // still mount the provider (Stripe calls fail with a clear error then).
+  const stripePublishableKey =
+    (process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY as string | undefined) || '';
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
     <ErrorBoundary>
+    <StripeProvider
+      publishableKey={stripePublishableKey}
+      // Apple Pay merchant id — needs a matching merchant ID in the Apple
+      // Developer portal before iOS Apple Pay actually works. Without it,
+      // Apple Pay simply doesn't appear in PaymentSheet. Card + Google Pay
+      // keep working.
+      merchantIdentifier="merchant.com.atul.customer.app"
+    >
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <View style={{ flex: 1 }}>
       <Stack
@@ -324,8 +340,6 @@ export default function RootLayout() {
         <Stack.Screen name="profile-verify-password" options={{ gestureEnabled: true }} />
         <Stack.Screen name="profile-delete-account" options={{ gestureEnabled: true }} />
         <Stack.Screen name="profile-confirm-delete" options={{ gestureEnabled: true }} />
-        <Stack.Screen name="profile-payment-methods" options={{ gestureEnabled: true }} />
-        <Stack.Screen name="profile-payment-details" options={{ gestureEnabled: true }} />
         <Stack.Screen name="booking-history" options={{ gestureEnabled: true }} />
         <Stack.Screen name="notifications" options={{ gestureEnabled: true }} />
         <Stack.Screen name="video-call-summary" options={{ gestureEnabled: true }} />
@@ -340,6 +354,7 @@ export default function RootLayout() {
       <StatusBar style="auto" />
       </View>
     </ThemeProvider>
+    </StripeProvider>
     </ErrorBoundary>
     </GestureHandlerRootView>
   );

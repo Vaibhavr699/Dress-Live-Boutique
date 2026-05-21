@@ -1,6 +1,7 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import 'react-native-reanimated';
 import "../global.css";
 
@@ -234,7 +235,7 @@ export default function RootLayout() {
           } catch {
             // If the silent action fails (offline, token expired, etc.), fall
             // back to opening the booking screen so the partner can retry.
-            router.push('/(tabs)/booking');
+            router.push('/(tabs)/bookings');
           }
           return;
         }
@@ -247,12 +248,18 @@ export default function RootLayout() {
           if (Number.isFinite(bookingId)) {
             router.push({ pathname: '/video-call', params: { bookingId: String(bookingId) } });
           } else {
-            router.push('/(tabs)/booking');
+            router.push('/(tabs)/bookings');
           }
           return;
         }
         if (action === 'booking') {
-          router.push('/(tabs)/booking');
+          router.push('/(tabs)/bookings');
+        }
+        // Payment lifecycle pushes (order_paid, order_refunded) land the
+        // partner on the wallet so they can verify the new balance / see
+        // the order entry.
+        if (action === 'order') {
+          router.push('/earning-wallet');
         }
       });
       return () => sub.remove();
@@ -270,7 +277,16 @@ export default function RootLayout() {
     return <BootScreen />;
   }
 
+  // Same pattern as the buyer app — publishable key is safe to ship; SDK
+  // refuses sensitive ops without a server-minted client_secret.
+  const stripePublishableKey =
+    (process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY as string | undefined) || '';
+
   return (
+    <StripeProvider
+      publishableKey={stripePublishableKey}
+      merchantIdentifier="merchant.com.atul.boutique.partner"
+    >
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <View style={{ flex: 1 }}>
       <Stack>
@@ -293,20 +309,22 @@ export default function RootLayout() {
         <Stack.Screen name="edit-address" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="store-opening-hours" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="store-opening-hours-editor" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="payment-methods" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="payment-method-details" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="delete-account" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="delete-account-confirmation" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="earning-wallet" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="withdraw-funds" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        {/* Stripe Connect onboarding redirects land here, then bounce to the wallet. */}
+        <Stack.Screen name="stripe-return" options={{ headerShown: false, animation: 'fade' }} />
+        <Stack.Screen name="stripe-refresh" options={{ headerShown: false, animation: 'fade' }} />
+        <Stack.Screen name="subscribe" options={{ headerShown: false, animation: 'slide_from_bottom' }} />
         <Stack.Screen name="security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        {/* <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} /> */}
+        <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />
       </Stack>
       <IncomingVideoCallBar app="partner" />
       <StatusBar style="auto" />
       </View>
     </ThemeProvider>
+    </StripeProvider>
   );
 }
 

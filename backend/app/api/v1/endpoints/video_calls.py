@@ -194,6 +194,30 @@ def get_livekit_token(
                 )
             except Exception as exc:  # pragma: no cover — never fail the call over a notif
                 logger.warning("video_call_buyer_joined dispatch failed: %s", exc)
+    elif current_user.role == "partner":
+        # Mirror: when the consultant pulls a token, tell the bride her
+        # stylist just walked in. Without this, a bride sitting on her
+        # laptop with the email-link page open has no signal that the
+        # session is about to start.
+        buyer_id = _other_party_user_id(db, booking, current_user)
+        if buyer_id is not None:
+            partner_name = (current_user.full_name or "").strip() or "Your stylist"
+            try:
+                notifications_service.dispatch(
+                    db,
+                    user_id=buyer_id,
+                    kind="video_call_partner_joined",
+                    title="Your stylist is here",
+                    body=f"{partner_name} joined the video call. Tap to open.",
+                    action_type="video_call",
+                    action_id=booking.id,
+                    payload={
+                        "booking_id": booking.id,
+                        "scheduled_for": booking.scheduled_for,
+                    },
+                )
+            except Exception as exc:  # pragma: no cover — never fail the call over a notif
+                logger.warning("video_call_partner_joined dispatch failed: %s", exc)
 
     return LiveKitTokenResponse(url=settings.LIVEKIT_URL, token=token, room=room, identity=identity)
 

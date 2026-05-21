@@ -71,7 +71,8 @@ export default function ProfileScreen() {
   const menuItems = [
     { label: 'ADRESSES', route: '/profile-edit-address' },
     { label: 'MY MEASUREMENTS', route: '/profile-my-measurements' },
-    { label: 'PAYMENT METHODS', route: '/profile-payment-methods' },
+    // Payment methods are now managed inside Stripe's PaymentSheet at
+    // checkout time — there's no longer a standalone screen.
     // { label: 'BOOKING HISTORY', route: '/booking-history' },
   ];
 

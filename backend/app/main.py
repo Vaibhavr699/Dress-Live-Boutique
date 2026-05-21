@@ -4,7 +4,6 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.api.v1.api import api_router
 from app.core.config import settings
-from app.db.base import Base
 from app.db.session import engine
 
 app = FastAPI(
@@ -35,9 +34,19 @@ else:
 app.include_router(api_router, prefix="/api/v1")
 
 @app.on_event("startup")
-def ensure_boutique_visibility_column() -> None:
-    # Lightweight schema guard for local/dev environments without migrations.
-    Base.metadata.create_all(bind=engine)
+def backfill_legacy_columns() -> None:
+    """Idempotent ALTER TABLEs for columns that predate proper Alembic
+    migrations on this codebase. Safe to run every boot — each one is
+    `IF NOT EXISTS`. New schema changes should go through Alembic instead;
+    this hook is just patching old deployments that were created before
+    those columns existed.
+
+    Previously this also called `Base.metadata.create_all(bind=engine)`,
+    which silently CREATE-TABLE'd new models on boot. That conflicted with
+    Alembic — booting uvicorn before `alembic upgrade head` would create
+    the tables, then the migration would fail with "relation already
+    exists". Removed; run `alembic upgrade head` to create new tables.
+    """
     with engine.begin() as connection:
         connection.execute(
             text(

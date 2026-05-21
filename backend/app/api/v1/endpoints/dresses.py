@@ -89,6 +89,9 @@ def create_dress(
     *,
     db: Session = Depends(deps.get_db),
     dress_in: DressCreate,
+    # Gates this route on an active partner subscription. The dep also
+    # enforces partner role + boutique linkage. 402 if no active sub.
+    current_user: User = Depends(deps.require_active_subscription),
 ) -> Any:
     """
     Create new dress.
@@ -163,6 +166,7 @@ def update_dress(
     db: Session = Depends(deps.get_db),
     id: int,
     dress_in: DressUpdate,
+    current_user: User = Depends(deps.require_active_subscription),
 ) -> Any:
     """
     Update a dress.

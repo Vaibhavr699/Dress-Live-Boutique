@@ -7,7 +7,8 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app",
+        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_51TTGjmIktpAAQfyrHvGDomKbANEh3p6jcCkpp2fuJGTK13aFnYNtOjp8MOiE9I0wKIpQbmLW9T5sKfH3kbxw5BMy00UDhro0E8"
       },
       "android": {
         "buildType": "apk"
@@ -19,7 +20,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app"
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app",
+        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_51TTGjmIktpAAQfyrHvGDomKbANEh3p6jcCkpp2fuJGTK13aFnYNtOjp8MOiE9I0wKIpQbmLW9T5sKfH3kbxw5BMy00UDhro0E8"
       }
     }
   }

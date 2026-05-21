@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { Alert, View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { Alert, View, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +43,14 @@ export default function CartScreen() {
   const selectOnly = useCartStore((state) => state.selectOnly);
   const addGuestShortlist = useShortlistStore((state) => state.add);
   const [wishlistedIds, setWishlistedIds] = useState<number[]>([]);
+  // Per-item "adding to wishlist" lock so the heart icon can show a
+  // disabled state and we drop double-taps that would queue duplicate
+  // POSTs.
+  const [wishlistPendingIds, setWishlistPendingIds] = useState<Set<number>>(new Set());
+  // Stamp of the last successful /shortlists/me load so the focus-effect
+  // can skip refetches inside the staleness window.
+  const lastWishlistFetchRef = useRef<number>(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const toggleSelect = (id: string) => {
     const item = cartItems.find((i) => i.id === id);
@@ -80,40 +88,57 @@ export default function CartScreen() {
   );
   const isEmpty = cartItems.length === 0;
 
+  const refreshWishlist = useCallback(async () => {
+    if (!isAuthenticated) {
+      setWishlistedIds(useShortlistStore.getState().dressIds);
+      lastWishlistFetchRef.current = Date.now();
+      return;
+    }
+    try {
+      const data = await api.get('/shortlists/me');
+      const ids = Array.isArray(data)
+        ? data.map((item: { dress_id: number }) => Number(item.dress_id)).filter(Number.isFinite)
+        : [];
+      setWishlistedIds(ids);
+      lastWishlistFetchRef.current = Date.now();
+    } catch {
+      setWishlistedIds([]);
+    }
+  }, [isAuthenticated]);
+
+  // The wishlist rarely changes from the buyer's side while they're
+  // looking at the cart, so a 60s gate is plenty. Pull-to-refresh below
+  // always bypasses it.
+  const WISHLIST_STALE_MS = 60_000;
   useFocusEffect(
     useCallback(() => {
-      let cancelled = false;
-
-      if (!isAuthenticated) {
-        setWishlistedIds(useShortlistStore.getState().dressIds);
-        return;
-      }
-
-      (async () => {
-        try {
-          const data = await api.get('/shortlists/me');
-          if (cancelled) return;
-          const ids = Array.isArray(data)
-            ? data.map((item: { dress_id: number }) => Number(item.dress_id)).filter(Number.isFinite)
-            : [];
-          setWishlistedIds(ids);
-        } catch {
-          if (!cancelled) setWishlistedIds([]);
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-      };
-    }, [isAuthenticated])
+      const now = Date.now();
+      if (now - lastWishlistFetchRef.current < WISHLIST_STALE_MS) return;
+      void refreshWishlist();
+    }, [refreshWishlist])
   );
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshWishlist();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshWishlist]);
 
   const handleAddToWishlist = async (itemId: string) => {
     const dressId = Number(itemId);
     if (!Number.isFinite(dressId)) return;
     if (wishlistedIds.includes(dressId)) return;
+    if (wishlistPendingIds.has(dressId)) return;
 
     setWishlistedIds((prev) => (prev.includes(dressId) ? prev : [...prev, dressId]));
+    setWishlistPendingIds((prev) => {
+      const next = new Set(prev);
+      next.add(dressId);
+      return next;
+    });
 
     if (!isAuthenticated) {
       const result = addGuestShortlist(dressId);
@@ -121,6 +146,11 @@ export default function CartScreen() {
         setWishlistedIds((prev) => prev.filter((id) => id !== dressId));
         Alert.alert('Wishlist', 'You can select a maximum of 4 dresses.');
       }
+      setWishlistPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(dressId);
+        return next;
+      });
       return;
     }
 
@@ -129,6 +159,12 @@ export default function CartScreen() {
     } catch (error) {
       setWishlistedIds((prev) => prev.filter((id) => id !== dressId));
       Alert.alert('Wishlist', error instanceof Error ? error.message : 'Could not add this dress to your wishlist.');
+    } finally {
+      setWishlistPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(dressId);
+        return next;
+      });
     }
   };
 
@@ -169,10 +205,18 @@ export default function CartScreen() {
         </View>
       ) : (
         <>
-          <ScrollView 
-            showsVerticalScrollIndicator={false} 
+          <ScrollView
+            showsVerticalScrollIndicator={false}
             className="flex-1"
             contentContainerStyle={{ paddingTop: 24, paddingBottom: 120 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor="#1A1A1A"
+                colors={['#1A1A1A']}
+              />
+            }
           >
             {cartItems.map((item) => (
               <View key={item.id} className="flex-row items-start px-5 mb-6" style={{ height: 110 }}>
@@ -218,6 +262,8 @@ export default function CartScreen() {
                         className="w-6 h-6 items-end justify-center"
                         onPress={() => handleAddToWishlist(item.id)}
                         activeOpacity={0.7}
+                        disabled={wishlistPendingIds.has(Number(item.id))}
+                        style={{ opacity: wishlistPendingIds.has(Number(item.id)) ? 0.5 : 1 }}
                       >
                         {wishlistedIds.includes(Number(item.id)) ? (
                           <Ionicons name="heart" size={17} color="#000000" />

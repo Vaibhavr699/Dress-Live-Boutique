@@ -14,6 +14,7 @@ import {
   UIManager,
   Dimensions,
   StyleSheet,
+  RefreshControl,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -196,6 +197,10 @@ export default function DashboardScreen() {
     return Object.values(boutiques).some((b) => typeof b.latitude === 'number' && typeof b.longitude === 'number');
   }, [boutiques, currentCoords]);
 
+  // Stamp the last successful catalog refresh so the focus-effect below
+  // can skip duplicate fetches when the buyer bounces between tabs.
+  const lastCatalogFetchRef = useRef<number>(0);
+
   const loadCatalog = useCallback(async () => {
     try {
       const [dressData, boutiqueData] = await Promise.all([
@@ -213,6 +218,7 @@ export default function DashboardScreen() {
           return acc;
         }, {})
       );
+      lastCatalogFetchRef.current = Date.now();
 
       // Warm the image cache for the first few boutique covers so they render
       // instantly when the user starts scrolling.
@@ -237,12 +243,29 @@ export default function DashboardScreen() {
     }
   }, []);
 
+  // Skip the catalog refetch if we loaded within the last 60s — bouncing
+  // between tabs used to fire a fresh /dresses + /boutiques pair each time.
+  // Pull-to-refresh below always bypasses this gate.
+  const CATALOG_STALE_MS = 60_000;
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      if (now - lastCatalogFetchRef.current < CATALOG_STALE_MS) return;
       setLoading(true);
       loadCatalog();
     }, [loadCatalog])
   );
+
+  // Manual pull-to-refresh — bypasses the staleness gate.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadCatalog();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadCatalog]);
 
   const visibleDresses = useMemo(() => {
     const categoryFiltered =
@@ -530,25 +553,8 @@ export default function DashboardScreen() {
             Dress Live
           </Text>
 
-          {/* <TouchableOpacity
-            onPress={() => router.push('/notifications' as any)}
-            className="absolute right-0"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ zIndex: 20 }}
-          >
-            <View className="relative">
-              <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
-              {unreadCount > 0 ? (
-                <View
-                  className="absolute -top-1 -right-2 bg-black rounded-full min-w-[16px] h-[16px] items-center justify-center px-1"
-                >
-                  <Text className="text-white text-[9px] font-bold">
-                    {unreadCount > 9 ? '9+' : String(unreadCount)}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          </TouchableOpacity> */}
+          {/* Notification bell intentionally hidden — push notifications are the
+              single source of truth; no in-app inbox surface for buyers right now. */}
         </View>
 
         <View style={{ paddingTop: 4, paddingBottom: 4 }}>
@@ -601,6 +607,14 @@ export default function DashboardScreen() {
           estimatedItemSize={300}
           contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#1A1A1A"
+              colors={['#1A1A1A']}
+            />
+          }
           ListHeaderComponent={
             <View style={{ marginHorizontal: -20 }}>
               <TouchableOpacity

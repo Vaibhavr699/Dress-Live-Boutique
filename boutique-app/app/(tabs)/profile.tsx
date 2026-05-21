@@ -11,7 +11,9 @@ const LOGOUT_ICON = require('../../assets/svg/Logout.svg');
 
 const MENU_ITEMS = [
   { label: 'Business Adresse', route: '/edit-address' },
-  { label: 'Payment Methods', route: '/payment-methods' },
+  // Payment methods moved into Earning Wallet — the partner now connects
+  // a bank account via Stripe Connect from there instead of a separate
+  // mock screen.
   { label: 'Earning Wallet', route: '/earning-wallet' },
   { label: 'Business Hours Availability', route: '/store-opening-hours' },
   { label: 'Security And Password', route: '/security-password' },
