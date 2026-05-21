@@ -100,9 +100,16 @@ class Settings(BaseSettings):
     PLATFORM_FEE_BPS: int = 500
     STRIPE_CURRENCY: str = "eur"
     # URLs Stripe redirects the partner back to after Connect onboarding.
-    # These are mobile deep links handled by the boutique-app's expo-router.
-    STRIPE_CONNECT_RETURN_URL: str = "dress-live-partner://stripe-return"
-    STRIPE_CONNECT_REFRESH_URL: str = "dress-live-partner://stripe-refresh"
+    # Stripe rejects custom deep-link schemes for AccountLink, so we point
+    # at https landing pages on this backend (see app/main.py) which then
+    # best-effort deep-link into the boutique-app via the custom scheme.
+    # Override per-environment if the API ever moves domains.
+    STRIPE_CONNECT_RETURN_URL: str = (
+        "https://dress-live-boutique-production.up.railway.app/stripe-return"
+    )
+    STRIPE_CONNECT_REFRESH_URL: str = (
+        "https://dress-live-boutique-production.up.railway.app/stripe-refresh"
+    )
 
     # ── Stripe Billing (partner subscriptions) ───────────────────────────
     # Recurring Price ids minted in the Stripe dashboard (one per plan).

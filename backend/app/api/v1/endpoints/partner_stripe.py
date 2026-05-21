@@ -57,6 +57,36 @@ async def create_connect_link(
 ) -> Any:
     boutique = _require_partner_boutique(db, current_user)
     try:
+        # Self-heal an orphaned `stripe_account_id`. This happens when an
+        # account was created against a different Stripe key/env (e.g.
+        # the partner tapped Connect before Connect was enabled on the
+        # dashboard, then we rotated keys, or the test/live mode changed).
+        # Without this check, every retry just kept asking Stripe about
+        # an account it couldn't see → 502 forever.
+        if boutique.stripe_account_id:
+            try:
+                stripe_service.get_account_status(account_id=boutique.stripe_account_id)
+            except stripe_service.StripeUpstreamError as exc:
+                msg = str(exc).lower()
+                # Stripe's "no such account" or "does not have access" responses
+                # both indicate the cached id is unusable. Wipe + create fresh.
+                if "no such account" in msg or "does not have access" in msg or "may have been revoked" in msg:
+                    logger.warning(
+                        "Boutique %s had orphaned stripe_account_id %s; resetting and recreating.",
+                        boutique.id, boutique.stripe_account_id,
+                    )
+                    boutique.stripe_account_id = None
+                    # Also clear any half-onboarded subscription pointers
+                    # tied to the dead account — they would be just as orphaned.
+                    boutique.stripe_customer_id = None
+                    boutique.stripe_subscription_id = None
+                    db.add(boutique)
+                    db.commit()
+                    db.refresh(boutique)
+                # Any other Stripe error: surface as 502 below.
+                else:
+                    raise
+
         if not boutique.stripe_account_id:
             account_id = stripe_service.create_express_account(
                 email=current_user.email, boutique_name=boutique.name
