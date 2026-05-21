@@ -45,7 +45,7 @@ export default function SubscribeScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const res = (await api.get('/partners/subscription/status')) as { status: string };
+        const res = (await api.get('/partners/stripe/subscription/status')) as { status: string };
         if (!cancelled && res?.status === 'active') {
           router.replace('/(tabs)' as any);
           return;
@@ -68,7 +68,7 @@ export default function SubscribeScreen() {
     try {
       // 1. Backend creates the Customer + Subscription, returns the
       //    first invoice's PaymentIntent client_secret.
-      const data = (await api.post('/partners/subscription/checkout', { plan })) as CheckoutResponse;
+      const data = (await api.post('/partners/stripe/subscription/checkout', { plan })) as CheckoutResponse;
 
       // 2. Open PaymentSheet against the platform account (no
       //    stripeAccountId here — this is the platform charging the

@@ -3,9 +3,12 @@ import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicat
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { FigmaConfirmModal } from '../../components/FigmaConfirmModal';
+
+type SubStatus = 'none' | 'active' | 'past_due' | 'canceled' | 'incomplete' | null;
 
 const PENCIL_ICON = require('../../assets/svg/pencil.svg');
 const TRASH_ICON = require('../../assets/svg/trash.svg');
@@ -39,6 +42,39 @@ export default function CatalogScreen() {
   const imageCardHeight = Math.round(imageBaseHeight * imageScale);
   const imageTopOffset = Math.round(imageBaseTopOffset * imageScale);
 
+  // Subscription gate: poll the partner's plan status on focus so we can
+  // decide whether to let "Add Dress" navigate forward (active sub) or
+  // bounce the partner to /subscribe (no sub). Same gate the backend
+  // enforces server-side — surfacing it here saves the partner from
+  // filling out the whole form just to hit a 402.
+  const [subStatus, setSubStatus] = useState<SubStatus>(null);
+  const refreshSubStatus = useCallback(async () => {
+    try {
+      const res = (await api.get('/partners/stripe/subscription/status')) as { status?: string };
+      setSubStatus((res?.status ?? 'none') as SubStatus);
+    } catch {
+      // Leave previous status; failing closed (treating as inactive)
+      // would block a partner from adding dresses just because the
+      // status endpoint blipped.
+    }
+  }, []);
+
+  // Add Dress is hard-gated by subscription. If the partner doesn't have
+  // an active sub, the tap routes them straight to /subscribe instead of
+  // opening the form — pay first, then publish. The matching `disabled`
+  // styling on the button itself signals this visually so the tap isn't
+  // a surprise. While subStatus is still null (initial load) we let the
+  // tap through to /add-dress; the backend 402 guard inside add-dress.tsx
+  // catches any race.
+  const canPublish = subStatus === 'active' || subStatus == null;
+  const handleAddDress = useCallback(() => {
+    if (subStatus && subStatus !== 'active') {
+      router.push('/subscribe' as any);
+      return;
+    }
+    router.push('/add-dress');
+  }, [router, subStatus]);
+
   const fetchDresses = useCallback(async () => {
     if (!boutiqueId) {
       setDresses([]);
@@ -60,7 +96,8 @@ export default function CatalogScreen() {
     useCallback(() => {
       setLoading(true);
       fetchDresses();
-    }, [fetchDresses])
+      void refreshSubStatus();
+    }, [fetchDresses, refreshSubStatus])
   );
 
   const openDelete = (dress: Dress) => {
@@ -118,6 +155,36 @@ export default function CatalogScreen() {
           />
         }
       >
+        {/* Subscription nudge — mirror the dashboard banner so a partner
+            who taps Catalog first sees the same prompt instead of being
+            surprised by a 402 after filling out Add Dress. */}
+        {subStatus && subStatus !== 'active' ? (
+          <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+            <View className="bg-[#FFF4EC] border border-[#FFD3B7] px-4 py-3 flex-row items-start">
+              <Ionicons name="alert-circle-outline" size={18} color="#C9491A" style={{ marginRight: 10, marginTop: 1 }} />
+              <View className="flex-1">
+                <Text className="text-[#C9491A] text-[12px] font-bold uppercase tracking-[0.5px] mb-1">
+                  {subStatus === 'past_due' ? 'Payment failed' : 'Subscription needed'}
+                </Text>
+                <Text className="text-[#7A3E1C] text-[11px] leading-4 mb-3">
+                  {subStatus === 'past_due'
+                    ? 'Update your card to keep publishing dresses.'
+                    : 'Activate your plan to publish dresses for customers.'}
+                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/subscribe' as any)}
+                  className="bg-[#C9491A] px-3 py-2 self-start"
+                >
+                  <Text className="text-white text-[10px] uppercase tracking-[1px]">
+                    {subStatus === 'past_due' ? 'Update payment' : 'Activate plan'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         <View style={{ paddingHorizontal: 20 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
             <Text
@@ -134,9 +201,20 @@ export default function CatalogScreen() {
             </Text>
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() => router.push('/add-dress')}
-              style={{ width: 125, height: 46, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center' }}
+              onPress={handleAddDress}
+              style={{
+                width: 125,
+                height: 46,
+                backgroundColor: '#000000',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                opacity: canPublish ? 1 : 0.55,
+              }}
             >
+              {!canPublish ? (
+                <Ionicons name="lock-closed" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
+              ) : null}
               <Text style={{ color: '#FFFFFF', fontFamily: 'Helvetica Neue', fontSize: 14, fontWeight: '500', letterSpacing: 0.56, textTransform: 'uppercase' }}>
                 Add Dress
               </Text>
@@ -189,9 +267,13 @@ export default function CatalogScreen() {
               </Text>
               <TouchableOpacity
                 activeOpacity={0.9}
-                onPress={() => router.push('/add-dress')}
+                onPress={handleAddDress}
                 className="border border-black px-6 py-3"
+                style={{ opacity: canPublish ? 1 : 0.55, flexDirection: 'row', alignItems: 'center' }}
               >
+                {!canPublish ? (
+                  <Ionicons name="lock-closed" size={11} color="#000000" style={{ marginRight: 6 }} />
+                ) : null}
                 <Text className="text-[10px] uppercase tracking-[1.5px] text-black">Add First Dress</Text>
               </TouchableOpacity>
             </View>
@@ -262,7 +344,7 @@ export default function CatalogScreen() {
                   <View style={{ flexDirection: 'row', gap: 14, marginTop: 40 }}>
                     <TouchableOpacity
                       activeOpacity={0.85}
-                      onPress={() => router.push('/add-dress')}
+                      onPress={handleAddDress}
                       style={{ flex: 1, height: 38, borderWidth: 1, borderColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
                     >
                       <Image source={PENCIL_ICON} style={{ width: 16, height: 16, tintColor: '#000000' }} contentFit="contain" />

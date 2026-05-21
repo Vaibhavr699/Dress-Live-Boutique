@@ -219,9 +219,15 @@ function getFriendlyErrorMessage(params: {
   if (status === 401) return 'Your session has expired. Please log in again.';
   if (status === 403) return 'You do not have permission to do this.';
   if (status === 404) return "We couldn't find what you were looking for.";
-  if (status === 409) return 'This information is already in use.';
+  // 409 detail is almost always meaningful (e.g. "boutique hasn't finished
+  // setting up payments yet" from the orders endpoint). Surface it
+  // verbatim when present rather than overwriting with a generic
+  // "already in use" string that misleads the user.
+  if (status === 409) return detail || 'This action conflicts with the current state.';
+  // 402 = backend's subscription gate. Detail is the right text.
+  if (status === 402) return detail || 'A payment is required to continue.';
   if (status === 422) return 'Please check your details and try again.';
-  if (status === 400) return 'Please review your details and try again.';
+  if (status === 400) return detail || 'Please review your details and try again.';
   if (typeof status === 'number' && status >= 500) {
     return 'Something went wrong. Please try again.';
   }

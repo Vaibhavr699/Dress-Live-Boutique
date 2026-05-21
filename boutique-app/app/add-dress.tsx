@@ -461,6 +461,24 @@ export default function AddDressScreen() {
       await clearDraft();
       setSuccessOpen(true);
     } catch (error: any) {
+      // 402 = require_active_subscription guard on the backend fired.
+      // Don't show a generic "Error" — give the partner a one-tap path
+      // to subscribe, AND keep their draft so they don't lose the form
+      // they just filled out.
+      if (error?.status === 402) {
+        Alert.alert(
+          'Subscription required',
+          'You need an active Dress Live Partner subscription to publish dresses. Your draft is saved — subscribe now to finish?',
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'Subscribe',
+              onPress: () => router.push('/subscribe' as any),
+            },
+          ],
+        );
+        return;
+      }
       Alert.alert('Error', error.message || 'Failed to add dress');
     } finally {
       setLoading(false);

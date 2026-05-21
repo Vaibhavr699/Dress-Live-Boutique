@@ -600,7 +600,7 @@ export default function BoutiqueDashboard() {
   const [subStatus, setSubStatus] = useState<'none' | 'active' | 'past_due' | 'canceled' | 'incomplete' | null>(null);
   const refreshSubStatus = useCallback(async () => {
     try {
-      const res = (await api.get('/partners/subscription/status')) as { status?: string };
+      const res = (await api.get('/partners/stripe/subscription/status')) as { status?: string };
       const next = (res?.status ?? 'none') as 'none' | 'active' | 'past_due' | 'canceled' | 'incomplete';
       setSubStatus(next);
     } catch {
