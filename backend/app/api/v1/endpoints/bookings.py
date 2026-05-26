@@ -169,6 +169,95 @@ async def _send_video_call_requested_email(
     )
 
 
+async def _send_booking_notification_to_partner(
+    partner_email: str,
+    partner_name: Optional[str],
+    buyer_name: str,
+    buyer_email: str,
+    boutique_name: str,
+    appointment_type: str,
+    scheduled_for: str,
+    dresses: list,
+) -> None:
+    type_label = "video call" if appointment_type == "video" else "store visit"
+    greeting = partner_name.split()[0] if partner_name else "there"
+
+    dress_lines_text = []
+    dress_lines_html = []
+    for d in dresses:
+        price_str = f" — €{d.price:.2f}" if d.price else ""
+        dress_lines_text.append(f"  • {d.name}{price_str}")
+        dress_lines_html.append(f"{d.name}{price_str}")
+
+    dresses_text = "\n".join(dress_lines_text) if dress_lines_text else "  (none selected)"
+    dresses_html = ", ".join(dress_lines_html) if dress_lines_html else "none selected"
+
+    text = (
+        f"Hi {greeting},\n\n"
+        f"New {type_label} request for {boutique_name}.\n\n"
+        f"Customer: {buyer_name} ({buyer_email})\n"
+        f"Scheduled: {scheduled_for}\n"
+        f"Type: {type_label}\n\n"
+        f"Dresses selected:\n{dresses_text}\n\n"
+        "Open the Dress Live partner app to accept or decline.\n\n"
+        "— The Dress Live team"
+    )
+
+    html = render_branded_email(
+        preheader=f"New {type_label} request from {buyer_name}.",
+        title="New fitting request",
+        intro=(
+            f"{buyer_name} has requested a {type_label} "
+            f"at {boutique_name} for {scheduled_for}."
+        ),
+        paragraphs=[
+            f"Customer: {buyer_name} ({buyer_email})",
+            f"Dresses: {dresses_html}",
+            "Open the Dress Live partner app to review the request "
+            "and accept or decline.",
+        ],
+    )
+
+    await send_email(
+        to_email=partner_email,
+        subject=f"New fitting request from {buyer_name}",
+        text=text,
+        html=html,
+    )
+
+
+def _enqueue_booking_notification_to_partners(
+    bg: BackgroundTasks,
+    db: Session,
+    booking: Booking,
+    buyer: User,
+    boutique_name: str,
+    dresses: list,
+) -> None:
+    partner_rows = (
+        db.query(User)
+        .filter(User.role == "partner", User.boutique_id == booking.boutique_id)
+        .all()
+    )
+    buyer_name = (buyer.full_name or buyer.email or "A customer").strip()
+    buyer_email = buyer.email or ""
+
+    for partner in partner_rows:
+        if not partner.email:
+            continue
+        bg.add_task(
+            _send_booking_notification_to_partner,
+            partner.email,
+            partner.full_name,
+            buyer_name,
+            buyer_email,
+            boutique_name,
+            booking.appointment_type,
+            booking.scheduled_for,
+            dresses,
+        )
+
+
 def _enqueue_video_call_requested(
     bg: BackgroundTasks, booking: Booking, boutique_name: str
 ) -> None:
@@ -563,6 +652,10 @@ async def create_booking(
     # asyncio.create_task which got orphaned when the request worker
     # returned, dropping the email silently.
     _enqueue_video_call_requested(background_tasks, booking, boutique_name)
+
+    _enqueue_booking_notification_to_partners(
+        background_tasks, db, booking, current_user, boutique_name, dresses,
+    )
 
     return serialize_booking(db, booking)
 

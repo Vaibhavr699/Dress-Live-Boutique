@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional
 from datetime import datetime, timedelta
 import hashlib
@@ -22,6 +23,8 @@ from app.models.user import User
 from app.schemas.boutique import BoutiqueCreate
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
 from app.services import bodygram as bodygram_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -196,38 +199,79 @@ async def create_user(
 
     # Send a welcome email (best-effort).
     try:
-        if user.email and (user.role or "").strip().lower() == "buyer":
+        if user.email:
             greeting_name = (user.full_name or "").strip().split()[0] if user.full_name else "there"
-            await send_email(
-                to_email=user.email,
-                subject="Welcome to Dress Live",
-                text=(
-                    f"Hi {greeting_name},\n\n"
-                    "Welcome to Dress Live. You can now browse boutiques, "
-                    "shortlist dresses, and book live virtual fittings with "
-                    "real consultants.\n\n"
-                    "If you didn't create this account, ignore this email.\n\n"
-                    "— Dress Live"
-                ),
-                html=render_branded_email(
-                    preheader="Welcome to live virtual fittings on Dress Live.",
-                    title=f"Welcome, {greeting_name}",
-                    intro=(
-                        "Your Dress Live account is ready. Browse boutiques, "
-                        "shortlist the dresses you'd love to try, and book a "
-                        "live video fitting with a real consultant."
+            role = (user.role or "").strip().lower()
+
+            if role == "partner":
+                boutique_name = ""
+                if user_in.boutique_info:
+                    boutique_name = user_in.boutique_info.name or ""
+                await send_email(
+                    to_email=user.email,
+                    subject="Welcome to Dress Live — your boutique is live",
+                    text=(
+                        f"Hi {greeting_name},\n\n"
+                        f"Welcome to Dress Live! Your boutique{(' ' + boutique_name) if boutique_name else ''} "
+                        "is now set up.\n\n"
+                        "Here's what to do next:\n"
+                        "1. Upload your dress catalogue from the Dress Live partner app\n"
+                        "2. Set your availability for virtual fittings\n"
+                        "3. Wait for brides to book — you'll get a notification and email for every request\n\n"
+                        "When a bride books a fitting, you'll see their details and selected "
+                        "dresses right in the app. Accept the booking and join the video call "
+                        "at the scheduled time.\n\n"
+                        "— The Dress Live team"
                     ),
-                    paragraphs=[
-                        "Pick up to 4 dresses for each fitting — your consultant "
-                        "switches between them in real time while you see "
-                        "yourself wearing each one through the app's AI try-on.",
-                    ],
-                    footer_note="If you didn't create this account, ignore this email — nothing else happens.",
-                ),
-            )
-    except Exception:
-        # Don't block signup if email fails.
-        pass
+                    html=render_branded_email(
+                        preheader=f"Your boutique is live on Dress Live.",
+                        title=f"Welcome, {greeting_name}",
+                        intro=(
+                            f"Your boutique{(' ' + boutique_name) if boutique_name else ''} "
+                            "is now set up on Dress Live. You're ready to start receiving "
+                            "virtual fitting requests from brides."
+                        ),
+                        paragraphs=[
+                            "Upload your dress catalogue from the partner app, "
+                            "and brides will be able to browse and shortlist your designs.",
+                            "When a bride books a fitting, you'll receive a notification "
+                            "with her details and the dresses she'd like to try. Accept "
+                            "the booking, and join the video call at the scheduled time — "
+                            "she'll see herself in your dresses through our AI try-on.",
+                        ],
+                        footer_note="If you didn't create this account, ignore this email — nothing else happens.",
+                    ),
+                )
+            else:
+                await send_email(
+                    to_email=user.email,
+                    subject="Welcome to Dress Live",
+                    text=(
+                        f"Hi {greeting_name},\n\n"
+                        "Welcome to Dress Live. You can now browse boutiques, "
+                        "shortlist dresses, and book live virtual fittings with "
+                        "real consultants.\n\n"
+                        "If you didn't create this account, ignore this email.\n\n"
+                        "— Dress Live"
+                    ),
+                    html=render_branded_email(
+                        preheader="Welcome to live virtual fittings on Dress Live.",
+                        title=f"Welcome, {greeting_name}",
+                        intro=(
+                            "Your Dress Live account is ready. Browse boutiques, "
+                            "shortlist the dresses you'd love to try, and book a "
+                            "live video fitting with a real consultant."
+                        ),
+                        paragraphs=[
+                            "Pick up to 4 dresses for each fitting — your consultant "
+                            "switches between them in real time while you see "
+                            "yourself wearing each one through the app's AI try-on.",
+                        ],
+                        footer_note="If you didn't create this account, ignore this email — nothing else happens.",
+                    ),
+                )
+    except Exception as exc:
+        logger.warning("welcome email failed for user %s: %s", user.id, exc)
     return user
 
 
