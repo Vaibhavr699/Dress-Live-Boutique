@@ -253,11 +253,36 @@ export default function BookingCalendarScreen() {
 
         let mergedDressIds: number[] = [];
 
-        // If booking is initiated from a product page, always preselect that dress only.
-        // This avoids pulling in wishlist items (possibly from other boutiques) and triggering backend validation errors.
         if (selectionSource === 'product') {
           if (directDressId && !Number.isNaN(directDressId)) {
-            mergedDressIds = [directDressId];
+            // Start with the current dress, then pull in wishlist dresses from the same boutique.
+            let currentDress: Dress | null = null;
+            try {
+              currentDress = await api.get(`/dresses/${directDressId}`) as Dress;
+            } catch {}
+            const currentBoutiqueId = currentDress?.boutique_id ? Number(currentDress.boutique_id) : null;
+
+            const wishlistIds: number[] = isAuthenticated
+              ? await api.get('/shortlists/me').then((res) => {
+                  const items = Array.isArray(res) ? (res as ShortlistItem[]) : [];
+                  return items.map((item) => item.dress_id);
+                }).catch(() => [] as number[])
+              : guestDressIds;
+
+            // Fetch wishlist dresses to filter by same boutique
+            let sameBoutiqueIds: number[] = [];
+            if (currentBoutiqueId && wishlistIds.length > 0) {
+              const wishlistDresses = await Promise.all(
+                wishlistIds.filter((id) => id !== directDressId).map(async (id) => {
+                  try { return await api.get(`/dresses/${id}`) as Dress; } catch { return null; }
+                })
+              );
+              sameBoutiqueIds = wishlistDresses
+                .filter((d): d is Dress => d !== null && Number(d.boutique_id) === currentBoutiqueId)
+                .map((d) => d.id);
+            }
+
+            mergedDressIds = [directDressId, ...sameBoutiqueIds].slice(0, 4);
           } else {
             mergedDressIds = [];
           }
