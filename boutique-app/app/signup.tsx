@@ -343,9 +343,28 @@ export default function SignupScreen() {
       formData.append('username', email.trim());
       formData.append('password', password);
       const loginData = await api.postForm('/login/access-token', formData);
-      setToken(loginData.access_token);
+      const accessToken = loginData?.access_token;
+      if (!accessToken) {
+        // The account was created but auto-login returned no token. Send the
+        // partner to the login screen rather than failing the whole signup —
+        // their account is already there to log into.
+        Alert.alert(
+          'Almost there',
+          'Your account was created, but we couldn’t sign you in automatically. Please log in to continue.',
+        );
+        router.replace('/login' as any);
+        return;
+      }
+      setToken(accessToken);
+      // Attach the freshly-minted token explicitly to every call below instead
+      // of relying on the global auth store. On a cold start the persist layer
+      // may still be rehydrating from SecureStore and clobber the token we just
+      // set back to null, so the next request would go out with no
+      // Authorization header → backend 401 → a bogus "session expired" right
+      // after signup. Passing the header directly removes that race.
+      const authHeaders = { Authorization: `Bearer ${accessToken}` };
 
-      const me = await api.get('/users/me');
+      const me = await api.get('/users/me', { headers: authHeaders });
       if (me.role !== 'partner') {
         logout();
         Alert.alert('Signup Failed', 'This account is not registered as a partner.');
@@ -361,7 +380,7 @@ export default function SignupScreen() {
           (async () => {
             const form = new FormData();
             await appendPickerImageToForm(form, ownerImage!, `owner-${Date.now()}.jpg`);
-            return api.postMultipart('/users/me/profile-image', form);
+            return api.postMultipart('/users/me/profile-image', form, { headers: authHeaders });
           })()
         );
       }
@@ -370,7 +389,7 @@ export default function SignupScreen() {
           (async () => {
             const form = new FormData();
             await appendPickerImageToForm(form, logo!, `logo-${Date.now()}.jpg`);
-            return api.postMultipart(`/boutiques/${boutiqueId}/logo-image`, form);
+            return api.postMultipart(`/boutiques/${boutiqueId}/logo-image`, form, { headers: authHeaders });
           })()
         );
       }
@@ -379,7 +398,7 @@ export default function SignupScreen() {
           (async () => {
             const form = new FormData();
             await appendPickerImageToForm(form, frontImage!, `store-front-${Date.now()}.jpg`);
-            return api.postMultipart(`/boutiques/${boutiqueId}/header-image`, form);
+            return api.postMultipart(`/boutiques/${boutiqueId}/header-image`, form, { headers: authHeaders });
           })()
         );
       }
@@ -388,7 +407,7 @@ export default function SignupScreen() {
           (async () => {
             const form = new FormData();
             await appendPickerImageToForm(form, insideImage!, `store-inside-${Date.now()}.jpg`);
-            return api.postMultipart(`/boutiques/${boutiqueId}/interior-image`, form);
+            return api.postMultipart(`/boutiques/${boutiqueId}/interior-image`, form, { headers: authHeaders });
           })()
         );
       }
@@ -405,8 +424,16 @@ export default function SignupScreen() {
         }
       }
 
-      const freshUser = await api.get('/users/me');
-      setUser(freshUser as any);
+      try {
+        const freshUser = await api.get('/users/me', { headers: authHeaders });
+        setUser(freshUser as any);
+      } catch (refreshError) {
+        // Non-fatal: the account exists and we're authenticated. /subscribe
+        // and the tabs re-fetch /users/me on mount, so a hiccup here mustn't
+        // strand the partner on a "Signup Failed" alert after the account is
+        // already created.
+        console.warn('Post-signup user refresh failed', refreshError);
+      }
       // Send the new partner straight to the subscription paywall.
       // /(tabs) won't actually let them publish anything until the
       // backend's require_active_subscription guard sees subscription_status='active',
