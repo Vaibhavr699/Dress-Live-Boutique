@@ -265,7 +265,12 @@ async def subscription_status(
 ) -> Any:
     boutique = _require_partner_boutique(db, current_user)
     raw_status = boutique.subscription_status
-    status: str = raw_status if raw_status in ("active", "past_due", "canceled", "incomplete") else "none"
+    if settings.SUBSCRIPTION_BYPASS:
+        # Testing escape hatch — see config.SUBSCRIPTION_BYPASS. Report active
+        # so the apps don't gate the UI behind a subscription. Off in prod.
+        status: str = "active"
+    else:
+        status = raw_status if raw_status in ("active", "past_due", "canceled", "incomplete") else "none"
     return SubscriptionStatusResponse(
         status=status,  # type: ignore[arg-type]
         plan=boutique.subscription_plan,  # type: ignore[arg-type]

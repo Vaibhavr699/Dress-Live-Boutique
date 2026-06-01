@@ -67,6 +67,9 @@ def require_active_subscription(
     correct status (client should redirect to /subscribe). Buyers are
     waved through — this only gates partner roles. Superusers bypass the
     check so an admin can fix things server-side."""
+    if settings.SUBSCRIPTION_BYPASS:
+        # Testing escape hatch — see config.SUBSCRIPTION_BYPASS. Off in prod.
+        return current_user
     if current_user.is_superuser:
         return current_user
     if current_user.role != "partner":

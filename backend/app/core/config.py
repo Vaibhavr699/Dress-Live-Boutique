@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     STRIPE_PRICE_MONTHLY: Optional[str] = None
     STRIPE_PRICE_ANNUAL: Optional[str] = None
 
+    # Testing-only: skip partner subscription gating everywhere. When True,
+    # require_active_subscription() waves every partner through and the
+    # /subscription/status endpoint reports "active", so the apps behave as
+    # if subscribed (no 402, no /subscribe bounce). MUST stay False in prod.
+    SUBSCRIPTION_BYPASS: bool = False
+
     # ── RunPod GPU inference ─────────────────────────────────────────────
     # Off by default so a misconfigured deploy can't burn credits. Flip
     # RUNPOD_ENABLED=true only after the budget guard has been verified.
