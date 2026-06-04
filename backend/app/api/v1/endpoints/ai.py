@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import collections
+import logging
 import os
 import threading
 import time
@@ -24,6 +25,15 @@ from app.services import runpod_budget
 from app.services import runpod_catvton
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+# MediaPipe can fail to even construct an `mp.Image` on some Linux/Python
+# builds (observed: "'Image' object has no attribute '_image_ptr'"), which
+# would otherwise be swallowed silently by `_run_pose_on_image`. Log the real
+# exception ONCE so it surfaces in server logs without spamming the live-call
+# pose loop at ~12 fps.
+_pose_error_logged = False
 
 
 # ── MediaPipe pose landmark detection ─────────────────────────────────────
@@ -116,6 +126,14 @@ def _run_pose_on_image(img_bgr) -> Optional[list]:
             detector = _get_pose_landmarker()
             result = detector.detect(mp_image)
     except Exception:
+        global _pose_error_logged
+        if not _pose_error_logged:
+            _pose_error_logged = True
+            logger.warning(
+                "MediaPipe pose detection unavailable — falling back to HOG. "
+                "Logging the underlying error once.",
+                exc_info=True,
+            )
         return None
     if not result.pose_landmarks:
         return None
@@ -776,13 +794,26 @@ def _validate_human_present(img_bgr) -> _PoseValidationResult:
     try:
         lm = _run_pose_on_image(img_bgr)
     except Exception:
-        return _PoseValidationResult(ok=True)
-    if lm is None:
-        return _PoseValidationResult(
-            ok=False,
-            reason="No person detected in the photo. Please pick a photo that clearly shows a person.",
-        )
-    return _PoseValidationResult(ok=True)
+        lm = None
+    if lm is not None:
+        return _PoseValidationResult(ok=True, details={"detector": "pose"})
+
+    # MediaPipe either genuinely found no person OR is unavailable on this host
+    # (it has been observed failing to construct `mp.Image` on some Linux
+    # builds). Don't hard-reject on `None` alone — that would block every
+    # try-on render whenever MediaPipe is down, which is exactly what the
+    # docstring promises NOT to do. Fall back to a loose HOG person check.
+    try:
+        bbox = _detect_primary_person_bbox(img_bgr)
+    except Exception:
+        bbox = None
+    if bbox is not None:
+        return _PoseValidationResult(ok=True, details={"detector": "hog"})
+
+    return _PoseValidationResult(
+        ok=False,
+        reason="No person detected in the photo. Please pick a photo that clearly shows a person.",
+    )
 
 
 def _validate_full_body_pose(img_bgr) -> _PoseValidationResult:
