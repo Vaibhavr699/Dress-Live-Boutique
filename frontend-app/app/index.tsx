@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, useWindowDimensions, Alert, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -23,6 +24,19 @@ export default function LandingPage() {
     }, 1000);
     return () => clearTimeout(timer);
   }, []);
+
+  // Placeholder until OAuth is configured. Social sign-in needs provider
+  // credentials (Google client IDs; Apple Service ID + a paid Apple dev
+  // account) and a real dev/standalone build — it can't run in Expo Go. Once
+  // those exist, replace this with the native Google/Apple flow that posts the
+  // returned token to the backend.
+  const handleSocial = (provider: 'Google' | 'Apple') => {
+    Alert.alert(
+      `${provider} sign-in coming soon`,
+      `${provider} sign-in isn't enabled yet. Please continue with your email for now.`,
+      [{ text: 'OK' }]
+    );
+  };
 
   if (isSplashVisible) {
     const responsiveFontSize = Math.min(width * 0.15, 64);
@@ -54,7 +68,7 @@ export default function LandingPage() {
         paddingHorizontal: 16,
       }}
     >
-      <View style={{ flex: 1 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
         <View style={{ marginTop: 4, gap: 10 }}>
           {/* Section 1: Page Title */}
           <View style={{ paddingHorizontal: 24, alignItems: 'center', marginBottom: 8 }}>
@@ -115,8 +129,38 @@ export default function LandingPage() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* Divider */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
+            <Text style={{ marginHorizontal: 12, fontSize: 11, color: '#9B9B9B', letterSpacing: 1 }}>OR</Text>
+            <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
+          </View>
+
+          {/* Social sign-in */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => handleSocial('Google')}
+            style={{ borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
+          >
+            <Ionicons name="logo-google" size={18} color="black" style={{ marginRight: 10 }} />
+            <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
+              Continue with Google
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => handleSocial('Apple')}
+            style={{ backgroundColor: 'black', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
+          >
+            <Ionicons name="logo-apple" size={20} color="white" style={{ marginRight: 10 }} />
+            <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
+              Continue with Apple
+            </Text>
+          </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </View>
   );
 }
