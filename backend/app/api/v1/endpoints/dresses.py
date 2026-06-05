@@ -174,6 +174,14 @@ def update_dress(
     dress = crud_dress.get(db, id=id)
     if not dress:
         raise HTTPException(status_code=404, detail="Dress not found")
+    # Boutique-scoped: a partner may only edit dresses in their own boutique
+    # (mirrors the delete endpoint). require_active_subscription already
+    # guarantees role == partner with an active subscription.
+    if not current_user.boutique_id or dress.boutique_id != current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this dress.")
+    # Don't let an update reassign the dress to another boutique.
+    if dress_in.boutique_id is not None and dress_in.boutique_id != dress.boutique_id:
+        raise HTTPException(status_code=403, detail="Cannot move a dress to another boutique.")
     prev_image_url = dress.image_url
     prev_ai_url = dress.ai_model_url
     dress = crud_dress.update(db, db_obj=dress, obj_in=dress_in)
