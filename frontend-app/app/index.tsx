@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, useWindowDimensions, Alert, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, useWindowDimensions, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -12,10 +12,10 @@ export default function LandingPage() {
   const [isSplashVisible, setIsSplashVisible] = useState(true);
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
 
-  const availableHeight = height - insets.top - insets.bottom;
-  const imageHeight = Math.max(235, Math.min(width * 0.88, availableHeight * 0.37));
+  // Images flex to fill the leftover space (see layout below), so we no longer
+  // compute a fixed image height — the layout adapts to any screen size.
   const titleFontSize = Math.min(width * 0.1, 34);
 
   useEffect(() => {
@@ -68,36 +68,36 @@ export default function LandingPage() {
         paddingHorizontal: 16,
       }}
     >
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }} showsVerticalScrollIndicator={false}>
-        <View style={{ marginTop: 4, gap: 10 }}>
-          {/* Section 1: Page Title */}
-          <View style={{ paddingHorizontal: 24, alignItems: 'center', marginBottom: 8 }}>
-            <Text
-              className="text-black text-center"
-              style={{
-                fontFamily: 'PlayfairDisplay-SemiBold',
-                fontSize: titleFontSize,
-                fontWeight: '600',
-                lineHeight: titleFontSize,
-                letterSpacing: 0,
-              }}
-            >
-              Dress Live
-            </Text>
-          </View>
+      {/* Section 1: Page Title */}
+      <View style={{ paddingHorizontal: 24, alignItems: 'center', marginTop: 4, marginBottom: 10 }}>
+        <Text
+          className="text-black text-center"
+          style={{
+            fontFamily: 'PlayfairDisplay-SemiBold',
+            fontSize: titleFontSize,
+            fontWeight: '600',
+            lineHeight: titleFontSize,
+            letterSpacing: 0,
+          }}
+        >
+          Dress Live
+        </Text>
+      </View>
 
-          {/* Section 2: Top */}
-          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" />
-          </View>
-
-          {/* Section 3: Middle */}
-          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="cover" />
-          </View>
+      {/* Sections 2 & 3: Images flex to fill whatever vertical space is left
+          after the title and the buttons, so all buttons stay on screen at
+          any device size (no fixed heights, no scrolling needed). */}
+      <View style={{ flex: 1, gap: 10 }}>
+        <View style={{ flex: 1, minHeight: 90, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+          <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" />
         </View>
+        <View style={{ flex: 1, minHeight: 90, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+          <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+        </View>
+      </View>
 
-        <View style={{ paddingHorizontal: 8, gap: 10, marginTop: 8 }}>
+      {/* Section 4: Auth buttons — natural height, always visible at the bottom */}
+      <View style={{ paddingHorizontal: 8, gap: 10, marginTop: 12 }}>
           <TouchableOpacity 
             activeOpacity={0.9}
             onPress={() => router.push('/(tabs)')}
@@ -160,7 +160,6 @@ export default function LandingPage() {
             </Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
     </View>
   );
 }
