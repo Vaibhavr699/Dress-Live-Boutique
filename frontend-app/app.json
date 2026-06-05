@@ -117,7 +117,8 @@
       "router": {},
       "eas": {
         "projectId": "4ed0be65-298e-4dc6-bc7b-21618ea7ff8b"
-      }
+      },
+      "apiBaseUrl": "https://dress-live-boutique-production.up.railway.app"
     },
     "owner": "atul_kumar007"
   }
