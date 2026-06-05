@@ -8,6 +8,7 @@ class DressBase(BaseModel):
     price: Optional[float] = None
     sizes: Optional[str] = None
     colors: Optional[str] = None
+    category: Optional[str] = None
     image_url: Optional[str] = None
     ai_model_url: Optional[str] = None
     is_ai_enabled: Optional[bool] = True

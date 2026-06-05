@@ -323,6 +323,7 @@ export default function AddDressScreen() {
           price?: number | null;
           sizes?: string | null;
           colors?: string | null;
+          category?: string | null;
           image_url?: string | null;
           ai_model_url?: string | null;
           is_ai_enabled?: boolean | null;
@@ -338,6 +339,13 @@ export default function AddDressScreen() {
         if (sizeInfo.sizes.length) setSelectedSizes(sizeInfo.sizes);
         setCustomSizing(sizeInfo.custom);
         if (d?.colors) setSelectedColor(d.colors);
+        if (d?.category) {
+          const cats = d.category
+            .split(',')
+            .map((c) => c.trim())
+            .filter((c) => (CATEGORY_OPTIONS as readonly string[]).includes(c));
+          if (cats.length) setSelectedCategories(cats);
+        }
         setFrontImage(d?.image_url ?? null);
         setAiGarmentImage(d?.ai_model_url ?? null);
         let services = meta.services.filter((s) => (SERVICE_OPTIONS as readonly string[]).includes(s));
@@ -548,6 +556,9 @@ export default function AddDressScreen() {
           .filter(Boolean)
           .join(', '),
         colors: selectedColor,
+        // Comma-separated like sizes/colors. Drives the buyer Home category
+        // chips (Abendkleider / Hochzeitskleider / Add Ons).
+        category: selectedCategories.filter(Boolean).join(', '),
         image_url: uploadedUrl,
         ai_model_url: aiRequested ? uploadedAiGarmentUrl || uploadedUrl : null,
         boutique_id: user.boutique_id,

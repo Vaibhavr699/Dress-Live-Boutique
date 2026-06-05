@@ -277,17 +277,26 @@ export default function DashboardScreen() {
   }, [loadCatalog]);
 
   const visibleDresses = useMemo(() => {
+    // Normalize away case/spacing/hyphens so the buyer chip "Add-Ons" matches
+    // the value the seller saves ("Add Ons"), and dresses tagged with multiple
+    // comma-separated categories match on any one of them.
+    const normCategory = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const categoryFiltered =
       activeCategory === 'All'
         ? dresses
         : dresses.filter((dress) => {
             const raw =
               (typeof dress.category === 'string' ? dress.category : null) ??
-              (Array.isArray(dress.categories) ? dress.categories.join(' ') : null) ??
+              (Array.isArray(dress.categories) ? dress.categories.join(',') : null) ??
               ((dress as any)?.dress_category as string | null) ??
               ((dress as any)?.type as string | null) ??
               '';
-            return raw.toLowerCase().includes(activeCategory.toLowerCase());
+            const target = normCategory(activeCategory);
+            return raw
+              .split(',')
+              .map((c) => normCategory(c))
+              .filter(Boolean)
+              .includes(target);
           });
     const normalizedQuery = debouncedQuery.trim().toLowerCase();
     const priceTest = PRICE_FILTERS.find((p) => p.id === activePriceFilter)?.test ?? PRICE_FILTERS[0].test;

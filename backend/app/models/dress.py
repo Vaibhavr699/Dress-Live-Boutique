@@ -9,6 +9,7 @@ class Dress(Base):
     price = Column(Float, nullable=False)
     sizes = Column(String, nullable=True)  # Comma-separated list
     colors = Column(String, nullable=True) # Comma-separated list
+    category = Column(String, nullable=True) # Comma-separated list (Abendkleider, Hochzeitskleider, Add Ons)
     image_url = Column(String, nullable=True)
     ai_model_url = Column(String, nullable=True) # Path for AI engine
     is_ai_enabled = Column(Boolean(), default=True)

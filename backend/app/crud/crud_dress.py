@@ -43,6 +43,7 @@ class CRUDDress:
             price=obj_in.price,
             sizes=obj_in.sizes,
             colors=obj_in.colors,
+            category=obj_in.category,
             image_url=obj_in.image_url,
             ai_model_url=obj_in.ai_model_url,
             is_ai_enabled=obj_in.is_ai_enabled,
