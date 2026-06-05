@@ -7,3 +7,4 @@ from app.models.booking import Booking  # noqa
 from app.models.push_token import PushToken  # noqa
 from app.models.notification import Notification  # noqa
 from app.models.order import Order, OrderItem  # noqa
+from app.models.team_member import TeamMember  # noqa

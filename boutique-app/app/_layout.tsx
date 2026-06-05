@@ -124,7 +124,10 @@ export default function RootLayout() {
 
     const inProtectedTabs = segments[0] === '(tabs)';
     const onPublicAuthScreen = segments[0] === 'login' || segments[0] === 'signup';
-    const hasRoleMismatch = isAuthenticated && !!user && user.role !== 'partner';
+    // Partners (owners) and advisors (invited team members) are both valid
+    // boutique-app users; only other roles (e.g. buyers) are a mismatch.
+    const isBoutiqueUser = user?.role === 'partner' || user?.role === 'advisor';
+    const hasRoleMismatch = isAuthenticated && !!user && !isBoutiqueUser;
 
     if (hasRoleMismatch) {
       logout();
@@ -132,7 +135,7 @@ export default function RootLayout() {
       return;
     }
 
-    if (isAuthenticated && user?.role === 'partner' && !inProtectedTabs && onPublicAuthScreen) {
+    if (isAuthenticated && isBoutiqueUser && !inProtectedTabs && onPublicAuthScreen) {
       router.replace('/(tabs)');
       return;
     }
@@ -316,6 +319,8 @@ export default function RootLayout() {
         <Stack.Screen name="stripe-return" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="stripe-refresh" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen name="subscribe" options={{ headerShown: false, animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="advisor-profile-edit" options={{ headerShown: false, animation: 'slide_from_right' }} />
+        <Stack.Screen name="advisor-availability" options={{ title: 'Advisor Availability', headerBackTitle: 'Back', animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="security-password-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
         <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />

@@ -132,7 +132,10 @@ export default function BookingsScreen() {
     useCallback(() => {
       const now = Date.now();
       if (now - lastBookingsFetchRef.current < BOOKINGS_STALE_MS) return;
-      setLoading(true);
+      // Stale-while-revalidate: only blank the screen with the spinner on the
+      // very first load (no data yet). After that, keep the current list on
+      // screen and refresh quietly in the background so the tab feels instant.
+      if (lastBookingsFetchRef.current === 0) setLoading(true);
       loadBookings();
     }, [loadBookings])
   );
@@ -335,7 +338,7 @@ export default function BookingsScreen() {
 
     
           {loading ? (
-            <View className="items-center justify-center py-24">
+            <View className="py-20 items-center">
               <ActivityIndicator color="#1A1A1A" />
             </View>
           ) : activeList.filter(matchesSearch).length === 0 ? (

@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     orders,
     partner_stripe,
     stripe_webhooks,
+    team,
 )
 
 api_router = APIRouter()
@@ -29,3 +30,4 @@ api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"]
 api_router.include_router(orders.router, prefix="/orders", tags=["orders"])
 api_router.include_router(partner_stripe.router, prefix="/partners/stripe", tags=["partner-stripe"])
 api_router.include_router(stripe_webhooks.router, prefix="/webhooks", tags=["stripe-webhooks"])
+api_router.include_router(team.router, prefix="/team", tags=["team"])

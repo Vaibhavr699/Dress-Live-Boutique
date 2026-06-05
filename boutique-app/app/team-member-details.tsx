@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, SafeAreaView, TouchableOpacity } from 'react-native';
+import { View, Text, SafeAreaView, TouchableOpacity, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -71,7 +71,7 @@ export default function TeamMemberDetailsScreen() {
                   className="text-[20px] text-black"
                   style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
                 >
-                  {member.name}
+                  {member.name || 'Pending advisor'}
                 </Text>
                 <Text className="text-[14px] text-black/55 mt-3">{member.role}</Text>
                 <Text className="text-[14px] text-black/55 mt-2">{member.email}</Text>
@@ -79,8 +79,16 @@ export default function TeamMemberDetailsScreen() {
             </View>
 
             <View className="flex-row items-center ml-4 mt-1">
-              <View className="w-2 h-2 rounded-full bg-black mr-2" />
-              <Text className="text-[11px] text-black">{member.status}</Text>
+              <View
+                className="w-2 h-2 rounded-full mr-2"
+                style={{ backgroundColor: member.status === 'pending' ? '#C9831A' : '#1A1A1A' }}
+              />
+              <Text
+                className="text-[11px]"
+                style={{ color: member.status === 'pending' ? '#C9831A' : '#1A1A1A' }}
+              >
+                {member.status === 'pending' ? 'Pending' : member.availabilityOn ? 'Online' : 'Offline'}
+              </Text>
             </View>
           </View>
 
@@ -93,7 +101,9 @@ export default function TeamMemberDetailsScreen() {
             </Text>
             <View className="flex-row items-center">
               <SvgXml xml={LANGUAGES_SVG} width={24} height={24} />
-              <Text className="text-[13px] text-black ml-4">{member.languages.join(', ')}</Text>
+              <Text className="text-[13px] text-black ml-4">
+                {member.languages.length ? member.languages.join(', ') : '—'}
+              </Text>
             </View>
           </View>
 
@@ -161,9 +171,12 @@ export default function TeamMemberDetailsScreen() {
         leftButtonText="ACCEPT"
         onLeftPress={() => {
           if (!member) return;
-          deleteMember(member.id);
           setDeleteModalOpen(false);
-          router.replace('/(tabs)/team');
+          deleteMember(member.id)
+            .then(() => router.replace('/(tabs)/team'))
+            .catch((e: any) =>
+              Alert.alert('Could not remove member', e?.message ?? 'Please try again.')
+            );
         }}
         rightButtonText="CANCEL"
         onRightPress={() => setDeleteModalOpen(false)}

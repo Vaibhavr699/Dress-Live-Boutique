@@ -89,9 +89,11 @@ export default function LoginScreen() {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (user.role !== 'partner') {
+      // Partners (owners) and advisors (invited team members) both use this
+      // app — advisors just get a limited view. Buyers are turned away.
+      if (user.role !== 'partner' && user.role !== 'advisor') {
         logout();
-        Alert.alert('Seller Access Only', 'This app is only available to boutique partner accounts.');
+        Alert.alert('Access Restricted', 'This app is only available to boutique partner and advisor accounts.');
         return;
       }
 

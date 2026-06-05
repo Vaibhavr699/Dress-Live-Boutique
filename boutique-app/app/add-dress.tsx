@@ -8,13 +8,14 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { FigmaSuccessModal } from '../components/FigmaSuccessModal';
+import { markCatalogDirty } from '../store/catalogSignal';
 import { Image } from 'expo-image';
 import * as SecureStore from 'expo-secure-store';
 
@@ -23,6 +24,45 @@ const CATEGORY_OPTIONS = ['Abendkleider', 'Hochzeitskleider', 'Add Ons'] as cons
 const SERVICE_OPTIONS = ['AI TRY ON', 'LIVE TRY-ON', 'ADD TO CART', 'IN STORE VISIT'] as const;
 const SIZE_OPTIONS = ['34', '36', '38', '40', '42', '44', '46', '48'] as const;
 const COLOR_OPTIONS = ['White', 'Ivory', 'Champagne', 'Rose', 'Nude', 'Custom'] as const;
+
+// When editing, the stored `description` packs human text plus metadata lines
+// (Internal ID / Status / Services). Split them back out so the form shows a
+// clean description and the right chips — and re-packs cleanly on save.
+function parseStoredDescription(raw: string | null | undefined): {
+  description: string;
+  internalId: string;
+  status: '' | 'Published' | 'Private';
+  services: string[];
+} {
+  const parts = (raw ?? '').split('\n\n');
+  let description = '';
+  let internalId = '';
+  let status: '' | 'Published' | 'Private' = '';
+  let services: string[] = [];
+  for (const part of parts) {
+    const p = part.trim();
+    if (!p) continue;
+    if (p.startsWith('Internal ID:')) internalId = p.slice('Internal ID:'.length).trim();
+    else if (p.startsWith('Status:')) {
+      const v = p.slice('Status:'.length).trim();
+      if (v === 'Published' || v === 'Private') status = v;
+    } else if (p.startsWith('Services:')) {
+      services = p.slice('Services:'.length).split(',').map((s) => s.trim()).filter(Boolean);
+    } else {
+      description = description ? `${description}\n\n${p}` : p;
+    }
+  }
+  return { description, internalId, status, services };
+}
+
+// `sizes` is stored as a comma-joined string that may include the custom-size
+// sentence. Split it back into the size chips + the custom toggle.
+function splitStoredSizes(raw: string | null | undefined): { sizes: string[]; custom: boolean } {
+  const parts = (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const custom = parts.some((p) => p.toLowerCase().includes('custom size'));
+  const sizes = parts.filter((p) => (SIZE_OPTIONS as readonly string[]).includes(p));
+  return { sizes, custom };
+}
 
 type AddDressDraft = {
   name: string;
@@ -194,6 +234,12 @@ export default function AddDressScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
 
+  // When an `id` is passed we're editing an existing dress, not adding one.
+  const params = useLocalSearchParams<{ id?: string }>();
+  const editId = params.id ? String(params.id) : null;
+  const isEditing = !!editId;
+  const [editReady, setEditReady] = useState(!editId);
+
   const [loading, setLoading] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -264,7 +310,57 @@ export default function AddDressScreen() {
     ]
   );
 
+  // Load an existing dress into the form when editing. Skips the add-draft
+  // restore below so a half-finished "new dress" draft never leaks into an edit.
   useEffect(() => {
+    if (!editId) return;
+    let active = true;
+    (async () => {
+      try {
+        const d = (await api.get(`/dresses/${editId}`)) as {
+          name?: string;
+          description?: string | null;
+          price?: number | null;
+          sizes?: string | null;
+          colors?: string | null;
+          image_url?: string | null;
+          ai_model_url?: string | null;
+          is_ai_enabled?: boolean | null;
+        };
+        if (!active) return;
+        const meta = parseStoredDescription(d?.description);
+        const sizeInfo = splitStoredSizes(d?.sizes);
+        setName(d?.name ?? '');
+        setPrice(d?.price != null ? String(d.price) : '');
+        setDescription(meta.description);
+        setInternalId(meta.internalId);
+        if (meta.status) setStatus(meta.status);
+        if (sizeInfo.sizes.length) setSelectedSizes(sizeInfo.sizes);
+        setCustomSizing(sizeInfo.custom);
+        if (d?.colors) setSelectedColor(d.colors);
+        setFrontImage(d?.image_url ?? null);
+        setAiGarmentImage(d?.ai_model_url ?? null);
+        let services = meta.services.filter((s) => (SERVICE_OPTIONS as readonly string[]).includes(s));
+        if (d?.is_ai_enabled && !services.includes('AI TRY ON')) services = [...services, 'AI TRY ON'];
+        if (services.length) setSelectedServices(services);
+        else if (!d?.is_ai_enabled) setSelectedServices([]);
+      } catch (e: any) {
+        Alert.alert('Could not load dress', e?.message ?? 'Please try again.');
+      } finally {
+        if (active) setEditReady(true);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [editId]);
+
+  useEffect(() => {
+    if (isEditing) {
+      // Editing never uses the saved add-draft.
+      setDraftLoaded(true);
+      return;
+    }
     let isActive = true;
     (async () => {
       try {
@@ -301,7 +397,7 @@ export default function AddDressScreen() {
     return () => {
       isActive = false;
     };
-  }, [draftKey]);
+  }, [draftKey, isEditing]);
 
   const persistDraft = useCallback(async (payload: AddDressDraft) => {
     try {
@@ -320,7 +416,7 @@ export default function AddDressScreen() {
   }, [draftKey]);
 
   useEffect(() => {
-    if (!draftLoaded) return;
+    if (!draftLoaded || isEditing) return; // don't autosave the add-draft while editing
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       persistDraft(draftValue);
@@ -328,7 +424,7 @@ export default function AddDressScreen() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [draftLoaded, draftValue, persistDraft]);
+  }, [draftLoaded, draftValue, persistDraft, isEditing]);
 
   const pickAsset = async (setter: (uri: string | null) => void) => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -441,7 +537,7 @@ export default function AddDressScreen() {
         ? await ensureRemoteImageUrl(aiGarmentImage, '/dresses/upload-ai-image')
         : null;
 
-      await api.post('/dresses/', {
+      const payload = {
         name: name.trim(),
         description: payloadDescription,
         price: parseFloat(price),
@@ -456,9 +552,17 @@ export default function AddDressScreen() {
         ai_model_url: aiRequested ? uploadedAiGarmentUrl || uploadedUrl : null,
         boutique_id: user.boutique_id,
         is_ai_enabled: aiRequested,
-      });
+      };
 
-      await clearDraft();
+      if (isEditing) {
+        await api.put(`/dresses/${editId}`, payload);
+      } else {
+        await api.post('/dresses/', payload);
+        await clearDraft();
+      }
+      // Force the catalog/dashboard to refresh on next focus so the change is
+      // immediately visible even within their staleness window.
+      markCatalogDirty();
       setSuccessOpen(true);
     } catch (error: any) {
       // 402 = require_active_subscription guard on the backend fired.
@@ -493,6 +597,11 @@ export default function AddDressScreen() {
         </TouchableOpacity>
       </View>
 
+      {isEditing && !editReady ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator color="#1A1A1A" />
+        </View>
+      ) : (
       <ScrollView
         className="flex-1 px-4"
         showsVerticalScrollIndicator={false}
@@ -503,10 +612,12 @@ export default function AddDressScreen() {
             className="text-[30px] text-black mb-1"
             style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
           >
-            Add New Dress
+            {isEditing ? 'Edit Dress' : 'Add New Dress'}
           </Text>
           <Text className="text-[10px] text-black/35 leading-4">
-            Add pricing, materials, sizes & dress video assets.
+            {isEditing
+              ? 'Update pricing, materials, sizes & dress assets.'
+              : 'Add pricing, materials, sizes & dress video assets.'}
           </Text>
         </View>
             <SectionHeader
@@ -897,17 +1008,22 @@ export default function AddDressScreen() {
                 <ActivityIndicator size="small" color="white" />
               ) : (
                 <Text className="text-[11px] uppercase tracking-[1.1px] text-white">
-                  Save
+                  {isEditing ? 'Update' : 'Save'}
                 </Text>
               )}
             </TouchableOpacity>
       </ScrollView>
+      )}
 
       <FigmaSuccessModal
         visible={successOpen}
         onClose={() => setSuccessOpen(false)}
-        title="Dress Added Successfully"
-        description="Your new dress listing is now added to your catalog and will be visible based on your shop visibility settings."
+        title={isEditing ? 'Dress Updated Successfully' : 'Dress Added Successfully'}
+        description={
+          isEditing
+            ? 'Your changes have been saved and the catalog has been updated.'
+            : 'Your new dress listing is now added to your catalog and will be visible based on your shop visibility settings.'
+        }
         buttonText="GO TO CATALOG"
         onButtonPress={() => {
           setSuccessOpen(false);

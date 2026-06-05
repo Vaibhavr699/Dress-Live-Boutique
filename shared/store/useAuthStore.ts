@@ -17,7 +17,7 @@ interface User {
   country_code?: string | null;
   is_active: boolean;
   is_superuser: boolean;
-  role?: 'buyer' | 'partner';
+  role?: 'buyer' | 'partner' | 'advisor';
   boutique_id?: number | null;
 }
 

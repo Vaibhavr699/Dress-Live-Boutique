@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, ClipPath, Defs, G, Path, Rect } from 'react-native-svg';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 function TabLabel({ label, focused }: { label: string; focused: boolean }) {
   return (
@@ -138,6 +139,10 @@ function ProfileIcon({ focused }: { focused: boolean }) {
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, 8);
+  // Advisors get a limited view: team management is owner-only, so the Team
+  // tab is hidden for them (its endpoints would 403 anyway).
+  const { user } = useAuthStore();
+  const isAdvisor = user?.role === 'advisor';
 
   return (
     <Tabs
@@ -190,6 +195,8 @@ export default function TabLayout() {
           title: 'Team',
           tabBarIcon: ({ focused }) => <TeamIcon focused={focused} />,
           tabBarLabel: ({ focused }) => <TabLabel label="Team" focused={focused} />,
+          // Hidden for advisors (team management is owner-only).
+          href: isAdvisor ? null : undefined,
         }}
       />
       <Tabs.Screen

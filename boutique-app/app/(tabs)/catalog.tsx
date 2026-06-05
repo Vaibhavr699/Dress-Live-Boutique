@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, SafeAreaView, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, useWindowDimensions, RefreshControl } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { api } from '@shared/api/api';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { FigmaConfirmModal } from '../../components/FigmaConfirmModal';
+import { consumeCatalogDirty } from '../../store/catalogSignal';
 
 type SubStatus = 'none' | 'active' | 'past_due' | 'canceled' | 'incomplete' | null;
 
@@ -28,7 +29,13 @@ export default function CatalogScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const boutiqueId = user?.boutique_id ?? null;
+  // Advisors get a read-only catalog: they can browse listings but can't
+  // publish, edit, or delete (those are owner-only and 402/403 server-side).
+  const isAdvisor = user?.role === 'advisor';
   const [loading, setLoading] = useState(true);
+  // Stamp the last successful dress fetch so the focus-effect can skip
+  // refetching within the staleness window and avoid blanking the screen.
+  const lastDressFetchRef = useRef<number>(0);
   const [dresses, setDresses] = useState<Dress[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -67,24 +74,51 @@ export default function CatalogScreen() {
   // tap through to /add-dress; the backend 402 guard inside add-dress.tsx
   // catches any race.
   const canPublish = subStatus === 'active' || subStatus == null;
+
+  // Guard against rapid double-taps pushing the add/edit screen multiple times
+  // (which stacked several "Add Dress" screens on the nav stack).
+  const navLockRef = useRef(false);
+  const navOnce = useCallback((fn: () => void) => {
+    if (navLockRef.current) return;
+    navLockRef.current = true;
+    fn();
+    // The lock is normally cleared when we return to the catalog (focus effect).
+    // This long timeout is only a safety net so a button can't get stuck if the
+    // navigation never happens — it won't release during a slow transition.
+    setTimeout(() => {
+      navLockRef.current = false;
+    }, 5000);
+  }, []);
+
   const handleAddDress = useCallback(() => {
-    if (subStatus && subStatus !== 'active') {
-      router.push('/subscribe' as any);
-      return;
-    }
-    router.push('/add-dress');
-  }, [router, subStatus]);
+    navOnce(() => {
+      if (subStatus && subStatus !== 'active') {
+        router.push('/subscribe' as any);
+        return;
+      }
+      router.push('/add-dress');
+    });
+  }, [navOnce, router, subStatus]);
+
+  const handleEditDress = useCallback(
+    (id: number) => {
+      navOnce(() => router.push({ pathname: '/add-dress', params: { id: String(id) } }));
+    },
+    [navOnce, router]
+  );
 
   const fetchDresses = useCallback(async () => {
     if (!boutiqueId) {
       setDresses([]);
       setLoading(false);
+      lastDressFetchRef.current = Date.now();
       return;
     }
 
     try {
       const data = await api.get(`/dresses/?boutique_id=${boutiqueId}`);
       setDresses(Array.isArray(data) ? data : []);
+      lastDressFetchRef.current = Date.now();
     } catch (error) {
       console.error('Failed to fetch dresses for catalog:', error);
     } finally {
@@ -92,11 +126,28 @@ export default function CatalogScreen() {
     }
   }, [boutiqueId]);
 
+  // Skip the full dress refetch if we loaded within the last 30s. The catalog
+  // used to re-hit /dresses on every tab switch and blank to a spinner each
+  // time. Subscription status still refreshes on every focus (cheap, and it
+  // must stay current right after the partner activates a plan) — it only
+  // updates the banner, never the full-screen spinner.
+  const DRESSES_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
-      fetchDresses();
+      // Returning to the catalog re-arms the add/edit nav guard. Holding the
+      // lock from tap until we're back here guarantees exactly one screen no
+      // matter how many times (or how fast) the button is pressed.
+      navLockRef.current = false;
       void refreshSubStatus();
+      const now = Date.now();
+      // A dress was just added/edited → always refresh so it's visible now,
+      // bypassing the staleness window.
+      const forced = consumeCatalogDirty();
+      if (!forced && now - lastDressFetchRef.current < DRESSES_STALE_MS) return;
+      // Stale-while-revalidate: only show the spinner on the very first load.
+      // After that, keep the current catalog on screen and refresh quietly.
+      if (lastDressFetchRef.current === 0) setLoading(true);
+      fetchDresses();
     }, [fetchDresses, refreshSubStatus])
   );
 
@@ -107,13 +158,16 @@ export default function CatalogScreen() {
 
   const handleConfirmDelete = async () => {
     if (!dressPendingDelete?.id) return;
+    const target = dressPendingDelete;
     setIsDeleting(true);
     try {
-      await api.delete(`/dresses/${dressPendingDelete.id}`);
+      await api.delete(`/dresses/${target.id}`);
+      // Optimistically drop the deleted dress from the list instead of
+      // blanking the whole catalog with the full-screen spinner and
+      // refetching everything.
+      setDresses((prev) => prev.filter((d) => d.id !== target.id));
       setDeleteModalOpen(false);
       setDressPendingDelete(null);
-      setLoading(true);
-      await fetchDresses();
     } catch (error: any) {
       Alert.alert('Delete Failed', error?.message || 'Could not delete this dress listing.');
     } finally {
@@ -158,7 +212,7 @@ export default function CatalogScreen() {
         {/* Subscription nudge — mirror the dashboard banner so a partner
             who taps Catalog first sees the same prompt instead of being
             surprised by a 402 after filling out Add Dress. */}
-        {subStatus && subStatus !== 'active' ? (
+        {!isAdvisor && subStatus && subStatus !== 'active' ? (
           <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
             <View className="bg-[#FFF4EC] border border-[#FFD3B7] px-4 py-3 flex-row items-start">
               <Ionicons name="alert-circle-outline" size={18} color="#C9491A" style={{ marginRight: 10, marginTop: 1 }} />
@@ -199,33 +253,35 @@ export default function CatalogScreen() {
             >
               All Dress Catalog Listings
             </Text>
-            <TouchableOpacity
-              activeOpacity={0.9}
-              onPress={handleAddDress}
-              style={{
-                width: 125,
-                height: 46,
-                backgroundColor: '#000000',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'row',
-                opacity: canPublish ? 1 : 0.55,
-              }}
-            >
-              {!canPublish ? (
-                <Ionicons name="lock-closed" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
-              ) : null}
-              <Text style={{ color: '#FFFFFF', fontFamily: 'Helvetica Neue', fontSize: 14, fontWeight: '500', letterSpacing: 0.56, textTransform: 'uppercase' }}>
-                Add Dress
-              </Text>
-            </TouchableOpacity>
+            {!isAdvisor ? (
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={handleAddDress}
+                style={{
+                  width: 125,
+                  height: 46,
+                  backgroundColor: '#000000',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'row',
+                  opacity: canPublish ? 1 : 0.55,
+                }}
+              >
+                {!canPublish ? (
+                  <Ionicons name="lock-closed" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
+                ) : null}
+                <Text style={{ color: '#FFFFFF', fontFamily: 'Helvetica Neue', fontSize: 14, fontWeight: '500', letterSpacing: 0.56, textTransform: 'uppercase' }}>
+                  Add Dress
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           <View style={{ borderTopWidth: 1, borderTopColor: '#E6E6E6', borderBottomWidth: 1, borderBottomColor: '#E6E6E6', marginBottom: 30 }}>
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="SEARCH DRESSES BY NAME OT STYLE..."
+              placeholder="SEARCH DRESSES BY NAME OR STYLE..."
               placeholderTextColor="#9B9B9B"
               autoCapitalize="none"
               autoCorrect={false}
@@ -263,19 +319,23 @@ export default function CatalogScreen() {
             <View className="py-24 items-center">
               <Text className="text-[14px] text-black mb-2">No catalog dresses yet</Text>
               <Text className="text-[11px] text-center text-black/35 leading-5 px-10 mb-6">
-                Start by adding your first listing so brides can browse your collection.
+                {isAdvisor
+                  ? 'This boutique has no dress listings yet.'
+                  : 'Start by adding your first listing so brides can browse your collection.'}
               </Text>
-              <TouchableOpacity
-                activeOpacity={0.9}
-                onPress={handleAddDress}
-                className="border border-black px-6 py-3"
-                style={{ opacity: canPublish ? 1 : 0.55, flexDirection: 'row', alignItems: 'center' }}
-              >
-                {!canPublish ? (
-                  <Ionicons name="lock-closed" size={11} color="#000000" style={{ marginRight: 6 }} />
-                ) : null}
-                <Text className="text-[10px] uppercase tracking-[1.5px] text-black">Add First Dress</Text>
-              </TouchableOpacity>
+              {!isAdvisor ? (
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={handleAddDress}
+                  className="border border-black px-6 py-3"
+                  style={{ opacity: canPublish ? 1 : 0.55, flexDirection: 'row', alignItems: 'center' }}
+                >
+                  {!canPublish ? (
+                    <Ionicons name="lock-closed" size={11} color="#000000" style={{ marginRight: 6 }} />
+                  ) : null}
+                  <Text className="text-[10px] uppercase tracking-[1.5px] text-black">Add First Dress</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : (
             <View>
@@ -341,24 +401,26 @@ export default function CatalogScreen() {
                     
                   </View>
 
-                  <View style={{ flexDirection: 'row', gap: 14, marginTop: 40 }}>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={handleAddDress}
-                      style={{ flex: 1, height: 38, borderWidth: 1, borderColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
-                    >
-                      <Image source={PENCIL_ICON} style={{ width: 16, height: 16, tintColor: '#000000' }} contentFit="contain" />
-                      <Text style={{ marginLeft: 8, color: '#000000', fontSize: 12 }}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      activeOpacity={0.85}
-                      onPress={() => openDelete(dress)}
-                      style={{ flex: 1, height: 38, backgroundColor: '#C9491A', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
-                    >
-                      <Image source={TRASH_ICON} style={{ width: 16, height: 16, tintColor: '#FFFFFF' }} contentFit="contain" />
-                      <Text style={{ marginLeft: 8, color: '#FFFFFF', fontSize: 12 }}>Delete Dress</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {!isAdvisor ? (
+                    <View style={{ flexDirection: 'row', gap: 14, marginTop: 40 }}>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => handleEditDress(dress.id)}
+                        style={{ flex: 1, height: 38, borderWidth: 1, borderColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
+                      >
+                        <Image source={PENCIL_ICON} style={{ width: 16, height: 16, tintColor: '#000000' }} contentFit="contain" />
+                        <Text style={{ marginLeft: 8, color: '#000000', fontSize: 12 }}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => openDelete(dress)}
+                        style={{ flex: 1, height: 38, backgroundColor: '#C9491A', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
+                      >
+                        <Image source={TRASH_ICON} style={{ width: 16, height: 16, tintColor: '#FFFFFF' }} contentFit="contain" />
+                        <Text style={{ marginLeft: 8, color: '#FFFFFF', fontSize: 12 }}>Delete Dress</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                 </View>
               ))}
               {filteredDresses.length === 0 ? (

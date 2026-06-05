@@ -414,12 +414,11 @@ def _sign_profile_image_url(image_url: Optional[str]) -> Optional[str]:
         return image_url
 
 
-def serialize_booking(db: Session, booking) -> BookingView:
+def _booking_view(booking, *, dresses, user, boutique) -> BookingView:
+    """Assemble a BookingView from already-resolved related objects. Shared by
+    the single (serialize_booking) and batched (serialize_bookings) paths so
+    the field mapping lives in exactly one place."""
     dress_ids = [int(item) for item in booking.selected_dress_ids.split(",") if item]
-    dresses = [crud_dress.get(db, id=dress_id) for dress_id in dress_ids]
-    dresses = [dress for dress in dresses if dress]
-    boutique = crud_boutique.get(db, id=booking.boutique_id)
-
     return BookingView(
         id=booking.id,
         user_id=booking.user_id,
@@ -433,11 +432,11 @@ def serialize_booking(db: Session, booking) -> BookingView:
         selected_dress_ids=booking.selected_dress_ids,
         dress_ids=dress_ids,
         customer=BookingCustomerSummary(
-            id=booking.user.id,
-            full_name=booking.user.full_name,
-            email=booking.user.email,
-            profile_image_url=_sign_profile_image_url(booking.user.profile_image_url),
-        ) if booking.user else None,
+            id=user.id,
+            full_name=user.full_name,
+            email=user.email,
+            profile_image_url=_sign_profile_image_url(user.profile_image_url),
+        ) if user else None,
         dresses=[
             BookingDressSummary(
                 id=dress.id,
@@ -463,13 +462,66 @@ def serialize_booking(db: Session, booking) -> BookingView:
     )
 
 
+def serialize_booking(db: Session, booking) -> BookingView:
+    """Single-booking serializer (read_booking / post-call). For lists use
+    serialize_bookings — it batches the lookups to avoid an N+1."""
+    dress_ids = [int(item) for item in booking.selected_dress_ids.split(",") if item]
+    dresses = [d for d in (crud_dress.get(db, id=i) for i in dress_ids) if d]
+    boutique = crud_boutique.get(db, id=booking.boutique_id)
+    return _booking_view(booking, dresses=dresses, user=booking.user, boutique=boutique)
+
+
+def serialize_bookings(db: Session, bookings: list) -> List[BookingView]:
+    """Batched serializer. The old per-booking path issued one query per dress
+    plus a boutique + user load for every booking — O(N×M) round-trips to the
+    DB, which got slow as a boutique's history grew. This collapses it to a
+    few `IN (...)` queries (dresses, boutiques, users) regardless of N."""
+    if not bookings:
+        return []
+
+    from app.models.boutique import Boutique
+    from app.models.dress import Dress
+
+    parsed_ids: dict[int, list[int]] = {}
+    all_dress_ids: set[int] = set()
+    for b in bookings:
+        ids = [int(item) for item in (b.selected_dress_ids or "").split(",") if item]
+        parsed_ids[b.id] = ids
+        all_dress_ids.update(ids)
+
+    dress_by_id = (
+        {d.id: d for d in db.query(Dress).filter(Dress.id.in_(all_dress_ids)).all()}
+        if all_dress_ids else {}
+    )
+    boutique_ids = {b.boutique_id for b in bookings if b.boutique_id}
+    boutique_by_id = (
+        {x.id: x for x in db.query(Boutique).filter(Boutique.id.in_(boutique_ids)).all()}
+        if boutique_ids else {}
+    )
+    user_ids = {b.user_id for b in bookings if b.user_id}
+    user_by_id = (
+        {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+        if user_ids else {}
+    )
+
+    return [
+        _booking_view(
+            b,
+            dresses=[dress_by_id[i] for i in parsed_ids[b.id] if i in dress_by_id],
+            user=user_by_id.get(b.user_id),
+            boutique=boutique_by_id.get(b.boutique_id),
+        )
+        for b in bookings
+    ]
+
+
 @router.get("/me", response_model=List[BookingView])
 def read_my_bookings(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     bookings = crud_booking.get_multi_by_user(db, user_id=current_user.id)
-    return [serialize_booking(db, booking) for booking in bookings]
+    return serialize_bookings(db, bookings)
 
 
 @router.get("/partner", response_model=List[BookingView])
@@ -477,13 +529,15 @@ def read_partner_bookings(
     db: Session = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
-    if current_user.role != "partner":
-        raise HTTPException(status_code=403, detail="Only partners can access partner bookings.")
+    # Boutique staff = the owning partner OR an advisor linked to the boutique.
+    # Advisors help run the calendar, so they get the same read access.
+    if current_user.role not in ("partner", "advisor"):
+        raise HTTPException(status_code=403, detail="Only boutique staff can access partner bookings.")
     if not current_user.boutique_id:
         return []
 
     bookings = crud_booking.get_multi_by_boutique(db, boutique_id=current_user.boutique_id)
-    return [serialize_booking(db, booking) for booking in bookings]
+    return serialize_bookings(db, bookings)
 
 
 @router.get("/{booking_id}", response_model=BookingView)
@@ -500,7 +554,7 @@ def read_booking(
     if current_user.role == "buyer":
         if booking.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not allowed to view this booking.")
-    elif current_user.role == "partner":
+    elif current_user.role in ("partner", "advisor"):
         if not current_user.boutique_id or booking.boutique_id != current_user.boutique_id:
             raise HTTPException(status_code=403, detail="Not allowed to view this booking.")
     else:
@@ -679,11 +733,13 @@ async def update_booking(
             detail="This booking can no longer be updated.",
         )
 
-    if current_user.role == "partner":
+    if current_user.role in ("partner", "advisor"):
+        # Boutique staff (owner or advisor) manage the boutique's bookings the
+        # same way — accept/reject/reschedule/complete, scoped to their boutique.
         if not current_user.boutique_id or booking.boutique_id != current_user.boutique_id:
             raise HTTPException(status_code=403, detail="Not allowed to update this booking.")
         if booking_in.status and booking_in.status not in {"accepted", "rejected", "rescheduled", "completed"}:
-            raise HTTPException(status_code=400, detail="Partners can only accept, reject, reschedule or complete bookings.")
+            raise HTTPException(status_code=400, detail="Boutique staff can only accept, reject, reschedule or complete bookings.")
     elif booking.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed to update this booking.")
     else:
@@ -700,7 +756,7 @@ async def update_booking(
 
     booking_payload = booking_in
     if (
-        current_user.role == "partner"
+        current_user.role in ("partner", "advisor")
         and booking.appointment_type == "in_store"
         and booking_in.status == "rescheduled"
         and booking_in.location is None
@@ -721,12 +777,13 @@ async def update_booking(
     )
     if status_changed or schedule_changed:
         type_label = _appointment_label(booking.appointment_type)
-        acting_role = current_user.role  # 'partner' or 'buyer'
+        acting_role = current_user.role  # 'partner' | 'advisor' (boutique-side) or 'buyer'
+        acting_is_boutique = acting_role in ("partner", "advisor")
         buyer_id = booking.user_id
         partner_ids = _partner_user_ids_for_boutique(db, booking.boutique_id)
         # Recipients = "the other side"
         recipients: list[int] = []
-        if acting_role == "partner":
+        if acting_is_boutique:
             recipients = [buyer_id]
         else:
             recipients = list(partner_ids)
@@ -754,7 +811,7 @@ async def update_booking(
             kind = "booking_updated"
 
         # Rich image: show the *counterparty's* picture to the recipient.
-        if acting_role == "partner":
+        if acting_is_boutique:
             boutique = crud_boutique.get(db, id=booking.boutique_id)
             recipient_image = None
             if boutique:
@@ -784,7 +841,7 @@ async def update_booking(
         booking_in.status == "accepted"
         and prev_status != "accepted"
         and booking.appointment_type == "video"
-        and current_user.role == "partner"
+        and current_user.role in ("partner", "advisor")
     ):
         boutique = crud_boutique.get(db, id=booking.boutique_id)
         boutique_name = (boutique.name if boutique else "your boutique") or "your boutique"

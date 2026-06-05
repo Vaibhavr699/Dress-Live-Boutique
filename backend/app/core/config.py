@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     # Empty in dev = no link is added to emails (RN flow keeps working).
     WEB_CALL_BASE_URL: Optional[str] = None
 
+    # Public https base of THIS backend. Used to build advisor invite-accept
+    # links in emails — Resend can't deep-link the app, same constraint as the
+    # Stripe return pages, so the link points at a landing page on this host.
+    APP_PUBLIC_BASE_URL: str = (
+        "https://dress-live-boutique-production.up.railway.app"
+    )
+    # How long an advisor invitation link stays valid before it must be resent.
+    TEAM_INVITE_TTL_DAYS: int = 7
+
     # LiveKit signs webhook requests with the same API key/secret as room
     # tokens. The receiver verifies the Authorization header — no extra
     # secret needed. Override per-host only if you split LiveKit projects.

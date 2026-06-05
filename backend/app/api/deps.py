@@ -58,6 +58,19 @@ def get_current_active_superuser(
     return current_user
 
 
+def require_advisor(
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """Self-service routes for an invited advisor (their own profile and
+    availability). Distinct from partner management — an advisor may only
+    act on their own linked record, never the team."""
+    if current_user.role != "advisor":
+        raise HTTPException(status_code=403, detail="Advisor access only.")
+    if not current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Advisor is not linked to a boutique.")
+    return current_user
+
+
 def require_active_subscription(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
