@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, ScrollView, useWindowDimensions, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -338,10 +338,34 @@ export default function AITryOnScreen() {
     return !!res?.granted;
   };
 
+  // Recovery path for the denied-camera notice: re-prompt while the OS still
+  // allows it, otherwise deep-link to the app's Settings page (iOS/Android)
+  // where the user can flip the toggle back on.
+  const handleEnableCamera = useCallback(async () => {
+    if (permission && !permission.granted && permission.canAskAgain === false) {
+      void Linking.openSettings();
+      return;
+    }
+    await requestPermission();
+  }, [permission, requestPermission]);
+
   const handleCapture = async () => {
     const ok = await ensureCameraPermission();
     if (!ok) {
-      Alert.alert('Camera permission', 'Please allow camera access to continue.');
+      // Permanently denied → the OS won't show a prompt again, so point them
+      // to Settings. Otherwise the re-prompt above already ran.
+      if (permission && permission.canAskAgain === false) {
+        Alert.alert(
+          'Camera access is off',
+          'Turn on Camera for Dress Live in Settings, or pick a photo from your gallery instead.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+          ],
+        );
+      } else {
+        Alert.alert('Camera permission', 'Please allow camera access to take your photo, or pick one from your gallery.');
+      }
       return;
     }
     try {
@@ -509,14 +533,38 @@ export default function AITryOnScreen() {
                 borderColor: '#000',
               }}
             >
-              <CameraView
-                ref={(r) => {
-                  cameraRef.current = r;
-                }}
-                facing={cameraFacing}
-                mirror={cameraFacing === 'front'}
-                style={{ width: '100%', height: '100%' }}
-              />
+              {permission?.granted ? (
+                <CameraView
+                  ref={(r) => {
+                    cameraRef.current = r;
+                  }}
+                  facing={cameraFacing}
+                  mirror={cameraFacing === 'front'}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              ) : (
+                // Camera denied: instead of a silent black box, explain why the
+                // preview is missing and offer a recovery path (re-prompt / open
+                // Settings, or use the gallery button below).
+                <View className="absolute inset-0 bg-[#F5F5F5] items-center justify-center" style={{ paddingHorizontal: 24 }}>
+                  <Ionicons name="videocam-off-outline" size={34} color="#1A1A1A" />
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1px] mt-3 text-center">
+                    Camera access is off
+                  </Text>
+                  <Text className="text-black/55 text-[12px] mt-2 text-center leading-5">
+                    We need your camera to take this photo. Turn it on to continue, or use the gallery button below to pick an existing photo.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleEnableCamera}
+                    activeOpacity={0.85}
+                    className="mt-4 bg-black px-5 py-3"
+                  >
+                    <Text className="text-white text-[11px] font-bold uppercase tracking-[1.5px]">
+                      {permission && permission.canAskAgain === false ? 'Open Settings' : 'Allow Camera'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               {currentStep.type === 'countdown' && (
                 <View className="absolute items-center justify-center">
                   <Text className="text-white text-[120px] font-bold opacity-80">{countdown}</Text>

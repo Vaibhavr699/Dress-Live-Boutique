@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   Easing,
+  Linking,
   ScrollView,
   Text,
   TextInput,
@@ -240,7 +241,20 @@ export default function MyMeasurementsScreen() {
     if (!permission?.granted) {
       const result = await requestPermission();
       if (!result.granted) {
-        Alert.alert('Camera access required', 'Please allow camera access in your device settings.');
+        // Re-prompt isn't possible once the OS marks it permanently denied —
+        // give a real recovery path straight to the app's Settings page.
+        if (result.canAskAgain === false) {
+          Alert.alert(
+            'Camera access is off',
+            'The body scan needs your camera. Turn on Camera for Dress Live in Settings to continue.',
+            [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+            ],
+          );
+        } else {
+          Alert.alert('Camera access required', 'Please allow camera access to run the body scan.');
+        }
         return;
       }
     }
