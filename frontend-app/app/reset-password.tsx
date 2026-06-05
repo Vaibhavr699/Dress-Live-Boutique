@@ -71,11 +71,11 @@ export default function ResetPasswordScreen() {
             lineHeight: 20
           }}
         >
-          Your password had been successfully reset. Click confirm to set a new password.
+          Your code has been verified. Tap continue to create a new password.
         </Text>
       </View>
 
-      <TouchableOpacity 
+      <TouchableOpacity
         activeOpacity={0.9}
         onPress={() => setCurrentStep('input')}
         className="bg-[#1A1A1A] py-5 items-center w-full mt-8"
@@ -114,7 +114,7 @@ export default function ResetPasswordScreen() {
             lineHeight: 20
           }}
         >
-          Create a new password. Ensure it different form previous ones for security.
+          Create a new password. Make sure it&apos;s different from your previous one.
         </Text>
       </View>
 
@@ -157,7 +157,7 @@ export default function ResetPasswordScreen() {
               letterSpacing: 0.72
             }}
           >
-            RE-ENDER NEW PASSWORD *
+            RE-ENTER NEW PASSWORD *
           </Text>
           <TextInput 
             className="text-[#1A1A1A] text-sm font-light py-2 pr-10" 
