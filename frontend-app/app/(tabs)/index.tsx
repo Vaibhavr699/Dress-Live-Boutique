@@ -412,6 +412,11 @@ export default function DashboardScreen() {
     return cards;
   }, [boutiques, visibleDresses]);
 
+  // When the user is searching, show matching DRESSES (a 2-col grid) instead of
+  // boutique cards — so a dress-name search surfaces the actual dresses, not
+  // just the boutiques that carry them.
+  const isSearching = debouncedQuery.trim().length > 0;
+
   const openFilters = () => {
     setDraftPriceFilter(activePriceFilter);
     setDraftLocationFilter(activeLocationFilter);
@@ -610,10 +615,11 @@ export default function DashboardScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : (
-        <FlashList<BoutiqueCard>
-          data={boutiqueCards}
-          keyExtractor={(b) => String(b.boutiqueId)}
-          estimatedItemSize={300}
+        <FlashList<any>
+          key={isSearching ? 'search-dresses' : 'boutiques'}
+          data={isSearching ? visibleDresses : boutiqueCards}
+          numColumns={isSearching ? 2 : 1}
+          keyExtractor={(item) => (isSearching ? `d-${item.id}` : `b-${item.boutiqueId}`)}
           contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -735,7 +741,43 @@ export default function DashboardScreen() {
               </View>
             </FadeInView>
           }
-          renderItem={({ item: b, index: idx }: ListRenderItemInfo<BoutiqueCard>) => (
+          renderItem={(info: ListRenderItemInfo<any>) => {
+            const idx = info.index;
+            if (isSearching) {
+              const dress = info.item as Dress;
+              const cover = boutiques[dress.boutique_id]?.header_image_url || undefined;
+              const priceLabel = `${typeof dress.price === 'number' ? Math.round(dress.price) : dress.price} €`;
+              return (
+                <FadeInView delay={Math.min(idx * 40, 240)} style={{ flex: 1, paddingHorizontal: 6, paddingTop: 8, marginBottom: 20 }}>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/(tabs)/product-details',
+                        params: { id: String(dress.id), boutiqueId: String(dress.boutique_id), coverImageUrl: cover },
+                      })
+                    }
+                  >
+                    <Image
+                      source={dress.image_url ? { uri: dress.image_url } : require('@/assets/images/Dashboard image 3.png')}
+                      style={{ width: '100%', height: 220 }}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      transition={150}
+                      recyclingKey={String(dress.id)}
+                    />
+                    <Text className="text-black mt-2" numberOfLines={1} style={{ fontFamily: 'Helvetica Neue', fontWeight: '500', fontSize: 13, lineHeight: 16 }}>
+                      {dress.name}
+                    </Text>
+                    <Text className="text-[#6E6E6E] mt-1" style={{ fontFamily: 'Helvetica Neue', fontWeight: '400', fontSize: 12, lineHeight: 12 }}>
+                      {priceLabel}
+                    </Text>
+                  </TouchableOpacity>
+                </FadeInView>
+              );
+            }
+            const b = info.item as BoutiqueCard;
+            return (
             <FadeInView delay={Math.min(idx * 60, 360)} className="mb-7" style={{ paddingTop: 8 }}>
               <TouchableOpacity
                 activeOpacity={0.9}
@@ -806,7 +848,8 @@ export default function DashboardScreen() {
                 </Text>
               </TouchableOpacity>
             </FadeInView>
-          )}
+            );
+          }}
         />
       )}
 
