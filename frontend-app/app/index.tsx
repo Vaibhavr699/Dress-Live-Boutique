@@ -137,28 +137,30 @@ export default function LandingPage() {
             <View style={{ flex: 1, height: 1, backgroundColor: '#E5E5E5' }} />
           </View>
 
-          {/* Social sign-in */}
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => handleSocial('Google')}
-            style={{ borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
-          >
-            <Ionicons name="logo-google" size={18} color="black" style={{ marginRight: 10 }} />
-            <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
-              Continue with Google
-            </Text>
-          </TouchableOpacity>
+          {/* Social sign-in — Google + Apple side by side on one row */}
+          <View style={{ flexDirection: 'row', gap: 12 }}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => handleSocial('Google')}
+              style={{ flex: 1, borderWidth: 1, borderColor: 'black', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
+            >
+              <Ionicons name="logo-google" size={18} color="black" style={{ marginRight: 8 }} />
+              <Text style={{ color: 'black', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
+                Google
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => handleSocial('Apple')}
-            style={{ backgroundColor: 'black', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
-          >
-            <Ionicons name="logo-apple" size={20} color="white" style={{ marginRight: 10 }} />
-            <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
-              Continue with Apple
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => handleSocial('Apple')}
+              style={{ flex: 1, backgroundColor: 'black', paddingVertical: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
+            >
+              <Ionicons name="logo-apple" size={18} color="white" style={{ marginRight: 8 }} />
+              <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold', letterSpacing: 2, textTransform: 'uppercase' }}>
+                Apple
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
     </View>
   );
