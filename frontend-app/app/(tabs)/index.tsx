@@ -125,6 +125,15 @@ export default function DashboardScreen() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Debounced copy of the query used for the (expensive) filtering. Typing only
+  // updates `searchQuery` (cheap → keeps the TextInput in sync); the heavy
+  // re-filter/re-render runs after a short pause. Without this, filtering on
+  // every keystroke desynced the controlled input and duplicated characters.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery), 200);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const [activePriceFilter, setActivePriceFilter] = useState<(typeof PRICE_FILTERS)[number]['id']>('any');
   const [activeLocationFilter, setActiveLocationFilter] = useState<string>('All');
   const [activeDistanceFilter, setActiveDistanceFilter] = useState<DistanceFilterId>('any');
@@ -280,7 +289,7 @@ export default function DashboardScreen() {
               '';
             return raw.toLowerCase().includes(activeCategory.toLowerCase());
           });
-    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const normalizedQuery = debouncedQuery.trim().toLowerCase();
     const priceTest = PRICE_FILTERS.find((p) => p.id === activePriceFilter)?.test ?? PRICE_FILTERS[0].test;
     const activeDistance = DISTANCE_FILTERS.find((d) => d.id === activeDistanceFilter)?.maxKm ?? null;
 
@@ -371,7 +380,7 @@ export default function DashboardScreen() {
     canUseDistanceFilter,
     currentCoords,
     dresses,
-    searchQuery,
+    debouncedQuery,
     sortId,
   ]);
 
