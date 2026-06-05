@@ -7,6 +7,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SvgXml } from 'react-native-svg';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 
 type OnboardingStep = 'plan' | 'shop_info' | 'owner_info' | 'store_photos';
@@ -248,11 +249,7 @@ export default function SignupScreen() {
   };
 
   const pickImage = async (setter: (uri: string) => void, errorKey?: SignupErrorKey) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'We need permission to access your photos.');
-      return;
-    }
+    if (!(await ensureMediaPermission('library'))) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,

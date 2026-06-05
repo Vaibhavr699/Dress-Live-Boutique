@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
@@ -30,14 +31,7 @@ export default function ProfileScreen() {
   const handlePickAndUploadPhoto = async () => {
     if (isUploadingPhoto) return;
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Photo access needed',
-          'Allow Dress Live to access your photos so you can change your profile picture.',
-        );
-        return;
-      }
+      if (!(await ensureMediaPermission('library'))) return;
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: true,

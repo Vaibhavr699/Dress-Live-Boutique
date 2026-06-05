@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { FigmaSuccessModal } from '../components/FigmaSuccessModal';
 import { markCatalogDirty } from '../store/catalogSignal';
@@ -435,6 +436,7 @@ export default function AddDressScreen() {
   }, [draftLoaded, draftValue, persistDraft, isEditing]);
 
   const pickAsset = async (setter: (uri: string | null) => void) => {
+    if (!(await ensureMediaPermission('library'))) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,

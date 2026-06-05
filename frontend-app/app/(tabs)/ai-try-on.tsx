@@ -10,6 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as MediaLibrary from 'expo-media-library';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 
 const MAX_UPLOAD_DIMENSION = 1280;
 const UPLOAD_COMPRESSION = 0.7;
@@ -298,11 +299,7 @@ export default function AITryOnScreen() {
   }, [createTryOnPreview]);
 
   const pickImageFromGallery = useCallback(async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Photos permission', 'Please allow photo library access to continue.');
-      return null;
-    }
+    if (!(await ensureMediaPermission('library'))) return null;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
