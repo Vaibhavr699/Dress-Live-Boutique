@@ -79,6 +79,11 @@ export default function TabLayout() {
   return (
     <EdgeSwipeBackProvider>
     <Tabs
+      // Detail screens (boutique-details, product-details, checkout, …) live
+      // inside this tab navigator. Default "firstRoute" back behavior sends
+      // back/swipe straight to Home; "history" walks back through the screens
+      // in the order they were actually visited (product → boutique → home).
+      backBehavior="history"
       screenOptions={{
         tabBarActiveTintColor: '#1A1A1A',
         tabBarInactiveTintColor: '#1A1A1A50',
