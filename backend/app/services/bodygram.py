@@ -4,6 +4,39 @@ import httpx
 
 _BODYGRAM_API_BASE = "https://platform.bodygram.com/api"
 
+
+class PhotoScanRejected(Exception):
+    """Bodygram received the photos but couldn't use them (no person detected,
+    blur, bad framing, a covered lens, etc.). The user should retake — we must
+    NOT silently fall back to a stats-only estimate that looks like a real body
+    scan."""
+
+
+# HTTP statuses where a photoScan failure is NOT the photo's fault — auth,
+# billing/credits, rate limiting, request timeout, or server errors. Anything
+# else after Bodygram accepted the request is treated as an unusable photo the
+# user should retake.
+_INFRA_STATUSES = {401, 402, 403, 408, 429}
+
+
+def _is_photo_rejection(status: int, entry: dict) -> bool:
+    if status in _INFRA_STATUSES or status >= 500:
+        return False
+    # Async/queued scans aren't a photo failure — let the stats fallback cover
+    # them rather than wrongly telling the user to retake.
+    entry_status = str(entry.get("status") or "").lower()
+    if entry_status in ("pending", "processing", "queued", "created"):
+        return False
+    return True
+
+
+def _photo_rejection_reason(data: dict, entry: dict) -> str:
+    return (
+        entry.get("errorMessage")
+        or (data.get("error") or {}).get("message")
+        or "Photos could not be processed."
+    )
+
 # Measurement name → our schema field (values come back in mm, we store cm)
 _MEASUREMENT_MAP = {
     "bustGirth": "bust_cm",
@@ -117,7 +150,14 @@ async def run_scan(
             entry = data.get("entry") or {}
             if status < 400 and entry.get("status") == "success":
                 return _extract_measurements(entry)
-            # photoScan failed — fall through to statsEstimations as a safety net
+            # photoScan didn't succeed. If Bodygram processed the photos and
+            # rejected them (no person detected, blur, bad framing, covered
+            # lens), that's the user's photo — surface it so they retake rather
+            # than silently returning a height/weight-only estimate. Only
+            # genuine infra problems (auth, credits, rate-limit, server errors)
+            # fall through to statsEstimations as a safety net.
+            if _is_photo_rejection(status, entry):
+                raise PhotoScanRejected(_photo_rejection_reason(data, entry))
 
         # Stats-only path (also used as photoScan fallback)
         stats_payload = _stats_payload(

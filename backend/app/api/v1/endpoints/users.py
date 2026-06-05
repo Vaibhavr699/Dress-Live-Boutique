@@ -647,6 +647,18 @@ async def scan_measurements(
             gender=payload.gender,
             side_image_data_url=payload.side_image_data_url,
         )
+    except bodygram_service.PhotoScanRejected:
+        # The photos couldn't be read (bad framing, blur, covered lens, no body
+        # in frame). 400 so the app surfaces this verbatim and prompts a retake,
+        # instead of returning a stats-only estimate that looks like a real scan.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "We couldn't read your photos clearly. Make sure your full body is "
+                "in frame, the camera lens isn't covered, and the lighting is good, "
+                "then retake."
+            ),
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
 
