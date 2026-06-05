@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, ScrollView, useWindowDimensions, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -118,6 +119,43 @@ export default function AITryOnScreen() {
   ];
 
   const currentStep = steps[step - 1];
+
+  // This screen lives inside the Tabs navigator, so it never unmounts between
+  // visits — its state (step, captured photos, rendered preview) would persist
+  // and re-show a stale result on the next open, with a "Done" that appears to
+  // do nothing. Reset to a clean capture flow every time the screen is focused
+  // so each AI Try-On session starts fresh.
+  const resetFlow = useCallback(() => {
+    setStep(1);
+    setCountdown(5);
+    setCameraFacing('front');
+    setSelfieUri(null);
+    setSelfieDataUrl(null);
+    setFullBodyUri(null);
+    setRenderedUri(null);
+    setValidationError(null);
+    setValidating(false);
+    setRendering(false);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Reset when the screen is left (blur/unmount), not on entry, so the next
+      // visit starts from a clean capture flow with no stale-result flash. The
+      // screen never blurs mid-flow (steps 1–8 don't navigate), and app
+      // backgrounding doesn't trigger this — only real navigation away does.
+      return () => {
+        resetFlow();
+      };
+    }, [resetFlow])
+  );
+
+  // Always leave the screen even if there's no back history to pop (e.g. opened
+  // via a deep link), so "Done"/close can never become a no-op.
+  const exitTryOn = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)');
+  }, [router]);
 
   const selectedDressImages = useMemo(() => {
     if (!dress) return [];
@@ -425,12 +463,12 @@ export default function AITryOnScreen() {
       } else if (step === 7) {
         return;
       } else if (step === 8) {
-        router.back();
+        exitTryOn();
       } else {
         setStep(step + 1);
       }
     } else {
-      router.back();
+      exitTryOn();
     }
   };
 
@@ -750,7 +788,7 @@ export default function AITryOnScreen() {
         <View style={{ width: 32 }} />
         <View style={{ width: 32 }} />
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={exitTryOn}
           activeOpacity={0.85}
           className="w-8 h-8 rounded-full items-center justify-center bg-black/10"
         >
