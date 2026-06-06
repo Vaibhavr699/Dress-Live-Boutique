@@ -516,6 +516,7 @@ export default function BoutiqueDetailsScreen() {
                             id: String(dress.id),
                             name: dress.name,
                             price: priceLabel,
+                            priceValue: typeof dress.price === 'number' ? dress.price : undefined,
                             imageUrl: dress.image_url ?? null,
                             boutiqueId,
                             selected: true,

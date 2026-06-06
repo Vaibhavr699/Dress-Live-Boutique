@@ -7,6 +7,9 @@ interface CartItem {
   id: string;
   name: string;
   price: string;
+  // Numeric price (currency units) — the source of truth for totals. `price`
+  // is only a localized display string and must not be parsed for math.
+  priceValue?: number;
   imageUrl?: string | null;
   boutiqueId?: number | null;
   quantity: number;

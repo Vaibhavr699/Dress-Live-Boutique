@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { useAuthStore } from '../store/useAuthStore';
+import { shouldClearSessionOn401 } from './authFailure';
 
 const API_PATH = '/api/v1';
 const API_PORT = '8000';
@@ -236,6 +237,13 @@ function getFriendlyErrorMessage(params: {
 }
 
 function createHttpError(status: number, payload: unknown, endpoint: string, fallbackMessage: string) {
+  // A 401 on an authenticated (non-login) request means the persisted token is
+  // stale — clear the session so the user falls back to the guest/login flow
+  // instead of being stranded in a view where every call fails. Fire-and-forget;
+  // logout() is idempotent and the null-token guard debounces parallel 401s.
+  if (shouldClearSessionOn401(status, endpoint, !!useAuthStore.getState().token)) {
+    void useAuthStore.getState().logout();
+  }
   const detail = extractServerDetail(payload);
   return attachApiMeta(new Error(getFriendlyErrorMessage({ status, detail, endpoint, fallbackMessage })), {
     status,

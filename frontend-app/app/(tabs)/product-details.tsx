@@ -153,6 +153,7 @@ export default function ProductDetailsScreen() {
       id: String(dress?.id ?? 'p-1'),
       name: dress?.name ?? 'Elegant Satin A-Line',
       price: normalizedPrice,
+      priceValue: typeof dress?.price === 'number' ? dress.price : undefined,
       imageUrl: dress?.image_url ?? null,
       boutiqueId: Number.isFinite(numericBoutiqueId) ? numericBoutiqueId : null,
       selected: true,

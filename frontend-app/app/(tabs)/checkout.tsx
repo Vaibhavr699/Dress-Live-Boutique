@@ -7,6 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStripe } from '@stripe/stripe-react-native';
 import { api } from '@shared/api/api';
 import { useCartStore } from '@/store/useCartStore';
+import { useLastOrderStore } from '@/store/useLastOrderStore';
+import { priceStringToNumber } from '@/utils/money';
 
 
 type CreateOrderResponse = {
@@ -40,11 +42,15 @@ export default function CheckoutScreen() {
     () => selectedItems.reduce((total, item) => total + item.quantity, 0),
     [selectedItems]
   );
+  // Estimate from the numeric price stored on the cart item (falling back to a
+  // robust parse of the display string for legacy persisted items). The real
+  // charge is always the backend PaymentIntent amount; this is just the
+  // pre-payment estimate shown on the button.
   const subtotal = useMemo(
     () =>
       selectedItems.reduce((total, item) => {
-        const numericPrice = Number.parseFloat(item.price.replace(/[^\d.]/g, '')) || 0;
-        return total + numericPrice * item.quantity;
+        const unit = item.priceValue ?? priceStringToNumber(item.price);
+        return total + unit * item.quantity;
       }, 0),
     [selectedItems]
   );
@@ -127,8 +133,23 @@ export default function CheckoutScreen() {
         throw new Error(presentRes.error.message || 'Payment failed.');
       }
 
-      // 4. Success — webhook will mark the order paid server-side. Clear
-      // local cart and jump to confirmation.
+      // 4. Success — webhook will mark the order paid server-side. Snapshot the
+      // order (backend-authoritative cents totals + items + real id) for the
+      // confirmation screen BEFORE clearing the cart, then clear and navigate.
+      useLastOrderStore.getState().setOrder({
+        orderId: data.order.id,
+        currency: data.order.currency,
+        subtotalCents: data.order.subtotal_cents,
+        serviceFeeCents: data.order.service_fee_cents,
+        totalCents: data.order.total_cents,
+        items: selectedItems.map((it) => ({
+          id: it.id,
+          name: it.name,
+          quantity: it.quantity,
+          price: it.price,
+          imageUrl: it.imageUrl ?? null,
+        })),
+      });
       clearCart();
       router.replace({
         pathname: '/(tabs)/order-summary',

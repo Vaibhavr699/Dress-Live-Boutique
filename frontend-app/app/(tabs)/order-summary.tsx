@@ -5,31 +5,43 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCartStore } from '@/store/useCartStore';
+import { useLastOrderStore } from '@/store/useLastOrderStore';
+import { formatCents, priceStringToNumber } from '@/utils/money';
 
 export default function OrderSummaryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { type } = useLocalSearchParams();
   const cartItems = useCartStore((state) => state.items);
-  
+  const lastOrder = useLastOrderStore((state) => state.order);
+
   const isConfirmed = type === 'confirmed';
-  const selectedItems = useMemo(
+
+  // After a successful payment the cart is already cleared, so the confirmed
+  // view reads the order snapshot captured at checkout (backend-authoritative
+  // total + the real order id). The pre-payment preview reads the live cart.
+  const cartSelected = useMemo(
     () => cartItems.filter((item) => item.selected),
     [cartItems]
   );
-  const total = useMemo(
-    () =>
-      selectedItems.reduce((sum, item) => {
-        const numericPrice = Number.parseFloat(item.price.replace(/[^\d.]/g, '')) || 0;
-        return sum + numericPrice * item.quantity;
-      }, 0) + (selectedItems.length > 0 ? 15 : 0),
-    [selectedItems]
-  );
-  const firstItem = selectedItems[0] ?? null;
+  const fromOrder = isConfirmed && !!lastOrder;
+  const items = fromOrder && lastOrder ? lastOrder.items : cartSelected;
+  const firstItem = items[0] ?? null;
   const totalQuantity = useMemo(
-    () => selectedItems.reduce((sum, item) => sum + item.quantity, 0),
-    [selectedItems]
+    () => items.reduce((sum, item) => sum + item.quantity, 0),
+    [items]
   );
+  const totalLabel = useMemo(() => {
+    if (fromOrder && lastOrder) return formatCents(lastOrder.totalCents, lastOrder.currency);
+    const subtotal = cartSelected.reduce(
+      (sum, item) => sum + (item.priceValue ?? priceStringToNumber(item.price)) * item.quantity,
+      0
+    );
+    return `${(subtotal + (cartSelected.length > 0 ? 15 : 0)).toFixed(0)} EUR`;
+  }, [fromOrder, lastOrder, cartSelected]);
+  const orderNumber = fromOrder && lastOrder
+    ? `#${lastOrder.orderId}`
+    : items.map((item) => item.id).join('-');
 
   return (
     <View className="flex-1 bg-white">
@@ -42,7 +54,7 @@ export default function OrderSummaryScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} className="px-8">
-        {selectedItems.length === 0 ? (
+        {items.length === 0 ? (
           <View className="items-center justify-center py-20">
             <Text className="text-black text-lg mb-3">No checkout items found</Text>
             <Text className="text-black/45 text-[12px] text-center leading-5 px-4">
@@ -77,7 +89,7 @@ export default function OrderSummaryScreen() {
             }
           </Text>
           <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1px]">
-            Order Number: {selectedItems.map((item) => item.id).join('-')}
+            Order Number: {orderNumber}
           </Text>
         </View>
 
@@ -91,12 +103,12 @@ export default function OrderSummaryScreen() {
           <View className="ml-6 flex-1">
             <Text className="text-black text-sm font-medium mb-1">{firstItem?.name}</Text>
             <Text className="text-black/40 text-[12px] mb-2">{totalQuantity} item(s) selected</Text>
-            <Text className="text-black text-sm font-bold">{total.toFixed(0)} EUR</Text>
+            <Text className="text-black text-sm font-bold">{totalLabel}</Text>
           </View>
         </View>
 
         <View className="mb-10">
-          {selectedItems.map((item) => (
+          {items.map((item) => (
             <View key={item.id} className="flex-row justify-between mb-3">
               <Text className="text-black/60 text-[12px]">
                 {item.name} x{item.quantity}
@@ -150,7 +162,7 @@ export default function OrderSummaryScreen() {
               className="w-full bg-black py-4 items-center justify-center mb-6"
             >
               <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">
-                Confirm Selection - {total.toFixed(0)} EUR
+                Confirm Selection - {totalLabel}
               </Text>
             </TouchableOpacity>
             <Text className="text-black/30 text-[10px] text-center italic">Payment collection will be added later. For now, continue to measurement scheduling.</Text>

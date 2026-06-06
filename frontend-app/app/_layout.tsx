@@ -23,6 +23,7 @@ import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
+import { useLastOrderStore } from '@/store/useLastOrderStore';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 
@@ -122,6 +123,7 @@ export default function RootLayout() {
         useShortlistStore.getState().clear();
         useBookingHistoryStore.getState().clear();
         useNotificationStore.getState().clear();
+        useLastOrderStore.getState().clear();
       } catch (error) {
         console.warn('Failed to clear guest state on logout:', error);
       }
