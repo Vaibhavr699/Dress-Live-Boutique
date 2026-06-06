@@ -55,41 +55,40 @@ export default function LandingPage() {
       }}
     >
       <View style={{ flex: 1 }}>
-        {/* Section 1: Page Title */}
-        <View style={{ paddingHorizontal: 24, alignItems: 'center', marginTop: 4, marginBottom: 8 }}>
-          <Text
-            className="text-black text-center"
-            style={{
-              fontFamily: 'PlayfairDisplay-SemiBold',
-              fontSize: titleFontSize,
-              fontWeight: '600',
-              lineHeight: titleFontSize,
-              letterSpacing: 0,
-            }}
-          >
-            Dress Live
-          </Text>
-        </View>
-
-        {/* Sections 2 & 3: Images — vertically centered in the space between
-            the title and the buttons (instead of pinned just under the title). */}
-        <View style={{ flex: 1, justifyContent: 'center', gap: 10 }}>
-          {/* Section 2: Top */}
-          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+        <View style={{ marginTop: 4, gap: 10 }}>
+          {/* Section 1: Page Title */}
+          <View style={{ paddingHorizontal: 24, alignItems: 'center', marginBottom: 8 }}>
+            <Text
+              className="text-black text-center"
+              style={{
+                fontFamily: 'PlayfairDisplay-SemiBold',
+                fontSize: titleFontSize,
+                fontWeight: '600',
+                lineHeight: titleFontSize,
+                letterSpacing: 0,
+              }}
+            >
+              Dress Live
+            </Text>
           </View>
 
-          {/* Section 3: Middle */}
-          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+          {/* Section 2: Top — inset to line up with the second image + buttons */}
+          <View style={{ height: imageHeight, marginHorizontal: 2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+            <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" contentPosition={{ left: '50%' }} />
+          </View>
+
+          {/* Section 3: Middle — inset so its left/right edges line up with the
+              Get Started / Log in / Sign up buttons (which sit at outer 16 + 8). */}
+          <View style={{ height: imageHeight, marginHorizontal: 2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+            <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="fill" />
           </View>
         </View>
 
-        <View style={{ paddingHorizontal: 8, gap: 10, marginTop: 8 }}>
+        <View style={{ paddingHorizontal: 2, gap: 10, marginTop: 8 }}>
           <TouchableOpacity 
             activeOpacity={0.9}
             onPress={() => router.push('/(tabs)')}
-            style={{ backgroundColor: 'black', paddingVertical: 14, alignItems: 'center' }}
+            style={{ backgroundColor: 'black', paddingVertical: 10, alignItems: 'center' }}
           >
             <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', letterSpacing: 3, textTransform: 'uppercase' }}>
               Get Started
