@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
 
-type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed';
+type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed' | 'cancelled';
 
 type Booking = {
   id: number;
@@ -123,7 +123,7 @@ export default function BookingDetailsScreen() {
               <Text className="text-black text-[12px] leading-5">{dressesLabel}</Text>
             </View>
 
-            {booking.appointment_type === 'video' && booking.status !== 'rejected' ? (
+            {booking.appointment_type === 'video' && booking.status !== 'rejected' && booking.status !== 'cancelled' ? (
               <TouchableOpacity
                 activeOpacity={0.9}
                 onPress={() =>
@@ -142,7 +142,7 @@ export default function BookingDetailsScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => updateStatus('accepted')}
-                disabled={updating || booking.status === 'accepted' || booking.status === 'completed'}
+                disabled={updating || booking.status === 'accepted' || booking.status === 'completed' || booking.status === 'cancelled'}
                 className="flex-1 border border-black py-4 items-center justify-center mr-1"
                 style={{ opacity: updating || booking.status === 'completed' ? 0.4 : 1 }}
               >
@@ -151,7 +151,7 @@ export default function BookingDetailsScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => updateStatus('rejected')}
-                disabled={updating || booking.status === 'rejected' || booking.status === 'completed'}
+                disabled={updating || booking.status === 'rejected' || booking.status === 'completed' || booking.status === 'cancelled'}
                 className="flex-1 bg-[#C9491A] py-4 items-center justify-center ml-1"
                 style={{ opacity: updating || booking.status === 'completed' ? 0.4 : 1 }}
               >
@@ -162,7 +162,7 @@ export default function BookingDetailsScreen() {
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => updateStatus('completed')}
-              disabled={updating || booking.status === 'completed'}
+              disabled={updating || booking.status === 'completed' || booking.status === 'cancelled'}
               className={`w-full py-4 items-center justify-center mt-3 ${
                 booking.status === 'completed' ? 'bg-black/30' : 'bg-black'
               }`}

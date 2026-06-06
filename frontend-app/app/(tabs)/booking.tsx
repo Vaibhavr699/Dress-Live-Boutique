@@ -23,7 +23,7 @@ const MARKER_ICON = require('@/assets/svg/marker.svg');
 type Booking = {
   id: number;
   appointment_type: 'video' | 'in_store';
-  status: 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed';
+  status: 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed' | 'cancelled';
   scheduled_for: string;
   language: string;
   location?: string | null;
@@ -130,7 +130,7 @@ export default function BookingScreen() {
   const cancelBooking = async (id: number) => {
     setUpdatingId(id);
     try {
-      const updated = await api.put(`/bookings/${id}`, { status: 'rejected' });
+      const updated = await api.put(`/bookings/${id}`, { status: 'cancelled' });
       setBookings((prev) => prev.map((booking) => (booking.id === id ? updated : booking)));
       const notification = buildBookingNotificationDetails(updated as Booking, 'booking_cancelled');
       addNotification(notification);
@@ -252,10 +252,11 @@ export default function BookingScreen() {
         >
           {bookings.map((booking) => {
             const isActionable = booking.status === 'accepted' || booking.status === 'rescheduled';
-            const isTerminal = booking.status === 'rejected' || booking.status === 'completed';
+            const isTerminal = booking.status === 'rejected' || booking.status === 'completed' || booking.status === 'cancelled';
             const statusLabel =
               booking.status === 'requested' ? 'Awaiting Confirmation' :
               booking.status === 'rejected'  ? 'Booking Declined' :
+              booking.status === 'cancelled' ? 'Booking Cancelled' :
               booking.status === 'completed' ? 'Call Completed' : null;
             const actionLabel =
               booking.appointment_type === 'video' ? 'Start Video Call' : 'See Google Map';

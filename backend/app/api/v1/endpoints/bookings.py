@@ -727,7 +727,7 @@ async def update_booking(
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    if booking.status in {"rejected", "completed"}:
+    if booking.status in {"rejected", "completed", "cancelled"}:
         raise HTTPException(
             status_code=400,
             detail="This booking can no longer be updated.",
@@ -743,7 +743,7 @@ async def update_booking(
     elif booking.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed to update this booking.")
     else:
-        if booking_in.status and booking_in.status not in {"rejected", "rescheduled", "completed"}:
+        if booking_in.status and booking_in.status not in {"rejected", "cancelled", "rescheduled", "completed"}:
             raise HTTPException(status_code=400, detail="Buyers can only cancel, reschedule, or complete their own bookings.")
         if booking_in.appointment_fee is not None or booking_in.is_paid is not None:
             raise HTTPException(status_code=400, detail="Buyers cannot update payment fields.")
@@ -797,6 +797,10 @@ async def update_booking(
             title = "Booking declined"
             body = f"Your {type_label} request was declined."
             kind = "booking_rejected"
+        elif booking.status == "cancelled":
+            title = "Booking cancelled"
+            body = f"The {type_label} was cancelled by the customer."
+            kind = "booking_cancelled"
         elif booking.status == "rescheduled":
             title = "Booking rescheduled"
             body = f"New time for your {type_label}: {booking.scheduled_for}."

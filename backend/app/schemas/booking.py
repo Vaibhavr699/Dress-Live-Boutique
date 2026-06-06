@@ -32,7 +32,7 @@ class BookingCreate(BookingBase):
 
 
 class BookingUpdate(BaseModel):
-    status: Optional[Literal["requested", "accepted", "rejected", "rescheduled", "completed"]] = None
+    status: Optional[Literal["requested", "accepted", "rejected", "rescheduled", "completed", "cancelled"]] = None
     scheduled_for: Optional[str] = None
     language: Optional[str] = None
     notes: Optional[str] = None
