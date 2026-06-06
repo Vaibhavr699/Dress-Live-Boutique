@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
+import { parseScheduledForToDate } from '@/lib/buyerNotifications';
 
 type BookingDress = {
   id: number;
@@ -32,7 +33,10 @@ function formatDuration(totalSeconds: number): string {
 }
 
 function formatScheduled(raw: string): string {
-  const d = new Date(raw);
+  // The booking label ("Weekday, DD Mon - HH:MM AM/PM") isn't parseable by
+  // `new Date`, so use the shared parser (which infers the year) and only fall
+  // back to a raw Date parse / the raw string if that fails.
+  const d = parseScheduledForToDate(raw) ?? new Date(raw);
   if (isNaN(d.getTime())) return raw;
   return d.toLocaleDateString(undefined, {
     weekday: 'short',

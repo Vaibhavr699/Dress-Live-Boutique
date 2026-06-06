@@ -12,6 +12,7 @@ import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import {
   buildBookingNotificationDetails,
+  parseScheduledForToDate,
   sendLocalPhoneNotification,
   syncScheduledBookingReminder,
 } from '@/lib/buyerNotifications';
@@ -190,7 +191,7 @@ export default function BookingCalendarScreen() {
   const normalizedBookingId = typeof params.bookingId === 'string' ? Number(params.bookingId) : null;
   const normalizedAppointmentType = params.appointmentType === 'in_store' ? 'in_store' : 'video';
   const selectionSource = params.source === 'cart' ? 'cart' : params.source === 'product' ? 'product' : 'wishlist';
-  const [monthBase] = useState(() => {
+  const [monthBase, setMonthBase] = useState(() => {
     const date = new Date();
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
@@ -232,19 +233,40 @@ export default function BookingCalendarScreen() {
     [monthBase]
   );
 
+  // Midnight today + the current month's start — used to block past dates and
+  // to stop month navigation from going before the current month.
+  const today = useMemo(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }, []);
+  const currentMonthStart = useMemo(
+    () => new Date(today.getFullYear(), today.getMonth(), 1),
+    [today]
+  );
+  const canGoPrevMonth = monthBase.getTime() > currentMonthStart.getTime();
+  const goPrevMonth = () => {
+    if (!canGoPrevMonth) return;
+    setMonthBase((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
+  };
+  const goNextMonth = () => {
+    setMonthBase((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
+  };
+  const isPastDate = (date: Date) => date.getTime() < today.getTime();
+
   useEffect(() => {
-    const incomingDate = normalizedScheduledFor?.match(/,\s*(\d{1,2})\s+[A-Za-z]{3}/);
-    if (incomingDate?.[1]) {
-      const next = new Date(monthBase.getFullYear(), monthBase.getMonth(), Number(incomingDate[1]));
-      if (!Number.isNaN(next.getTime())) {
-        setSelectedDate(next);
-      }
+    // Restore the originally-booked date onto the correct month (the label
+    // carries the month; parseScheduledForToDate infers the year), so a
+    // reschedule lands on that month instead of the current one.
+    const incoming = parseScheduledForToDate(normalizedScheduledFor);
+    if (incoming) {
+      setMonthBase(new Date(incoming.getFullYear(), incoming.getMonth(), 1));
+      setSelectedDate(new Date(incoming.getFullYear(), incoming.getMonth(), incoming.getDate()));
     }
     const incomingTime = extractTimeFromScheduledFor(normalizedScheduledFor);
     if (incomingTime) {
       setSelectedTime(incomingTime);
     }
-  }, [monthBase, normalizedScheduledFor]);
+  }, [normalizedScheduledFor]);
 
   useEffect(() => {
     const loadSelectedDresses = async () => {
@@ -510,9 +532,24 @@ export default function BookingCalendarScreen() {
           )}
         </View>
 
-        <Text className="text-black/30 text-[10px] font-bold uppercase mb-6 tracking-[0.5px]">
-          {monthTitle} - Select a Date
-        </Text>
+        <View className="flex-row items-center justify-between mb-6">
+          <TouchableOpacity
+            onPress={goPrevMonth}
+            disabled={!canGoPrevMonth}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="chevron-back" size={18} color={canGoPrevMonth ? '#1A1A1A' : '#D8D8D8'} />
+          </TouchableOpacity>
+          <Text className="text-black/30 text-[10px] font-bold uppercase tracking-[0.5px]">
+            {monthTitle} - Select a Date
+          </Text>
+          <TouchableOpacity
+            onPress={goNextMonth}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="chevron-forward" size={18} color="#1A1A1A" />
+          </TouchableOpacity>
+        </View>
 
         {/* Calendar Grid */}
         <View className="flex-row flex-wrap mb-10">
@@ -524,21 +561,25 @@ export default function BookingCalendarScreen() {
           {calendarDays.map((cell) => {
             const isSelected = cell.isCurrentMonth && isSameDay(cell.date, selectedDate);
             const isOtherMonth = !cell.isCurrentMonth;
-            
+            // Past dates in the current month can't be booked.
+            const isPast = cell.isCurrentMonth && isPastDate(cell.date);
+            const disabled = isOtherMonth || isPast;
+
             return (
-              <TouchableOpacity 
-                key={cell.key} 
-                onPress={() => !isOtherMonth && setSelectedDate(cell.date)}
-                style={{ 
-                  width: (width - 64) / 7, 
+              <TouchableOpacity
+                key={cell.key}
+                disabled={disabled}
+                onPress={() => !disabled && setSelectedDate(cell.date)}
+                style={{
+                  width: (width - 64) / 7,
                   height: 40,
                   backgroundColor: isSelected ? 'black' : 'transparent',
-                }} 
+                }}
                 className="items-center justify-center"
               >
-                <Text 
-                  style={{ 
-                    color: isSelected ? 'white' : isOtherMonth ? '#E0E0E0' : 'black',
+                <Text
+                  style={{
+                    color: isSelected ? 'white' : disabled ? '#E0E0E0' : 'black',
                     fontSize: 10,
                     fontWeight: isSelected ? 'bold' : '400'
                   }}
