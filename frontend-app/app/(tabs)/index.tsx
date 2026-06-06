@@ -421,6 +421,43 @@ export default function DashboardScreen() {
     return cards;
   }, [boutiques, visibleDresses]);
 
+  // Visible-dress count per boutique (single pass) — labels the search results.
+  const dressCountByBoutique = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const d of dresses) {
+      if (d.boutique_id) counts[d.boutique_id] = (counts[d.boutique_id] || 0) + 1;
+    }
+    return counts;
+  }, [dresses]);
+
+  // Boutiques whose shop name (or location) matches the search query. Rendered
+  // as their own "Boutiques" section so a shop-name search surfaces the
+  // boutique itself — not just the dresses it carries — and finds boutiques
+  // even when they currently have no dresses. Hidden boutiques are excluded.
+  const matchingBoutiques = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase();
+    if (!q) return [] as BoutiqueCard[];
+    const cards: BoutiqueCard[] = [];
+    for (const b of Object.values(boutiques)) {
+      if (!b || b.is_visible_to_customers === false) continue;
+      const name = (b.name || '').toLowerCase();
+      const loc = (b.location || '').toLowerCase();
+      if (!name.includes(q) && !loc.includes(q)) continue;
+      const cover =
+        (b.header_image_url || '').trim() ||
+        (dresses.find((d) => d.boutique_id === b.id)?.image_url || null);
+      cards.push({
+        boutiqueId: b.id,
+        boutiqueName: (b.name || '').trim() || 'Boutique',
+        boutiqueLocation: formatBoutiqueCardLocation(b.location),
+        coverImageUrl: cover,
+        matchingDressCount: dressCountByBoutique[b.id] || 0,
+      });
+    }
+    cards.sort((a, b) => a.boutiqueName.localeCompare(b.boutiqueName));
+    return cards;
+  }, [boutiques, dresses, debouncedQuery, dressCountByBoutique]);
+
   // When the user is searching, show matching DRESSES (a 2-col grid) instead of
   // boutique cards — so a dress-name search surfaces the actual dresses, not
   // just the boutiques that carry them.
@@ -738,17 +775,66 @@ export default function DashboardScreen() {
                   ) : null}
                 </View>
               </View>
+              {isSearching && matchingBoutiques.length > 0 ? (
+                <View style={{ paddingHorizontal: 20, marginBottom: 4 }}>
+                  <Text style={{ fontFamily: 'Helvetica Neue', fontWeight: '700', fontSize: 11, letterSpacing: 1.5, color: '#1A1A1A', marginBottom: 4 }}>
+                    BOUTIQUES
+                  </Text>
+                  {matchingBoutiques.map((mb) => (
+                    <TouchableOpacity
+                      key={`mb-${mb.boutiqueId}`}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/(tabs)/boutique-details',
+                          params: { boutiqueId: String(mb.boutiqueId), coverImageUrl: mb.coverImageUrl ?? undefined },
+                        })
+                      }
+                      className="flex-row items-center py-2.5"
+                    >
+                      <Image
+                        source={mb.coverImageUrl ? { uri: mb.coverImageUrl } : require('@/assets/images/Dashboard image 1.png')}
+                        style={{ width: 54, height: 54 }}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                      />
+                      <View className="flex-1 ml-3">
+                        <Text numberOfLines={1} style={{ fontFamily: 'Helvetica Neue', fontWeight: '700', fontSize: 13, letterSpacing: 1, color: '#000000' }}>
+                          {mb.boutiqueName}
+                        </Text>
+                        <Text numberOfLines={1} style={{ fontFamily: 'Helvetica Neue', fontWeight: '400', fontSize: 12, color: '#6E6E6E', marginTop: 3 }}>
+                          {mb.boutiqueLocation}
+                        </Text>
+                      </View>
+                      <Text style={{ fontFamily: 'Helvetica Neue', fontSize: 11, color: '#9B9B9B', marginLeft: 8 }}>
+                        {mb.matchingDressCount > 0 ? `${mb.matchingDressCount} ${mb.matchingDressCount === 1 ? 'dress' : 'dresses'}` : 'View'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  {visibleDresses.length > 0 ? (
+                    <Text style={{ fontFamily: 'Helvetica Neue', fontWeight: '700', fontSize: 11, letterSpacing: 1.5, color: '#1A1A1A', marginTop: 14, marginBottom: 2 }}>
+                      DRESSES
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           }
           ListEmptyComponent={
+            isSearching && matchingBoutiques.length > 0 ? null : (
             <FadeInView>
               <View className="py-20 items-center justify-center">
-                <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No dresses available</Text>
+                <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">
+                  {isSearching ? 'No matches found' : 'No dresses available'}
+                </Text>
                 <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
-                  Try adjusting your search or browse another category to see more results.
+                  {isSearching
+                    ? 'Try a different boutique or dress name.'
+                    : 'Try adjusting your search or browse another category to see more results.'}
                 </Text>
               </View>
             </FadeInView>
+            )
           }
           renderItem={(info: ListRenderItemInfo<any>) => {
             const idx = info.index;
