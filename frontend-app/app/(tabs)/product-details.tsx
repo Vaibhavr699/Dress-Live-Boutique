@@ -259,6 +259,15 @@ export default function ProductDetailsScreen() {
   };
 
   const handleAddToCart = () => {
+    // Block the add until the real dress has loaded. Otherwise `product` falls
+    // back to the placeholder id ('p-1') and demo name, which would (a) add a
+    // bogus row alongside the real dress once it loads, and (b) collide every
+    // not-yet-loaded product under the same 'p-1' id — both surface to the
+    // buyer as duplicate / wrong cart entries.
+    if (loading || !dress?.id) {
+      Alert.alert('Please wait', 'This dress is still loading. Try again in a moment.');
+      return;
+    }
     addItem(product);
     Alert.alert(
       'Added to Carts',
@@ -642,11 +651,12 @@ export default function ProductDetailsScreen() {
           <Text className="text-black text-[12px] font-bold tracking-[2px] uppercase">Booking</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity 
+        <TouchableOpacity
           activeOpacity={0.9}
           onPress={handleAddToCart}
+          disabled={loading || !dress?.id}
           className="flex-1 bg-black items-center flex-row justify-center"
-          style={{ height: 48 }}
+          style={{ height: 48, opacity: loading || !dress?.id ? 0.4 : 1 }}
         >
           <Image source={CART_SMALL_ICON} style={{ width: 18, height: 18, marginRight: 8 }} contentFit="contain" />
           <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Add to Cart</Text>

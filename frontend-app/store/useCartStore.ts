@@ -53,17 +53,22 @@ export const useCartStore = create<CartState>()(
     (set, get) => ({
       items: [],
       addItem: (item) => {
+        // Normalize the id to a string so dedup can never be defeated by a
+        // caller passing a numeric id (42 !== "42" would have created a second
+        // row for the same dress). Every existing id is already compared as a
+        // string below.
+        const normalized = { ...item, id: String(item.id) };
         const currentItems = get().items;
-        const existingItem = currentItems.find((i) => i.id === item.id);
+        const existingItem = currentItems.find((i) => i.id === normalized.id);
 
         if (existingItem) {
           set({
             items: currentItems.map((i) =>
-              i.id === item.id ? { ...i, quantity: i.quantity + 1, selected: true } : i
+              i.id === normalized.id ? { ...i, quantity: i.quantity + 1, selected: true } : i
             ),
           });
         } else {
-          set({ items: [...currentItems, { ...item, quantity: 1 }] });
+          set({ items: [...currentItems, { ...normalized, quantity: 1 }] });
         }
       },
       removeItem: (id) => {
