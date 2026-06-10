@@ -430,9 +430,15 @@ export default function BoutiqueDashboard() {
 
   // Guard against double-taps stacking multiple "Add Dress" screens.
   const addDressLockRef = useRef(false);
+  // add-dress is a `modal`: presenting it briefly refocuses the dashboard
+  // underneath, which would re-arm the guard too early and let a second rapid
+  // tap stack a duplicate screen. Hold the lock through this grace window.
+  const addDressLockedAtRef = useRef(0);
+  const ADD_DRESS_LOCK_GRACE_MS = 700;
   const openAddDress = useCallback(() => {
     if (addDressLockRef.current) return;
     addDressLockRef.current = true;
+    addDressLockedAtRef.current = Date.now();
     router.push('/add-dress');
     // Normally re-armed when the dashboard regains focus; this long timeout is
     // only a safety net so the button can't get stuck if navigation never runs.
@@ -624,8 +630,12 @@ export default function BoutiqueDashboard() {
   const DASHBOARD_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
-      // Re-arm the Add Dress nav guard whenever the dashboard regains focus.
-      addDressLockRef.current = false;
+      // Re-arm the Add Dress nav guard whenever the dashboard regains focus —
+      // but skip the re-arm if we only just took the lock, since that focus
+      // event is the add-dress modal presenting over us, not a real return.
+      if (Date.now() - addDressLockedAtRef.current >= ADD_DRESS_LOCK_GRACE_MS) {
+        addDressLockRef.current = false;
+      }
       const now = Date.now();
       if (now - lastDashboardFetchRef.current < DASHBOARD_STALE_MS) return;
       void refreshCurrentUser();

@@ -78,9 +78,17 @@ export default function CatalogScreen() {
   // Guard against rapid double-taps pushing the add/edit screen multiple times
   // (which stacked several "Add Dress" screens on the nav stack).
   const navLockRef = useRef(false);
+  // Stamp when the lock was taken. add-dress is a `modal`: on iOS the catalog
+  // tab underneath briefly regains focus during the modal's present animation,
+  // which fired the focus-effect and released the lock too early — letting a
+  // second rapid tap stack a duplicate screen. The grace window below makes the
+  // focus-effect refuse to re-arm until the present animation has settled.
+  const navLockedAtRef = useRef(0);
+  const NAV_LOCK_GRACE_MS = 700;
   const navOnce = useCallback((fn: () => void) => {
     if (navLockRef.current) return;
     navLockRef.current = true;
+    navLockedAtRef.current = Date.now();
     fn();
     // The lock is normally cleared when we return to the catalog (focus effect).
     // This long timeout is only a safety net so a button can't get stuck if the
@@ -136,8 +144,12 @@ export default function CatalogScreen() {
     useCallback(() => {
       // Returning to the catalog re-arms the add/edit nav guard. Holding the
       // lock from tap until we're back here guarantees exactly one screen no
-      // matter how many times (or how fast) the button is pressed.
-      navLockRef.current = false;
+      // matter how many times (or how fast) the button is pressed. Skip the
+      // re-arm if we only just took the lock — that focus event is the modal
+      // presenting over us, not the user actually returning to the catalog.
+      if (Date.now() - navLockedAtRef.current >= NAV_LOCK_GRACE_MS) {
+        navLockRef.current = false;
+      }
       void refreshSubStatus();
       const now = Date.now();
       // A dress was just added/edited → always refresh so it's visible now,
