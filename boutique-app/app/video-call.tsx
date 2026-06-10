@@ -110,7 +110,28 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
     ? { participant: localParticipant, publication: localCamPub, source: deps.Track.Source.Camera }
     : null;
 
-  const isRoomConnected = room?.state === 'connected';
+  // Track the room's connection state reactively. `room.state` is a plain
+  // property — reading it at render time goes stale because LiveKit doesn't
+  // re-render us when it flips to 'connected'. Without this subscription the
+  // dress tiles would tap-highlight locally but the publishData below would be
+  // gated off (isRoomConnected stuck at false), so the buyer never switched.
+  const [isRoomConnected, setIsRoomConnected] = React.useState<boolean>(room?.state === 'connected');
+  React.useEffect(() => {
+    if (!room) return;
+    const sync = () => setIsRoomConnected(room.state === 'connected');
+    sync();
+    room.on('connectionStateChanged', sync as any);
+    room.on('connected', sync as any);
+    room.on('reconnected', sync as any);
+    room.on('disconnected', sync as any);
+    return () => {
+      room.off('connectionStateChanged', sync as any);
+      room.off('connected', sync as any);
+      room.off('reconnected', sync as any);
+      room.off('disconnected', sync as any);
+    };
+  }, [room]);
+
   const [activeDressId, setActiveDressId] = React.useState<number | null>(bookingDresses[0]?.id ?? null);
   const emptyMainMessage =
     remoteParticipants.length > 0
@@ -168,24 +189,44 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
     return d?.image_url ?? null;
   }, [activeDressId, bookingDresses]);
 
+  // Publish the active dress to the buyer. Best-effort: returns whether the
+  // signal actually went out so the tap handler can surface a retry hint.
+  const publishDressSwitch = React.useCallback(
+    (dressId: number, dressName: string | null): boolean => {
+      const lp = room?.localParticipant;
+      if (!lp || room?.state !== 'connected') return false;
+      try {
+        const payload = buildTryonSwitchPayload({ bookingId, dressId, dressName });
+        lp.publishData(payload, { reliable: true } as any);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [room, bookingId],
+  );
+
   // Re-send the active dress signal whenever the customer joins so they get
   // the current selection even if they connected after the advisor tapped.
   React.useEffect(() => {
     if (!room?.localParticipant || !activeDressId) return;
     const activeDress = bookingDresses.find((d) => d.id === activeDressId);
     const sendCurrent = () => {
-      try {
-        const payload = buildTryonSwitchPayload({
-          bookingId,
-          dressId: activeDressId,
-          dressName: activeDress?.name ?? null,
-        });
-        room.localParticipant.publishData(payload, { reliable: true } as any);
-      } catch { /* no-op */ }
+      publishDressSwitch(activeDressId, activeDress?.name ?? null);
     };
     room.on('participantConnected', sendCurrent);
     return () => { room.off('participantConnected', sendCurrent); };
-  }, [room, activeDressId, bookingDresses, bookingId]);
+  }, [room, activeDressId, bookingDresses, bookingId, publishDressSwitch]);
+
+  // If the advisor taps a dress before the room is fully connected, the
+  // publish above is skipped. Re-fire the current selection the moment the
+  // room reaches 'connected' so an early tap still reaches the buyer instead
+  // of silently doing nothing.
+  React.useEffect(() => {
+    if (!isRoomConnected || activeDressId == null) return;
+    const activeDress = bookingDresses.find((d) => d.id === activeDressId);
+    publishDressSwitch(activeDressId, activeDress?.name ?? null);
+  }, [isRoomConnected, activeDressId, bookingDresses, publishDressSwitch]);
 
   return (
     <View
@@ -313,18 +354,25 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
                   <TouchableOpacity
                     key={d.id}
                     activeOpacity={0.9}
+                    // The tiles sit in an overlay on top of the native video
+                    // surface, where small targets can be hard to hit — widen
+                    // the touch area and respond on press-down so a quick tap
+                    // isn't lost to the ScrollView's gesture responder.
+                    hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                    delayPressIn={0}
                     onPress={() => {
+                      // Always update the local selection so the advisor sees
+                      // their tap register immediately, even mid-connect.
                       setActiveDressId(d.id);
-                      if (!isRoomConnected || !room?.localParticipant) return;
-                      try {
-                        const payload = buildTryonSwitchPayload({
-                          bookingId,
-                          dressId: d.id,
-                          dressName: d.name,
-                        });
-                        room.localParticipant.publishData(payload, { reliable: true } as any);
-                      } catch {
-                        // no-op
+                      const sent = publishDressSwitch(d.id, d.name);
+                      // If the room isn't connected yet, the selection is held
+                      // and auto-published once it connects (effect above), so
+                      // we only warn when the customer truly isn't here yet.
+                      if (!sent && remoteParticipants.length === 0) {
+                        Alert.alert(
+                          'Customer not connected',
+                          'This dress is selected and will show on the customer as soon as they join the call.',
+                        );
                       }
                     }}
                     className={`mr-2 overflow-hidden border ${isActive ? 'border-black' : 'border-[#E5E5E5]'}`}
