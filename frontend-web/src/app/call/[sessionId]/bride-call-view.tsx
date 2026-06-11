@@ -37,7 +37,7 @@ import { fetchWebJoin, WebJoinError } from "@/lib/web-join";
 import { useBrideDecartPublish } from "@/lib/use-bride-decart-publish";
 
 
-type Stage = "validating" | "ready-to-join" | "joining" | "in-call" | "ended" | "error";
+type Stage = "validating" | "ready-to-join" | "in-call" | "ended" | "error";
 
 
 export function BrideCallView({
@@ -238,28 +238,31 @@ export function BrideCallView({
     return () => { room.off(RoomEvent.ParticipantConnected, publish); };
   }, [room, decart.subscribeToken, bookingId]);
 
-  // ── 5. Render the bride's transformed video fullscreen ─────────────────
+  // ── 5. Render the bride's video fullscreen ─────────────────────────────
+  // Prefer Decart's transformed (AI try-on) stream; if Decart isn't
+  // available (credits exhausted, misconfigured, still starting) fall back
+  // to her raw camera so she always sees herself and the call still works.
   const mainVideoRef = useRef<HTMLVideoElement | null>(null);
+  const mainStream = decart.transformedStream ?? decart.rawStream;
+  const tryOnUnavailable = decart.status === "error";
   useEffect(() => {
     if (!mainVideoRef.current) return;
-    mainVideoRef.current.srcObject = decart.transformedStream;
-  }, [decart.transformedStream]);
+    mainVideoRef.current.srcObject = mainStream;
+  }, [mainStream]);
 
   const handleJoin = useCallback(() => {
-    setStage("joining");
+    // Go straight into the call. The fitting is the LiveKit call with the
+    // consultant; Decart's AI try-on is an OPTIONAL enhancement layered on
+    // top (see this file's header and backend /web-join — Decart is never
+    // allowed to block the bride). We used to wait for Decart to reach
+    // "connected" before entering the call, and route a Decart failure
+    // (e.g. provider "Insufficient credits") to the full-screen error
+    // screen — which killed the entire fitting even though LiveKit was
+    // perfectly healthy. Now the call opens on LiveKit and Decart simply
+    // upgrades the video to the AI overlay if/when it connects.
+    setStage("in-call");
     setDecartEnabled(true);
-    // When Decart connects (decart.status === 'connected'), an effect
-    // below transitions to in-call.
   }, []);
-
-  useEffect(() => {
-    if (stage === "joining" && decart.status === "connected") {
-      setStage("in-call");
-    } else if (stage === "joining" && decart.status === "error") {
-      setStage("error");
-      setErrorMessage(decart.errorMessage);
-    }
-  }, [stage, decart.status, decart.errorMessage]);
 
   const handleEndCall = useCallback(() => {
     setStage("ended");
@@ -298,8 +301,8 @@ export function BrideCallView({
     );
   }
 
-  // joining + in-call render the live UI; we keep it mounted across both
-  // so the camera permission popup → first frame transition is seamless.
+  // in-call renders the live UI. LiveKit connects here and Decart layers
+  // its AI try-on on top when/if it connects; neither blocks the call.
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
       {/* Top bar */}
@@ -317,7 +320,7 @@ export function BrideCallView({
 
       {/* Fullscreen bride video */}
       <div className="relative flex-1 bg-black flex items-center justify-center">
-        {decart.transformedStream ? (
+        {mainStream ? (
           <video
             ref={mainVideoRef}
             autoPlay
@@ -338,6 +341,18 @@ export function BrideCallView({
           </div>
         )}
 
+        {/* Non-fatal notice: the call is live (LiveKit), but the AI try-on
+            layer couldn't start (e.g. Decart credits exhausted). The bride
+            sees her raw camera and can still talk to her consultant. */}
+        {tryOnUnavailable ? (
+          <div className="absolute left-4 right-4 bottom-4 mx-auto max-w-md rounded-lg bg-black/75 border border-white/15 px-4 py-2.5">
+            <p className="text-white/80 text-xs text-center leading-4">
+              AI try-on is unavailable right now, but you’re connected — you can
+              still see and talk to your consultant.
+            </p>
+          </div>
+        ) : null}
+
         {/* Consultant in a corner PiP */}
         <div className="absolute right-4 top-4 w-40 h-56 rounded-xl overflow-hidden border border-white/30 bg-black/80">
           <video
@@ -354,7 +369,11 @@ export function BrideCallView({
         <span>
           {connectionState === ConnectionState.Connected ? "Connected" : connectionState}
           {" · "}
-          {decart.status === "connected" ? "AI try-on live" : `AI try-on · ${decart.status}`}
+          {decart.status === "connected"
+            ? "AI try-on live"
+            : decart.status === "error"
+            ? "AI try-on unavailable"
+            : `AI try-on · ${decart.status}`}
           {" · "}
           {decart.subscribeToken ? "share-link ready" : "share-link pending"}
         </span>
