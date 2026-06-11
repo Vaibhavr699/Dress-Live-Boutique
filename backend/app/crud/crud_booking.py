@@ -46,11 +46,23 @@ class CRUDBooking:
         db.refresh(db_obj)
         return db_obj
 
+    # Statuses where the booking is no longer joinable — any active video
+    # ring must be cleared so the other party stops seeing the incoming-call
+    # banner the moment the call ends / is cancelled / declined.
+    _NON_JOINABLE_STATUSES = {"completed", "cancelled", "rejected"}
+
     def update(self, db: Session, *, db_obj: Booking, obj_in: BookingUpdate) -> Booking:
         update_data = obj_in.model_dump(exclude_unset=True)
         for field in update_data:
             if hasattr(db_obj, field):
                 setattr(db_obj, field, update_data[field])
+        # When the booking transitions to a non-joinable status (e.g. the
+        # advisor taps "End Call" → status='completed'), drop the ring marker
+        # too. Otherwise it lingers for the full _RING_TTL window and the
+        # consumer keeps seeing the incoming-call bar after the call ended.
+        if db_obj.status in self._NON_JOINABLE_STATUSES:
+            db_obj.video_ring_at = None
+            db_obj.video_ring_from_user_id = None
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
@@ -98,6 +110,10 @@ class CRUDBooking:
             return db_obj
         db_obj.ended_at = ended_at or datetime.now(timezone.utc)
         db_obj.status = "completed"
+        # The call is over — clear any lingering ring so neither party keeps
+        # seeing an incoming-call banner for a finished session.
+        db_obj.video_ring_at = None
+        db_obj.video_ring_from_user_id = None
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)

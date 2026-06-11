@@ -675,6 +675,22 @@ export default function BoutiqueVideoCallScreen() {
     }
   };
 
+  // Leaving the screen via the top X or "Cancel". If the call is already
+  // live, leaving IS ending it — route through handleEndCall so the booking
+  // is completed and the ring is cleared, otherwise the buyer keeps seeing
+  // the incoming-call banner after the advisor walked away. Before the call
+  // goes live there's nothing to end, so just navigate back.
+  const handleLeave = useCallback(() => {
+    if (stage === 'live') {
+      void handleEndCall();
+    } else {
+      router.back();
+    }
+  // handleEndCall is defined inline above and stable enough for this use;
+  // stage/router are the inputs that actually matter here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
+
   return (
     <SafeAreaView className="flex-1 bg-white">
       <Animated.View
@@ -699,7 +715,7 @@ export default function BoutiqueVideoCallScreen() {
                 }
                 tone={stage === 'live' ? 'timer' : 'green'}
               />
-              <TouchableOpacity onPress={() => router.back()} className="ml-3">
+              <TouchableOpacity onPress={handleLeave} className="ml-3">
                 <Feather name="x" size={18} color="#D68067" />
               </TouchableOpacity>
             </View>
@@ -889,7 +905,7 @@ export default function BoutiqueVideoCallScreen() {
             <View className="flex-row mt-10">
               <TouchableOpacity
                 activeOpacity={0.85}
-                onPress={() => router.back()}
+                onPress={handleLeave}
                 className="flex-1 border border-[#1A1A1A] py-4 items-center justify-center mr-1"
               >
                 <Text className="text-[11px] uppercase tracking-[1px] text-black">Cancel</Text>
