@@ -630,12 +630,25 @@ export default function DashboardScreen() {
             }}
           >
             <TextInput
-              value={searchQuery}
+              // Uncontrolled (defaultValue, not value): the screen runs heavy
+              // memoized filters and the results list remounts when search mode
+              // toggles, which on a slower device lands mid-keystroke and blocks
+              // the JS thread. With a controlled `value`, React then re-applies
+              // its (stale) value to the native input and characters get
+              // duplicated/desynced — exactly the reported bug. Keeping the
+              // input uncontrolled lets the native text buffer stay the source
+              // of truth; we still drive searchQuery via onChangeText for the
+              // debounced filter, but never write back into the field.
+              defaultValue={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="WHAT ARE YOU LOOKING?"
               placeholderTextColor="#9B9B9B"
-              className="text-[#1A1A1A]"
+              // Color folded into `style` (was a NativeWind className): the
+              // className interop re-wraps the TextInput on render, which can
+              // echo keystrokes on RN 0.81 / React 19. Plain style keeps this
+              // hot input off the interop path.
               style={{
+                color: '#1A1A1A',
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
                 fontSize: 12,
