@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, SafeAreaView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -107,36 +107,50 @@ export default function EditAddressScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
-        <TouchableOpacity onPress={() => router.back()} className="mb-8" disabled={saving}>
-          <Ionicons name="arrow-back" size={18} color="black" />
-        </TouchableOpacity>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <View className="flex-1 px-5" style={{ paddingTop: insets.top + 8 }}>
+          <TouchableOpacity onPress={() => router.back()} className="mb-8" disabled={saving}>
+            <Ionicons name="arrow-back" size={18} color="black" />
+          </TouchableOpacity>
 
-        <Text style={[TITLE_STYLE, { marginBottom: 32 }]}>Edit Address</Text>
-        <Text style={[DESCRIPTION_STYLE, { marginBottom: 32 }]}>
-          To complete your order, you must first enter your account information. You can update it at any time from your account.
-        </Text>
+          {/* Scrollable so the on-screen keyboard never covers the lower fields on
+              small screens; flexGrow keeps the Save button pinned to the bottom
+              (via mt-auto) when the content is shorter than the viewport. */}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}
+          >
+            <Text style={[TITLE_STYLE, { marginBottom: 32 }]}>Edit Address</Text>
+            <Text style={[DESCRIPTION_STYLE, { marginBottom: 32 }]}>
+              To complete your order, you must first enter your account information. You can update it at any time from your account.
+            </Text>
 
-        <AddressField label="Full Address *" value={fullAddress} onChangeText={setFullAddress} editable={!saving} />
-        <AddressField label="House / Apartment Number" value={houseNumber} onChangeText={setHouseNumber} editable={!saving} />
-        <AddressField label="State / Province" value={stateValue} onChangeText={setStateValue} editable={!saving} />
-        <AddressField label="Region" value={region} onChangeText={setRegion} editable={!saving} />
-        <AddressField label="Postal Code" value={postalCode} onChangeText={setPostalCode} editable={!saving} />
+            <AddressField label="Full Address *" value={fullAddress} onChangeText={setFullAddress} editable={!saving} />
+            <AddressField label="House / Apartment Number" value={houseNumber} onChangeText={setHouseNumber} editable={!saving} />
+            <AddressField label="State / Province" value={stateValue} onChangeText={setStateValue} editable={!saving} />
+            <AddressField label="Region" value={region} onChangeText={setRegion} editable={!saving} />
+            <AddressField label="Postal Code" value={postalCode} onChangeText={setPostalCode} editable={!saving} />
 
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={handleSave}
-          disabled={saving}
-          className="bg-black py-4 items-center justify-center mt-auto mb-10"
-          style={{ opacity: saving ? 0.6 : 1 }}
-        >
-          {saving ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text className="text-[11px] uppercase tracking-[1px] text-white">Save</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={handleSave}
+              disabled={saving}
+              className="bg-black py-4 items-center justify-center mt-auto mb-10"
+              style={{ opacity: saving ? 0.6 : 1 }}
+            >
+              {saving ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text className="text-[11px] uppercase tracking-[1px] text-white">Save</Text>
+              )}
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
