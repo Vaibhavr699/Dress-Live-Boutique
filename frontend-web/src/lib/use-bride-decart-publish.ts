@@ -85,6 +85,10 @@ export function useBrideDecartPublish({
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const realtimeRef = useRef<any>(null);
+  // Mirror of the raw camera stream so the pagehide/visibility hard-stop
+  // can stop the camera tracks without closing over the effect's local
+  // `raw` binding (which it can't reach from the event listener scope).
+  const rawStreamRef = useRef<MediaStream | null>(null);
   const dressMapRef = useRef<Map<number, DecartSessionDress>>(new Map());
   const mountedRef = useRef(true);
 
@@ -131,6 +135,7 @@ export function useBrideDecartPublish({
           raw.getTracks().forEach((t) => t.stop());
           return;
         }
+        rawStreamRef.current = raw;
         setRawStream(raw);
 
         // Dynamic import so the SDK is only loaded once the user is
@@ -226,15 +231,38 @@ export function useBrideDecartPublish({
 
     start();
 
+    // ── Stop billing the instant the tab is closed / navigated away ─────
+    // Decart bills for the whole realtime session, from connect() until
+    // disconnect(). If the bride just closes the tab or navigates away,
+    // React's unmount cleanup is NOT guaranteed to run — so the Decart
+    // session would keep rendering (and billing) until its server-side
+    // maxSessionDuration cap. That single leak can cost more than a normal
+    // call. `pagehide` fires reliably on tab close/navigation (and on the
+    // bfcache path where `beforeunload` doesn't), so disconnect there.
+    //
+    // Deliberately NOT hooking `visibilitychange`/blur: a bride glancing at
+    // another tab or app for a moment should keep her fitting alive, not
+    // have it torn down with no way to resume.
+    const hardStop = () => {
+      try { realtimeRef.current?.disconnect(); } catch {}
+      realtimeRef.current = null;
+      try { rawStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+    };
+    window.addEventListener("pagehide", hardStop);
+    window.addEventListener("beforeunload", hardStop);
+
     return () => {
       cancelled = true;
       mountedRef.current = false;
+      window.removeEventListener("pagehide", hardStop);
+      window.removeEventListener("beforeunload", hardStop);
       try { realtimeRef.current?.disconnect(); } catch {}
       realtimeRef.current = null;
       setRawStream((s) => {
         try { s?.getTracks().forEach((t) => t.stop()); } catch {}
         return null;
       });
+      rawStreamRef.current = null;
       setTransformedStream(null);
       setSubscribeToken(null);
       setStatus("idle");

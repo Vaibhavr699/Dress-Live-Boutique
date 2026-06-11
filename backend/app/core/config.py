@@ -80,16 +80,23 @@ class Settings(BaseSettings):
     # below, not by token TTL. Bride pulls a fresh one each click of Join.
     DECART_CLIENT_TOKEN_TTL_MINUTES: int = 60
     # Hard cap for one realtime session, in seconds. Decart enforces this
-    # server-side via `constraints.realtime.maxSessionDuration` — even if
-    # the room never finishes, Decart will close the stream at this limit.
-    DECART_MAX_SESSION_SECONDS: int = 60 * 90  # 90 min
+    # server-side via `constraints.realtime.maxSessionDuration` and closes
+    # the stream at this limit even if the room never finishes — so this is
+    # the backstop against a leaked/abandoned session (e.g. bride closes the
+    # tab) billing indefinitely. Kept tight: a real fitting runs well under
+    # this, but at ~$0.02/s every minute here is real money, so 90 min would
+    # let one stuck session cost ~$108 (more than the whole daily budget).
+    # 25 min covers a generous fitting while capping a leak at ~$30.
+    DECART_MAX_SESSION_SECONDS: int = 60 * 25  # 25 min
     # Daily USD ceiling across ALL Decart sessions. Once today's estimated
     # spend reaches this, new sessions are refused until UTC midnight.
     # Set 0 to disable the cap.
     DECART_DAILY_BUDGET_USD: float = 100.0
     # Per-booking session-second cap so one runaway client can't drain
-    # the daily budget alone. 0 disables.
-    DECART_PER_BOOKING_SECONDS_LIMIT: int = 60 * 90  # 90 min
+    # the daily budget alone (e.g. repeated reconnects on the same booking).
+    # 0 disables. Allow ~2 full sessions of headroom over the per-session cap
+    # for a legitimate reconnect, but no more.
+    DECART_PER_BOOKING_SECONDS_LIMIT: int = 60 * 50  # 50 min (~2 sessions)
     # Estimated active-render cost ($/s) used by the budget tracker. The
     # actual figure comes from Decart's billing page — tune after first
     # invoices land. Lucy 2.1 VTON pay-as-you-go is roughly $0.02/s.
