@@ -98,7 +98,12 @@ class CRUDTeamMember:
         db_obj.status = "active"
         db_obj.user_id = user_id
         db_obj.accepted_at = datetime.now(timezone.utc)
-        db_obj.invite_token = None
+        # Keep the invite_token so a reused accept link still resolves to this
+        # row and the accept page can show the friendly "already accepted — sign
+        # in" message instead of a generic "not found". The token is inert once
+        # accepted: every accept path short-circuits on status == "active" before
+        # granting any access, so it can't be replayed. The token is never
+        # returned by the partner-facing API (see schemas/team_member.py).
         db_obj.invite_expires_at = None
         db.add(db_obj)
         db.commit()

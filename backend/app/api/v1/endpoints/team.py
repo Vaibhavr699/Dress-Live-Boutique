@@ -317,11 +317,17 @@ def accept_invite_submit(
     password: str = Form(...),
 ) -> Any:
     member = crud_team_member.get_by_token(db, token)
-    if not member or member.status == "active":
+    if not member:
         return HTMLResponse(
             _page("Invitation unavailable", "<h1>Invitation unavailable</h1>"
                   "<p>This invitation link is invalid or has already been used.</p>"),
             status_code=404,
+        )
+    if member.status == "active":
+        return HTMLResponse(
+            _page("Already accepted", "<h1>Already accepted</h1>"
+                  "<p>This invitation has already been accepted. You can sign in to the "
+                  "Dress Live Partner app with your email and password.</p>"),
         )
     if _is_expired(member):
         return HTMLResponse(
