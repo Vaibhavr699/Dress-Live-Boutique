@@ -468,17 +468,26 @@ async def get_decart_client_token(
 
     decision = decart_budget.check_budget(booking_id=booking.id)
     if not decision.allowed:
-        # 402 Payment Required communicates "budget exhausted" more
-        # precisely than 503; the client should fall back to a Decart-less
-        # plain video call rather than retry.
-        raise HTTPException(status_code=402, detail=decision.reason or "Decart budget exhausted.")
+        # Budget/credits exhausted. Log the real reason server-side, but the
+        # client must NEVER see budget/credit internals — it just needs to
+        # know to proceed without realtime try-on. 402 signals "no Decart
+        # this time"; the detail stays generic.
+        logger.info("Decart token refused for booking %s: %s", booking.id, decision.reason)
+        raise HTTPException(
+            status_code=402,
+            detail="Realtime try-on is unavailable. The call can still proceed without it.",
+        )
 
     dresses = _load_session_dresses(db, booking)
 
     try:
         token = await decart_service.mint_client_token()
     except decart_service.DecartConfigError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Decart config error for booking %s: %s", booking.id, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Realtime try-on is unavailable. The call can still proceed without it.",
+        )
     except decart_service.DecartUpstreamError as exc:
         logger.warning("Decart upstream error for booking %s: %s", booking.id, exc)
         raise HTTPException(

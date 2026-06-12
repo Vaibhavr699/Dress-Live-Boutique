@@ -80,15 +80,22 @@ export function useConsultantDecartSubscribe({
         if (typeof subscriber.on === "function") {
           subscriber.on("error", (err: { message?: string }) => {
             if (!mountedRef.current) return;
+            // Log the real error, but never surface provider/billing text
+            // (e.g. "Insufficient credits") to the consultant UI.
+            if (typeof console !== "undefined") {
+              console.warn("[decart] subscribe error:", err?.message || String(err));
+            }
             setStatus("error");
-            setErrorMessage(`Decart subscribe error: ${err?.message || String(err)}`);
+            setErrorMessage("AI try-on is unavailable for this call.");
           });
         }
       } catch (e) {
         if (cancelled || !mountedRef.current) return;
-        const message = (e as { message?: string })?.message || String(e);
+        if (typeof console !== "undefined") {
+          console.warn("[decart] subscribe failed:", (e as { message?: string })?.message || String(e));
+        }
         setStatus("error");
-        setErrorMessage(message);
+        setErrorMessage("AI try-on is unavailable for this call.");
       }
     };
 

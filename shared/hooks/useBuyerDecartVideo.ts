@@ -236,13 +236,18 @@ export function useBuyerDecartVideo({
         }
         realtime.on('error', (err: any) => {
           if (!mountedRef.current) return;
+          // Log the real provider error, but never put it in user-facing
+          // state — it can read "Insufficient credits" / billing internals.
+          // The caller falls back to the raw camera; the call is unaffected.
+          console.warn('[decart] realtime error:', err?.message || String(err));
           setStatus('error');
-          setErrorMessage(`Decart error: ${err?.message || String(err)}`);
+          setErrorMessage('AI try-on is unavailable right now.');
         });
       } catch (e: any) {
         if (cancelled || !mountedRef.current) return;
+        console.warn('[decart] start failed:', e?.message || String(e));
         setStatus('error');
-        setErrorMessage(e?.message || String(e));
+        setErrorMessage('AI try-on is unavailable right now.');
       }
     };
 

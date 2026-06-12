@@ -207,8 +207,15 @@ export function useBrideDecartPublish({
         if (typeof realtime.on === "function") {
           realtime.on("error", (err: { message?: string }) => {
             if (!mountedRef.current) return;
+            // Log the real provider error for debugging, but NEVER store it
+            // in user-facing state — it can read "Insufficient credits" and
+            // other billing/provider internals. Callers show a generic
+            // "AI try-on unavailable" notice and the call continues.
+            if (typeof console !== "undefined") {
+              console.warn("[decart] realtime error:", err?.message || String(err));
+            }
             setStatus("error");
-            setErrorMessage(`Decart error: ${err?.message || String(err)}`);
+            setErrorMessage("AI try-on is unavailable right now.");
           });
         }
       } catch (e) {
