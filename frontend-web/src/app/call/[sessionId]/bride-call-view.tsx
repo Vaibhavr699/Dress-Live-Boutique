@@ -92,6 +92,10 @@ export function BrideCallView({
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     ConnectionState.Disconnected,
   );
+  // Whether the consultant is actually in the room. Drives the "waiting for
+  // your advisor to join" overlay so the bride isn't left looking at herself
+  // with no idea whether the call is working or just empty.
+  const [consultantPresent, setConsultantPresent] = useState(false);
   const audioContainerRef = useRef<HTMLDivElement | null>(null);
   const remoteAudioTracksRef = useRef<Set<RemoteTrack>>(new Set());
   const consultantVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -171,16 +175,32 @@ export function BrideCallView({
         consultantVideoTrackRef.current = null;
       }
     };
+    // Track whether the consultant has ever joined so we can tell
+    // "hasn't arrived yet" apart from "joined then left".
+    let consultantWasPresent = false;
+    const syncPresence = () => {
+      if (cancelled) return;
+      const present = r.remoteParticipants.size > 0;
+      setConsultantPresent(present);
+      if (present) consultantWasPresent = true;
+    };
+    const handleParticipantConnected = () => { syncPresence(); };
     const handleParticipantDisconnected = () => {
-      // Spec: "Either party hangs up → web page closes". When the
-      // consultant leaves, end the call from our side too.
-      if (!cancelled) endCallInternal();
+      if (cancelled) return;
+      syncPresence();
+      // Spec: "Either party hangs up → web page closes". Only end the call
+      // if the consultant had actually joined — a stray disconnect before
+      // they ever arrived shouldn't kill the bride's waiting screen.
+      if (consultantWasPresent && r.remoteParticipants.size === 0) {
+        endCallInternal();
+      }
     };
 
     r.on(RoomEvent.ConnectionStateChanged, handleConnectionChange);
     r.on(RoomEvent.DataReceived, handleDataReceived);
     r.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
     r.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    r.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
     r.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
 
     (async () => {
@@ -189,7 +209,7 @@ export function BrideCallView({
         if (cancelled) { await r.disconnect(); return; }
         // Publish ONLY audio. Video stays in Decart — never enters LK.
         await r.localParticipant.setMicrophoneEnabled(true);
-        if (!cancelled) setRoom(r);
+        if (!cancelled) { setRoom(r); syncPresence(); }
       } catch (e) {
         if (cancelled) return;
         setErrorMessage((e as { message?: string })?.message || "Could not join the call.");
@@ -209,6 +229,7 @@ export function BrideCallView({
       r.off(RoomEvent.DataReceived, handleDataReceived);
       r.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
       r.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      r.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
       r.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
       r.disconnect();
     };
@@ -341,10 +362,26 @@ export function BrideCallView({
           </div>
         )}
 
+        {/* Waiting-for-advisor overlay: the bride is in the room and seeing
+            herself, but the consultant hasn't joined yet. Without this she'd
+            stare at her own video with no idea if the call is working. */}
+        {!consultantPresent ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/55 px-6 text-center">
+            <div className="inline-block w-8 h-8 rounded-full border-2 border-white/20 border-t-white animate-spin mb-4" />
+            <p className="text-white text-base font-medium mb-1">
+              Waiting for your advisor to join…
+            </p>
+            <p className="text-white/65 text-sm max-w-sm">
+              You’re connected. Your fitting will begin the moment your advisor arrives.
+            </p>
+          </div>
+        ) : null}
+
         {/* Non-fatal notice: the call is live (LiveKit), but the AI try-on
             layer couldn't start (e.g. Decart credits exhausted). The bride
-            sees her raw camera and can still talk to her consultant. */}
-        {tryOnUnavailable ? (
+            sees her raw camera and can still talk to her consultant. Hidden
+            while still waiting on the advisor so we don't stack two overlays. */}
+        {tryOnUnavailable && consultantPresent ? (
           <div className="absolute left-4 right-4 bottom-4 mx-auto max-w-md rounded-lg bg-black/75 border border-white/15 px-4 py-2.5">
             <p className="text-white/80 text-xs text-center leading-4">
               AI try-on is unavailable right now, but you’re connected — you can
@@ -354,30 +391,36 @@ export function BrideCallView({
         ) : null}
 
         {/* Consultant in a corner PiP */}
-        <div className="absolute right-4 top-4 w-40 h-56 rounded-xl overflow-hidden border border-white/30 bg-black/80">
+        <div className="absolute right-4 top-4 w-40 h-56 rounded-xl overflow-hidden border border-white/30 bg-black/80 flex items-center justify-center">
           <video
             ref={setConsultantVideoEl}
             autoPlay
             playsInline
             className="w-full h-full object-cover"
           />
+          {!consultantPresent ? (
+            <span className="absolute text-white/55 text-[10px] text-center leading-tight px-2">
+              Waiting for advisor…
+            </span>
+          ) : null}
         </div>
       </div>
 
-      {/* Status footer */}
+      {/* Status footer — plain, user-facing wording only (no raw provider /
+          Decart status strings). */}
       <div className="px-6 py-3 border-t border-white/10 flex items-center justify-between text-xs text-white/50">
         <span>
-          {connectionState === ConnectionState.Connected ? "Connected" : connectionState}
+          {connectionState === ConnectionState.Connected ? "Connected" : "Connecting…"}
+          {" · "}
+          {consultantPresent ? "Advisor in call" : "Waiting for advisor"}
           {" · "}
           {decart.status === "connected"
             ? "AI try-on live"
             : decart.status === "error"
             ? "AI try-on unavailable"
-            : `AI try-on · ${decart.status}`}
-          {" · "}
-          {decart.subscribeToken ? "share-link ready" : "share-link pending"}
+            : "AI try-on starting…"}
         </span>
-        <span>booking #{bookingId}</span>
+        <span>Live fitting</span>
       </div>
 
       <div ref={audioContainerRef} className="hidden" />

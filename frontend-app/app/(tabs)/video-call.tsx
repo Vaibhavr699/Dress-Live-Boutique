@@ -105,10 +105,20 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
    * pose-landmark payload we publish to the advisor so they know which
    * dress to render their own AR overlay with. */
   activeDressId: number | null;
+  /** Report advisor presence up to the parent so the call lifecycle is
+   * driven by whether the advisor is actually here — not just by the
+   * buyer's own connection. */
+  onPresenceChange: (present: boolean) => void;
 }>(function BuyerRoomView(props, ref) {
-  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, cameraOn, onLiveFrame, activeDressImageUrl, activeDressId } = props;
+  const { deps, bookingId, frameHeight, onDressSwitch, tryOnOverlayUri, tryOnLoading, captureActive, cameraOn, onLiveFrame, activeDressImageUrl, activeDressId, onPresenceChange } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
+
+  // Push advisor-presence changes up to the parent (1:1 call → remote count
+  // > 0 means the advisor is here).
+  React.useEffect(() => {
+    onPresenceChange(remoteParticipants.length > 0);
+  }, [remoteParticipants.length, onPresenceChange]);
 
   // ── Decart Lucy 2.1 VTON pipeline (feature-flagged) ───────────────────
   // When the bride env opts in, the local camera publishing is owned by
@@ -468,20 +478,18 @@ const BuyerRoomView = React.memo(React.forwardRef<BuyerRoomHandle, {
         </View>
       )}
 
-      {/* Decart diagnostic banner — visible until both Decart says
-          'connected' AND we have a subscribeToken to hand to the advisor.
-          Hidden in the legacy code path entirely. */}
-      {decartEnabled && (decart.status !== 'connected' || !decart.subscribeToken) ? (
+      {/* Try-on status banner. Only shown while the try-on is still warming
+          up — never on error. We must NEVER surface the raw Decart error
+          (it can read "Insufficient credits" / other billing/provider
+          internals); on failure we simply hide the banner and let the call
+          continue without the AI overlay. Keep the copy generic and benign. */}
+      {decartEnabled && decart.status !== 'error' && (decart.status !== 'connected' || !decart.subscribeToken) ? (
         <View
           className="absolute left-4 right-4 top-4 bg-black/85 border border-white/30 px-3 py-2"
           style={{ borderRadius: 12 }}
         >
-          <Text className="text-white text-[10px] tracking-[1.5px] uppercase" numberOfLines={3}>
-            {decart.status === 'error'
-              ? `AI try-on offline · ${decart.errorMessage ?? 'unknown'}`
-              : decart.status !== 'connected'
-              ? `AI try-on · ${decart.status}…`
-              : `AI try-on · waiting for subscribe token…`}
+          <Text className="text-white text-[10px] tracking-[1.5px] uppercase" numberOfLines={2}>
+            Preparing your try-on…
           </Text>
         </View>
       ) : null}
@@ -550,6 +558,21 @@ export default function VideoCallScreen() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [bookingDresses, setBookingDresses] = useState<VideoCallBookingDress[]>([]);
   const [ending, setEnding] = useState(false);
+  // Advisor presence, reported up from BuyerRoomView. Drives the
+  // "waiting for advisor" vs "live" distinction and the "advisor left" exit —
+  // independent of the buyer's own LiveKit connection.
+  const [advisorPresent, setAdvisorPresent] = useState(false);
+  const [advisorLeft, setAdvisorLeft] = useState(false);
+  const advisorWasPresentRef = useRef(false);
+  const handleAdvisorPresence = useCallback((present: boolean) => {
+    setAdvisorPresent(present);
+    if (present) {
+      advisorWasPresentRef.current = true;
+    } else if (advisorWasPresentRef.current) {
+      // Advisor was here and is now gone → the call is over for the buyer.
+      setAdvisorLeft(true);
+    }
+  }, []);
 
   // ── AI Try-On state ─────────────────────────────────────────────────────
   const [tryOnPhotoDataUrl, setTryOnPhotoDataUrl] = useState<string | null>(null);
@@ -760,6 +783,25 @@ export default function VideoCallScreen() {
       } as any);
     }
   };
+
+  // Advisor left a call that was live → show the "call ended" state briefly,
+  // then route to the call summary so the buyer isn't stranded on a frozen
+  // "Live Video Fitting" view with nobody on the other end.
+  useEffect(() => {
+    if (!advisorLeft) return;
+    const t = setTimeout(() => {
+      const elapsed = seconds;
+      router.replace({
+        pathname: '/video-call-summary',
+        params: {
+          bookingId: bookingId ? String(bookingId) : '',
+          durationSeconds: String(elapsed),
+        },
+      } as any);
+    }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [advisorLeft]);
 
   // ── AI Try-On: generate result for current dress ─────────────────────────
   // quality 'live' (default) → OpenCV path, sub-second response.
@@ -1015,7 +1057,11 @@ export default function VideoCallScreen() {
       >
         <View className="flex-1">
           <Text className="text-black text-sm font-medium">
-            {callState === 'waiting' ? 'Boutique Portal Team Joining Soon' : 'Live Video Fitting'}
+            {advisorLeft
+              ? 'Call ended'
+              : advisorPresent
+              ? 'Live Video Fitting'
+              : 'Boutique Portal Team Joining Soon'}
           </Text>
         </View>
 
@@ -1170,6 +1216,7 @@ export default function VideoCallScreen() {
                       onLiveFrame={stableOnLiveFrame}
                       activeDressImageUrl={activeDressImageUrl}
                       activeDressId={tryOnActiveDressId}
+                      onPresenceChange={handleAdvisorPresence}
                     />
                   </deps.LiveKitRoom>
                 );
@@ -1182,6 +1229,31 @@ export default function VideoCallScreen() {
                 </Text>
               </View>
             )}
+
+            {/* Advisor left → call is over. Brief message; an effect routes to
+                the summary right after so the buyer isn't stuck on a frozen
+                "live" view with nobody there. */}
+            {advisorLeft ? (
+              <View className="absolute inset-0 bg-black/80 items-center justify-center px-8" pointerEvents="none">
+                <MaterialCommunityIcons name="phone-hangup-outline" size={34} color="white" />
+                <Text className="text-white text-[15px] font-medium text-center mt-4 mb-1">Call ended</Text>
+                <Text className="text-white/65 text-[12px] text-center leading-5">
+                  Your advisor left the fitting. Taking you back…
+                </Text>
+              </View>
+            ) : callState === 'active' && !advisorPresent ? (
+              /* Connected, but the advisor hasn't joined yet — distinct
+                 "waiting for advisor" state instead of a silent live screen. */
+              <View className="absolute inset-0 bg-black/65 items-center justify-center px-8" pointerEvents="none">
+                <ActivityIndicator color="white" />
+                <Text className="text-white text-[14px] font-medium text-center mt-4 mb-1">
+                  Waiting for your advisor to join…
+                </Text>
+                <Text className="text-white/60 text-[11px] text-center leading-4">
+                  You're connected. The fitting begins as soon as they arrive.
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           {/* ── Controls ── */}

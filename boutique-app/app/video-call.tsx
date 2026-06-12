@@ -26,9 +26,11 @@ import { useConsultantDecartSubscribe } from '@shared/hooks/useConsultantDecartS
 import { ARGarmentOverlay } from '../components/ar/ARGarmentOverlay';
 import { useReceivedPoseLandmarks } from '../components/ar/useReceivedPoseLandmarks';
 
-type VideoCallStage = 'waiting' | 'analysis' | 'live';
-
-const STAGE_SEQUENCE: VideoCallStage[] = ['waiting', 'analysis', 'live'];
+// Real call lifecycle (no longer a cosmetic timer):
+//   waiting → connected to LiveKit but the customer hasn't joined yet
+//   live    → the customer is actually present in the room
+//   ended   → the customer left / the call is over → we exit shortly after
+type VideoCallStage = 'waiting' | 'live' | 'ended';
 
 type LiveKitDeps = {
   LiveKitRoom: any;
@@ -88,10 +90,19 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   bookingDresses: VideoCallBookingDress[];
   bookingId: number;
   frameHeight: number;
+  /** Report customer presence up to the parent so it can drive the call
+   * stage off REAL presence instead of a timer. */
+  onPresenceChange: (present: boolean) => void;
 }) {
-  const { deps, bookingDresses, bookingId, frameHeight } = props;
+  const { deps, bookingDresses, bookingId, frameHeight, onPresenceChange } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
+
+  // Push customer-presence changes up to the parent. remoteParticipants only
+  // contains the customer (1:1 call), so length > 0 == customer is here.
+  React.useEffect(() => {
+    onPresenceChange(remoteParticipants.length > 0);
+  }, [remoteParticipants.length, onPresenceChange]);
 
   // Remote camera track (customer video)
   const tracks = deps.useTracks([deps.Track.Source.Camera], { onlySubscribed: false });
@@ -293,7 +304,10 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
             {decartSubscribe.status === 'connecting'
               ? 'Connecting AI try-on stream from customer…'
               : decartSubscribe.status === 'error'
-              ? `AI try-on stream error · ${decartSubscribe.errorMessage ?? 'unknown'}`
+              // Never surface the raw provider error here — it can read
+              // "Insufficient credits" / other billing internals. Show a
+              // benign line; the call's audio/video is unaffected.
+              ? 'AI try-on is unavailable for this call. You can still see and talk to the customer.'
               : emptyMainMessage}
           </Text>
         </View>
@@ -421,48 +435,18 @@ function StatusChip({ label, tone = 'green' }: { label: string; tone?: 'green' |
   );
 }
 
-function WaitingPreview({ title }: { title: string }) {
-  return (
-    <>
-      <View className="bg-black h-[320px] w-full" />
-
-      <View className="items-center mt-4">
-        <Text className="text-[16px] text-black">{title}</Text>
-        <Text className="text-[10px] text-black/35 text-center mt-2 leading-4 px-8">
-          Your session will begin automatically as soon as the boutique advisor joins.
-        </Text>
-      </View>
-
-      <View className="mt-8 px-1">
-        <Text className="text-[14px] text-black mb-4">Preparation Tips</Text>
-        <View className="mb-3 flex-row items-start">
-          <View className="w-1.5 h-1.5 rounded-full bg-[#8A8A8A] mt-1.5 mr-2.5" />
-          <Text className="text-[10px] text-black/55 flex-1">Ensure you are in a well-lit room</Text>
-        </View>
-        <View className="mb-3 flex-row items-start">
-          <View className="w-1.5 h-1.5 rounded-full bg-[#8A8A8A] mt-1.5 mr-2.5" />
-          <Text className="text-[10px] text-black/55 flex-1">Stand 2-3 meters back for full body view</Text>
-        </View>
-        <View className="mb-3 flex-row items-start">
-          <View className="w-1.5 h-1.5 rounded-full bg-[#8A8A8A] mt-1.5 mr-2.5" />
-          <Text className="text-[10px] text-black/55 flex-1">Wear form-fitting clothes for accurate AI measurements</Text>
-        </View>
-      </View>
-
-      <Text className="text-[10px] text-black/25 text-center mt-10">
-        Waiting For The Call Session To Start
-      </Text>
-    </>
-  );
-}
-
 export default function BoutiqueVideoCallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ bookingId?: string }>();
   const insets = useSafeAreaInsets();
   const { height: screenHeight } = useWindowDimensions();
   const livekitSupported = useMemo(() => Platform.OS !== 'web' && isLiveKitNativeSupported(), []);
-  const [stageIndex, setStageIndex] = useState(0);
+  // Real presence, reported up from PartnerRoomView (which lives inside the
+  // LiveKitRoom context and can see remote participants).
+  const [customerPresent, setCustomerPresent] = useState(false);
+  // Flips true when the customer was present and then left — drives the
+  // "call ended" screen + auto-exit.
+  const [peerLeft, setPeerLeft] = useState(false);
   const [internalNotes, setInternalNotes] = useState('');
   const [ending, setEnding] = useState(false);
   const [tokenData, setTokenData] = useState<{ url: string; token: string; room: string; identity: string } | null>(
@@ -553,19 +537,41 @@ export default function BoutiqueVideoCallScreen() {
 
   const toggleCamera = () => setCameraOn((v) => !v);
 
-  useEffect(() => {
-    if (stageIndex >= STAGE_SEQUENCE.length - 1) {
-      return;
+  // Presence handler from PartnerRoomView. Track whether the customer was
+  // EVER present so we can tell "hasn't joined yet" apart from "joined then
+  // left" — only the latter ends the call.
+  const customerWasPresentRef = useRef(false);
+  const handlePresenceChange = useCallback((present: boolean) => {
+    setCustomerPresent(present);
+    if (present) {
+      customerWasPresentRef.current = true;
+    } else if (customerWasPresentRef.current) {
+      // Was here, now gone → the customer left the call.
+      setPeerLeft(true);
     }
+  }, []);
 
-    const timeout = setTimeout(() => {
-      setStageIndex((current) => Math.min(current + 1, STAGE_SEQUENCE.length - 1));
-    }, 2200);
+  // Stage is now derived from REAL state, not a cosmetic timer:
+  //   - customer left after being present → 'ended'
+  //   - customer is in the room          → 'live'
+  //   - otherwise                         → 'waiting' (connecting / waiting for customer)
+  const stage = useMemo<VideoCallStage>(() => {
+    if (peerLeft) return 'ended';
+    if (customerPresent) return 'live';
+    return 'waiting';
+  }, [peerLeft, customerPresent]);
 
-    return () => clearTimeout(timeout);
-  }, [stageIndex]);
-
-  const stage = useMemo(() => STAGE_SEQUENCE[stageIndex], [stageIndex]);
+  // The customer dropped out of a call that was live → end it and leave the
+  // screen so the advisor isn't stranded on a stale "live" view.
+  useEffect(() => {
+    if (stage !== 'ended') return;
+    const t = setTimeout(() => {
+      void handleEndCall();
+    }, 2500);
+    return () => clearTimeout(t);
+    // handleEndCall is defined below and stable for this purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
 
   useEffect(() => {
     if (stage !== 'live') {
@@ -723,7 +729,17 @@ export default function BoutiqueVideoCallScreen() {
         </View>
 
         <View className="flex-1 px-4 pt-4">
-          {stage === 'live' ? (
+          {stage === 'ended' ? (
+            <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
+              <View className="w-16 h-16 rounded-full bg-white/10 items-center justify-center mb-5">
+                <MaterialCommunityIcons name="phone-hangup-outline" size={28} color="white" />
+              </View>
+              <Text className="text-white text-[14px] font-medium text-center mb-2">Call ended</Text>
+              <Text className="text-white/65 text-[12px] text-center leading-5">
+                The customer left the fitting. Wrapping up…
+              </Text>
+            </View>
+          ) : stage === 'live' || stage === 'waiting' ? (
             Platform.OS === 'web' ? (
               <View className="bg-black w-full items-center justify-center px-8 rounded-[28px] overflow-hidden border border-black/5" style={{ height: videoFrameHeight }}>
                 <Text className="text-white/70 text-[12px] text-center">
@@ -832,7 +848,28 @@ export default function BoutiqueVideoCallScreen() {
                         bookingDresses={bookingDresses}
                         bookingId={bookingId}
                         frameHeight={videoFrameHeight}
+                        onPresenceChange={handlePresenceChange}
                       />
+                      {/* Waiting overlay — the room is connected but the
+                          customer hasn't joined yet. Sits on top of the
+                          advisor's self-preview so they know the call is up
+                          and we're waiting on the customer, not broken. */}
+                      {stage === 'waiting' ? (
+                        <View
+                          className="absolute inset-0 bg-black/70 items-center justify-center px-8"
+                          pointerEvents="none"
+                        >
+                          <ActivityIndicator color="white" />
+                          <Text className="text-white text-[13px] font-medium text-center mt-4 mb-1">
+                            Waiting for the customer to join…
+                          </Text>
+                          <Text className="text-white/60 text-[11px] text-center leading-4">
+                            {lkConnected
+                              ? "You're connected. The fitting starts as soon as they arrive."
+                              : 'Connecting you to the room…'}
+                          </Text>
+                        </View>
+                      ) : null}
                     </View>
                   </deps.LiveKitRoom>
                 );
@@ -842,9 +879,7 @@ export default function BoutiqueVideoCallScreen() {
                 <Text className="text-white/50 text-[11px]">Not connected</Text>
               </View>
             )
-          ) : (
-            <WaitingPreview title="Waiting For Advisor To Join" />
-          )}
+          ) : null}
         </View>
 
         {stage === 'live' ? (
