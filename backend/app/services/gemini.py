@@ -65,16 +65,12 @@ class ProviderNotConfigured(Exception):
     """Raised when GEMINI_API_KEY is not set."""
 
 
-def _fetch_image_part(client: httpx.Client, url: str) -> Dict[str, Any]:
-    # SSRF guard: only fetch public https URLs, and never follow redirects to a
-    # private host. These URLs come from our own storage in normal flow, but a
-    # hijacked webhook could otherwise smuggle an internal address through here.
-    from app.utils.url_guard import is_safe_public_url
+def _fetch_image_part(url: str) -> Dict[str, Any]:
+    # SSRF-hardened fetch: validates the host, pins the connection to the
+    # validated public IP (no DNS-rebinding window), and blocks redirects.
+    from app.utils.url_guard import fetch_safe_image
 
-    if not is_safe_public_url(url):
-        raise RuntimeError("Refusing to fetch unsafe (non-public) image URL.")
-    resp = client.get(url, follow_redirects=False)
-    resp.raise_for_status()
+    resp = fetch_safe_image(url)
     mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
     b64 = base64.b64encode(resp.content).decode("ascii")
     return {"inline_data": {"mime_type": mime, "data": b64}}
@@ -85,10 +81,11 @@ def run_qa(*, image_url: str, reference_url: str, timeout_seconds: float = 60.0)
     if not settings.GEMINI_API_KEY:
         raise ProviderNotConfigured("Gemini is not configured (GEMINI_API_KEY unset).")
 
-    with httpx.Client(timeout=timeout_seconds) as client:
-        ref_part = _fetch_image_part(client, reference_url)
-        out_part = _fetch_image_part(client, image_url)
+    # Fetch both images through the SSRF-hardened fetcher (pins to validated IP).
+    ref_part = _fetch_image_part(reference_url)
+    out_part = _fetch_image_part(image_url)
 
+    with httpx.Client(timeout=timeout_seconds) as client:
         body = {
             "contents": [
                 {
