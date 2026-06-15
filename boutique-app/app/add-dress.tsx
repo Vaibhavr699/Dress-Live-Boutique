@@ -16,6 +16,7 @@ import { api } from '@shared/api/api';
 import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { FigmaSuccessModal } from '../components/FigmaSuccessModal';
+import { AITryOnSetup } from '../components/AITryOnSetup';
 import { markCatalogDirty } from '../store/catalogSignal';
 import { Image } from 'expo-image';
 import * as SecureStore from 'expo-secure-store';
@@ -243,6 +244,14 @@ export default function AddDressScreen() {
 
   const [loading, setLoading] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
+  // AI Try-On setup wizard — opened after save when AI Try-On is enabled, so
+  // the partner can upload the 4 angles + standardize the garment image.
+  const [aiSetupOpen, setAiSetupOpen] = useState(false);
+  // True when the wizard was opened as part of the save flow (→ go to catalog on
+  // close); false when opened from the in-form "Set up AI Try-On" button (→ just
+  // return to the form).
+  const [aiSetupFromSave, setAiSetupFromSave] = useState(false);
+  const [savedDressId, setSavedDressId] = useState<number | null>(editId ? Number(editId) : null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [colorDropdownOpen, setColorDropdownOpen] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
@@ -522,6 +531,18 @@ export default function AddDressScreen() {
     [selectedServices]
   );
 
+  // The "Enable AI Try-On" checkbox is a clearer, spec-named entry point that
+  // drives the same `AI TRY ON` service (single source of truth, so the service
+  // chip + all aiServicesSelected logic stay in sync). Toggling it on opens the
+  // multi-angle setup wizard; off removes the service.
+  const aiTryOnEnabled = useMemo(() => selectedServices.includes('AI TRY ON'), [selectedServices]);
+  const toggleAiTryOn = useCallback(() => {
+    setSelectedServices((prev) => {
+      const on = prev.includes('AI TRY ON');
+      return on ? prev.filter((s) => s !== 'AI TRY ON') : [...prev, 'AI TRY ON'];
+    });
+  }, []);
+
   const handleSave = async () => {
     if (!name.trim() || !price.trim()) {
       Alert.alert('Error', 'Please fill in dress name and final price.');
@@ -567,16 +588,27 @@ export default function AddDressScreen() {
         is_ai_enabled: aiRequested,
       };
 
+      let dressId: number | null = isEditing ? Number(editId) : null;
       if (isEditing) {
         await api.put(`/dresses/${editId}`, payload);
       } else {
-        await api.post('/dresses/', payload);
+        const created = (await api.post('/dresses/', payload)) as { id?: number };
+        dressId = created?.id ?? null;
         await clearDraft();
       }
+      setSavedDressId(dressId);
       // Force the catalog/dashboard to refresh on next focus so the change is
       // immediately visible even within their staleness window.
       markCatalogDirty();
-      setSuccessOpen(true);
+      // When AI Try-On is enabled, open the standardization wizard instead of
+      // the plain success modal so the partner can upload the angle photos and
+      // generate the standardized garment image right away.
+      if (aiRequested && dressId) {
+        setAiSetupFromSave(true);
+        setAiSetupOpen(true);
+      } else {
+        setSuccessOpen(true);
+      }
     } catch (error: any) {
       // 402 = require_active_subscription guard on the backend fired.
       // Don't show a generic "Error" — give the partner a one-tap path
@@ -760,7 +792,47 @@ export default function AddDressScreen() {
                 </View>
               ))}
             </View>
-        
+
+            {/* Enable AI Try-On — dedicated checkbox (spec entry point). Drives
+                the same `AI TRY ON` service so it stays in sync with the chip
+                above. When on, the multi-angle setup wizard becomes available. */}
+            <View className="border border-[#D9D9D9] p-4 mb-6">
+              <CheckTile
+                label="Enable AI Try-On"
+                selected={aiTryOnEnabled}
+                onPress={toggleAiTryOn}
+              />
+              {aiTryOnEnabled ? (
+                <View className="mt-3">
+                  <Text className="text-[11px] text-black mb-1" style={{ fontWeight: '600' }}>
+                    Improve AI Try-On Quality
+                  </Text>
+                  <Text className="text-[9px] text-black/45 leading-4 mb-3">
+                    For the best AI Try-On results, upload photos from multiple angles.
+                  </Text>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => {
+                      if (!savedDressId) {
+                        Alert.alert(
+                          'Save first',
+                          'Save the dress, then the multi-angle AI Try-On setup will open automatically.',
+                        );
+                        return;
+                      }
+                      setAiSetupFromSave(false);
+                      setAiSetupOpen(true);
+                    }}
+                    className="border border-black px-4 py-2.5 self-start"
+                  >
+                    <Text className="text-[10px] uppercase tracking-[1px] text-black">
+                      {savedDressId ? 'Open multi-angle setup' : 'Set up after saving'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+
             <SectionHeader
               title="Pricing & Sizes"
               subtitle="Price range and available sizes for appointments."
@@ -887,6 +959,31 @@ export default function AddDressScreen() {
               previewUri={backImage}
               onPress={() => pickAsset(setBackImage)}
             />
+
+            {/* Multi-angle AI Try-On setup — only meaningful once the dress
+                exists (needs an id to attach angle photos + run standardization).
+                Lets a partner editing an AI dress re-open the wizard to add
+                angles or regenerate the standardized image. */}
+            {aiServicesSelected && savedDressId ? (
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => {
+                  setAiSetupFromSave(false);
+                  setAiSetupOpen(true);
+                }}
+                className="border border-black px-4 py-3 mb-4 flex-row items-center justify-between"
+              >
+                <View className="flex-1 pr-3">
+                  <Text className="text-[11px] text-black" style={{ fontWeight: '600' }}>
+                    Set up AI Try-On (multi-angle)
+                  </Text>
+                  <Text className="text-[9px] text-black/45 mt-1 leading-4">
+                    Upload Front / Back / Left / Right + swatch and generate the standardized studio image.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#1A1A1A" />
+              </TouchableOpacity>
+            ) : null}
 
             {/* AI Garment Image — shown always, more prominent when AI is selected */}
             <View className={`mb-2 ${aiServicesSelected ? 'border border-black/10 p-4 rounded-sm' : ''}`}>
@@ -1041,6 +1138,20 @@ export default function AddDressScreen() {
         onButtonPress={() => {
           setSuccessOpen(false);
           router.replace('/(tabs)/catalog');
+        }}
+      />
+
+      <AITryOnSetup
+        visible={aiSetupOpen}
+        dressId={savedDressId}
+        onClose={() => {
+          setAiSetupOpen(false);
+          // From the save flow, finishing the wizard returns to the catalog.
+          // From the in-form button, just return to the form being edited.
+          if (aiSetupFromSave) router.replace('/(tabs)/catalog');
+        }}
+        onApproved={() => {
+          markCatalogDirty();
         }}
       />
     </View>
