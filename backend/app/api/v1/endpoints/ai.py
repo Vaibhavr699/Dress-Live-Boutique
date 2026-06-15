@@ -19,8 +19,11 @@ from app.api import deps
 from app.core.config import settings
 from app.crud.crud_booking import crud_booking
 from app.crud.crud_dress import crud_dress
+from app.crud.crud_ai_job import crud_ai_job
 from app.models.user import User
+from app.schemas.ai_job import AIJobCreate, AIJobRead
 from app.services import fashn as fashn_service
+from app.services import job_runner
 from app.services import runpod_budget
 from app.services import runpod_catvton
 
@@ -924,7 +927,15 @@ async def _build_tryon_preview_response(
     if not validation.ok:
         raise HTTPException(status_code=400, detail=validation.reason or "Please pick a photo with a person clearly visible.")
 
-    garment_url = (dress.ai_model_url or dress.image_url or "").strip()
+    # Prefer the approved/standardized studio garment image (SP2) when present —
+    # that's the catalog-clean image the AI Try-On pipeline is meant to use.
+    # Fall back to the legacy AI garment image, then the raw product photo.
+    garment_url = (
+        getattr(dress, "standardized_image_url", None)
+        or dress.ai_model_url
+        or dress.image_url
+        or ""
+    ).strip()
     if not garment_url:
         raise HTTPException(status_code=400, detail="This dress does not have an AI garment image yet.")
 
@@ -1101,7 +1112,15 @@ async def _build_live_tryon_response(
     if dress.is_ai_enabled is False:
         raise HTTPException(status_code=400, detail="This dress is not enabled for AI try-on.")
 
-    garment_url = (dress.ai_model_url or dress.image_url or "").strip()
+    # Prefer the approved/standardized studio garment image (SP2) when present —
+    # that's the catalog-clean image the AI Try-On pipeline is meant to use.
+    # Fall back to the legacy AI garment image, then the raw product photo.
+    garment_url = (
+        getattr(dress, "standardized_image_url", None)
+        or dress.ai_model_url
+        or dress.image_url
+        or ""
+    ).strip()
     if not garment_url:
         raise HTTPException(status_code=400, detail="This dress does not have an AI garment image yet.")
 
@@ -1372,4 +1391,203 @@ async def live_pose_landmarks(
         "landmarks": landmarks,
         "elapsed_ms": elapsed_ms,
     }
+
+
+@router.get("/jobs/{job_id}", response_model=AIJobRead)
+def get_ai_job(
+    *,
+    job_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Poll the status of an async AI pipeline job.
+
+    Partner-scoped: a partner may only read jobs tied to a dress in their own
+    boutique. Jobs not linked to a dress (e.g. future booking-only jobs) are
+    restricted to the same boutique via their booking — for now we require a
+    boutique-owned dress link, which covers the standardization flow (SP2).
+    """
+    job = crud_ai_job.get(db, id=job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if current_user.role == "partner":
+        if not current_user.boutique_id:
+            raise HTTPException(status_code=403, detail="Not allowed to view this job.")
+        dress = crud_dress.get(db, id=job.dress_id) if job.dress_id else None
+        if not dress or dress.boutique_id != current_user.boutique_id:
+            raise HTTPException(status_code=403, detail="Not allowed to view this job.")
+    return job
+
+
+@router.post("/tryon", response_model=AIJobRead)
+async def start_tryon(
+    *,
+    db: Session = Depends(deps.get_db),
+    dress_id: int = Form(...),
+    full_body_file: UploadFile = File(...),
+    booking_id: Optional[int] = Form(None),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Start an Approach-A try-on pipeline (FASHN tryon-max → masked editorial).
+
+    Validates a person is present in the photo, requires the dress to have an
+    approved/standardized garment image, uploads the customer photo, then creates
+    and submits the head `tryon` AIJob. The editorial step is chained
+    automatically when the tryon webhook completes. The client polls
+    `GET /ai/jobs/{id}`; the finished image arrives as `result.final_image_url`.
+    """
+    if not full_body_file.content_type or not full_body_file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are supported.")
+
+    dress = crud_dress.get(db, id=dress_id)
+    if not dress:
+        raise HTTPException(status_code=404, detail="Dress not found.")
+    if dress.is_ai_enabled is False:
+        raise HTTPException(status_code=400, detail="This dress is not enabled for AI try-on.")
+
+    # Access scope. Try-on is a buyer-facing action, so any authenticated user may
+    # try a dress — but only one that's actually published to customers (mirrors
+    # `get_multi_visible_to_customers`). A partner may also try on their own
+    # boutique's dresses (e.g. previewing an unpublished listing). This prevents
+    # using the endpoint to render hidden/other-boutique dresses (IDOR).
+    boutique_visible = bool(getattr(dress.boutique, "is_visible_to_customers", False))
+    owns_dress = (
+        current_user.role == "partner"
+        and current_user.boutique_id == dress.boutique_id
+    )
+    if not boutique_visible and not owns_dress:
+        raise HTTPException(status_code=404, detail="Dress not found.")
+
+    # Scope booking_id to the caller — never attach a job to someone else's
+    # booking, and require the booking to actually be for this dress.
+    if booking_id is not None:
+        booking = crud_booking.get(db, id=booking_id)
+        if not booking or booking.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Booking not found.")
+        selected = (booking.selected_dress_ids or "")
+        if str(dress_id) not in [s.strip() for s in selected.split(",") if s.strip()]:
+            raise HTTPException(
+                status_code=400, detail="This dress is not part of that booking."
+            )
+
+    garment_url = (
+        getattr(dress, "standardized_image_url", None)
+        or dress.ai_model_url
+        or dress.image_url
+        or ""
+    ).strip()
+    if not garment_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Standardize this dress before running an editorial try-on.",
+        )
+
+    # Validate a person is clearly present (reuse the existing validator).
+    image_bytes = await full_body_file.read()
+    person_img_bgr = _decode_image_bytes(image_bytes)
+    validation = _validate_human_present(person_img_bgr)
+    if not validation.ok:
+        raise HTTPException(
+            status_code=400,
+            detail=validation.reason or "Please pick a photo with a person clearly visible.",
+        )
+
+    # Upload the customer photo to storage so providers can fetch it by URL.
+    from app.api.v1.endpoints.dresses import _upload_image_to_storage
+
+    # Re-wrap the already-read bytes into an UploadFile-like for the helper.
+    full_body_file.file.seek(0)
+    person_url = await _upload_image_to_storage(
+        file=full_body_file,
+        boutique_id=dress.boutique_id,
+        folder="tryon-customer",
+    )
+
+    job = crud_ai_job.create(
+        db,
+        obj_in=AIJobCreate(
+            kind="tryon",
+            provider="fashn",
+            dress_id=dress_id,
+            booking_id=booking_id,
+            input={
+                "person_image_url": person_url,
+                "garment_image_url": garment_url,
+                "model_name": "tryon-max",
+            },
+        ),
+    )
+    job = job_runner.submit_job(db, job=job)
+    return job
+
+
+@router.get("/review-queue", response_model=list[AIJobRead])
+def list_review_queue(
+    *,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Head jobs flagged for human review (QA-failed or hero images).
+
+    Partner-scoped: only jobs tied to a dress in the partner's own boutique.
+    """
+    if current_user.role != "partner" or not current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Partners only.")
+
+    from app.models.ai_job import AIJob
+
+    rows = (
+        db.query(AIJob)
+        .filter(
+            AIJob.needs_review.is_(True),
+            AIJob.parent_job_id.is_(None),
+        )
+        .order_by(AIJob.id.desc())
+        .all()
+    )
+    # Scope to the partner's boutique via each job's dress.
+    out = []
+    for j in rows:
+        d = crud_dress.get(db, id=j.dress_id) if j.dress_id else None
+        if d and d.boutique_id == current_user.boutique_id:
+            out.append(j)
+    return out
+
+
+class _ReviewDecision(BaseModel):
+    approved: bool
+
+
+@router.post("/jobs/{job_id}/review", response_model=AIJobRead)
+def review_job(
+    *,
+    job_id: int,
+    decision: _ReviewDecision,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Resolve a human-review item. Approve clears the flag (image ships as-is);
+    reject clears the flag and kicks off a regenerate from the original try-on.
+
+    Partner-scoped to the owning boutique.
+    """
+    job = crud_ai_job.get(db, id=job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if current_user.role != "partner" or not current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Partners only.")
+    dress = crud_dress.get(db, id=job.dress_id) if job.dress_id else None
+    if not dress or dress.boutique_id != current_user.boutique_id:
+        raise HTTPException(status_code=403, detail="Not allowed to review this job.")
+
+    job.needs_review = False
+    merged = dict(job.result or {})
+    merged["needs_review"] = False
+    merged["review_decision"] = "approved" if decision.approved else "rejected"
+    job.result = merged
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
 

@@ -26,9 +26,13 @@ from app.core.config import settings
 from app.core.email import send_email
 from app.core.email_templates import render_branded_email
 from app.crud.crud_booking import crud_booking
+from app.crud.crud_ai_job import crud_ai_job
+from app.crud.crud_dress import crud_dress
 from app.crud.crud_user import crud_user
 from app.models.booking import Booking
+from app.schemas.ai_job import AIJobCreate
 from app.services import decart_budget
+from app.services import job_runner
 from app.services import notifications as notifications_service
 
 try:
@@ -265,3 +269,304 @@ async def livekit_webhook(
         "booking_id": booking_id,
         "duration_seconds": duration_seconds,
     }
+
+
+# ── AI pipeline provider webhooks ────────────────────────────────────────────
+# fal.ai and FASHN call these when an async job finishes. Both follow the same
+# contract as the LiveKit handler: best-effort, never raise into the provider
+# (so it doesn't retry-storm), and an unknown job id returns 200-ignored rather
+# than 500. The job is found by `provider_job_id`; status is recorded on the row.
+
+
+async def _handle_provider_job_event(
+    *,
+    db: Session,
+    provider: str,
+    provider_job_id: Optional[str],
+    status: str,
+    result: Optional[dict],
+    error: Optional[str],
+) -> dict:
+    if not provider_job_id:
+        return {"ok": True, "ignored": "missing-provider-job-id"}
+
+    job = crud_ai_job.get_by_provider_job_id(
+        db, provider=provider, provider_job_id=provider_job_id
+    )
+    if job is None:
+        # Stray or out-of-order webhook — don't 500, just ignore.
+        return {"ok": True, "ignored": "unknown-job", "provider_job_id": provider_job_id}
+
+    if job.status in ("completed", "failed"):
+        # Idempotent: providers deliver at-least-once.
+        return {"ok": True, "duplicate": True, "job_id": job.id}
+
+    if status == "completed":
+        crud_ai_job.mark_completed(db, db_obj=job, result=result or {})
+        _on_job_completed(db, job=job)
+    else:
+        crud_ai_job.mark_failed(db, db_obj=job, error=error or "Provider reported failure.")
+        _on_job_failed(db, job=job)
+
+    logger.info(
+        "Provider webhook: provider=%s job=%s status=%s", provider, job.id, status
+    )
+    return {"ok": True, "job_id": job.id, "status": job.status}
+
+
+def _result_image_url(result: Optional[dict]) -> Optional[str]:
+    """Pull the first output image URL from a provider result blob, tolerating
+    the couple of shapes fal/FASHN use (`images:[{url}]` or `output:[url]`)."""
+    if not result:
+        return None
+    images = result.get("images")
+    if isinstance(images, list) and images:
+        first = images[0]
+        if isinstance(first, dict):
+            return first.get("url")
+        if isinstance(first, str):
+            return first
+    output = result.get("output")
+    if isinstance(output, list) and output:
+        return output[0]
+    if isinstance(output, str):
+        return output
+    return None
+
+
+def _on_job_completed(db: Session, *, job) -> None:
+    """Per-kind side effects when a job completes.
+
+    - `standardize`: the catalog image is ready for boutique review → flip the
+      dress to `ready`.
+    - `tryon` (Approach A step 1): FASHN placed the dress → spawn the `editorial`
+      step (the polish pass), chained via parent_job_id, and submit it.
+    - `editorial` (Approach A step 2): the final image is ready → surface its URL
+      onto the head tryon job's result so the polling client sees the finished
+      image and a `final_image_url`.
+    """
+    if job.kind == "standardize" and job.dress_id:
+        dress = crud_dress.get(db, id=job.dress_id)
+        if dress is not None:
+            dress.standardization_status = "ready"
+            db.add(dress)
+            db.commit()
+        return
+
+    if job.kind == "tryon":
+        tryon_url = _result_image_url(job.result)
+        if not tryon_url:
+            logger.warning("tryon job %s completed with no output image", job.id)
+            return
+        editorial = crud_ai_job.create(
+            db,
+            obj_in=AIJobCreate(
+                kind="editorial",
+                provider="fal",
+                dress_id=job.dress_id,
+                booking_id=job.booking_id,
+                parent_job_id=job.id,
+                input={"image_url": tryon_url},
+            ),
+        )
+        job_runner.submit_job(db, job=editorial)
+        return
+
+    if job.kind == "editorial" and job.parent_job_id:
+        _run_finishing_and_qa(db, editorial_job=job)
+        return
+
+
+def _run_finishing_and_qa(db: Session, *, editorial_job) -> None:
+    """SP5 finishing chain, run after the editorial pass completes.
+
+    upscale (Topaz, sync) -> QA (Gemini, sync) -> gate:
+      pass            -> head.result.final_image_url = upscaled url; head completed
+      fail & retries  -> spawn a fresh editorial (regenerate); head stays pending
+      fail & exhausted-> head.result.needs_review = true (human queue)
+
+    Hero/marketing images (head.input.hero == true) always go to review even on
+    pass. If keys are missing, upscale/QA are skipped and the editorial image is
+    surfaced as-is.
+    """
+    head = crud_ai_job.get(db, id=editorial_job.parent_job_id)
+    if head is None:
+        return
+
+    editorial_url = _result_image_url(editorial_job.result)
+    if not editorial_url:
+        logger.warning("editorial job %s completed with no image", editorial_job.id)
+        return
+
+    # 1) Upscale (sync; skipped gracefully if fal unconfigured).
+    upscale = crud_ai_job.create(
+        db,
+        obj_in=AIJobCreate(
+            kind="upscale",
+            provider="fal",
+            dress_id=head.dress_id,
+            booking_id=head.booking_id,
+            parent_job_id=head.id,
+            input={"image_url": editorial_url},
+        ),
+    )
+    upscale = job_runner.run_sync_job(db, job=upscale)
+    final_url = _result_image_url(upscale.result) or editorial_url
+
+    # 2) QA (sync) against the standardized garment reference.
+    reference_url = None
+    if head.dress_id:
+        dress = crud_dress.get(db, id=head.dress_id)
+        reference_url = getattr(dress, "standardized_image_url", None) if dress else None
+
+    rubric = None
+    qa_passed = True  # default-pass when QA can't run (no key / no reference)
+    if reference_url:
+        qa = crud_ai_job.create(
+            db,
+            obj_in=AIJobCreate(
+                kind="qa",
+                provider="gemini",
+                dress_id=head.dress_id,
+                booking_id=head.booking_id,
+                parent_job_id=head.id,
+                input={"image_url": final_url, "reference_url": reference_url},
+            ),
+        )
+        qa = job_runner.run_sync_job(db, job=qa)
+        if qa.status == "completed" and isinstance(qa.result, dict):
+            rubric = qa.result
+            from app.services import gemini as gemini_service
+
+            qa_passed = gemini_service.passes(rubric)
+
+    # 3) Gate.
+    attempts = int((head.input or {}).get("regen_attempts", 0))
+    is_hero = bool((head.input or {}).get("hero", False))
+
+    if qa_passed:
+        merged = dict(head.result or {})
+        merged["final_image_url"] = final_url
+        if rubric is not None:
+            merged["qa"] = rubric
+        if is_hero:
+            merged["needs_review"] = True
+            head.needs_review = True
+        crud_ai_job.mark_completed(db, db_obj=head, result=merged)
+        db.add(head)
+        db.commit()
+        return
+
+    # QA failed → regenerate or queue for human review.
+    if attempts < settings.TRYON_MAX_REGEN:
+        new_input = dict(head.input or {})
+        new_input["regen_attempts"] = attempts + 1
+        head.input = new_input
+        head.status = "submitted"  # still in-flight from the client's view
+        db.add(head)
+        db.commit()
+        # Re-run the editorial pass on the same tryon output with a fresh seed.
+        regen = crud_ai_job.create(
+            db,
+            obj_in=AIJobCreate(
+                kind="editorial",
+                provider="fal",
+                dress_id=head.dress_id,
+                booking_id=head.booking_id,
+                parent_job_id=head.id,
+                input={"image_url": (editorial_job.input or {}).get("image_url")},
+            ),
+        )
+        job_runner.submit_job(db, job=regen)
+        return
+
+    # Exhausted retries → human review with the best image we have.
+    merged = dict(head.result or {})
+    merged["final_image_url"] = final_url
+    if rubric is not None:
+        merged["qa"] = rubric
+    merged["needs_review"] = True
+    head.needs_review = True
+    crud_ai_job.mark_completed(db, db_obj=head, result=merged)
+    db.add(head)
+    db.commit()
+
+
+def _on_job_failed(db: Session, *, job) -> None:
+    """Per-kind side effects when a job fails. For `standardize`, drop the dress
+    back to `none` so the boutique can retry from a clean state."""
+    if job.kind == "standardize" and job.dress_id:
+        dress = crud_dress.get(db, id=job.dress_id)
+        if dress is not None and dress.standardization_status == "pending":
+            dress.standardization_status = "none"
+            db.add(dress)
+            db.commit()
+
+
+@router.post("/fal", response_model=dict)
+async def fal_webhook(
+    request: Request,
+    db: Session = Depends(deps.get_db),
+) -> dict:
+    """Receive a fal.ai job-completion webhook.
+
+    fal posts a JSON body with the request id and status/payload. We verify the
+    optional shared secret when configured, then record the result on the AIJob.
+    The exact fal payload field names are finalized when the provider call is
+    wired (SP2/SP4); this reads them defensively.
+    """
+    if settings.FAL_WEBHOOK_SECRET:
+        provided = request.headers.get("x-fal-webhook-secret")
+        if provided != settings.FAL_WEBHOOK_SECRET:
+            raise HTTPException(status_code=401, detail="Invalid fal webhook secret.")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body.")
+
+    provider_job_id = body.get("request_id") or body.get("id")
+    raw_status = (body.get("status") or "").upper()
+    # fal uses OK/ERROR (and similar); map to our vocabulary.
+    status = "completed" if raw_status in ("OK", "COMPLETED", "SUCCESS") else "failed"
+    result = body.get("payload") or body.get("result")
+    error = body.get("error")
+
+    return await _handle_provider_job_event(
+        db=db,
+        provider="fal",
+        provider_job_id=provider_job_id,
+        status=status,
+        result=result if isinstance(result, dict) else ({"output": result} if result else None),
+        error=error if isinstance(error, str) else (str(error) if error else None),
+    )
+
+
+@router.post("/fashn", response_model=dict)
+async def fashn_webhook(
+    request: Request,
+    db: Session = Depends(deps.get_db),
+) -> dict:
+    """Receive a FASHN async job webhook (used by the SP4 try-on step).
+
+    FASHN reports `id` + `status` (`completed`/`failed`) and an `output` list.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body.")
+
+    provider_job_id = body.get("id")
+    raw_status = (body.get("status") or "").lower()
+    status = "completed" if raw_status == "completed" else "failed"
+    output = body.get("output")
+    error = body.get("error")
+
+    return await _handle_provider_job_event(
+        db=db,
+        provider="fashn",
+        provider_job_id=provider_job_id,
+        status=status,
+        result={"output": output} if output else None,
+        error=error if isinstance(error, str) else (str(error) if error else None),
+    )
