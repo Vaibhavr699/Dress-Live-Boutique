@@ -1,5 +1,7 @@
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel
+
+from app.schemas.dress_image import DressImage
 
 # Shared properties
 class DressBase(BaseModel):
@@ -12,6 +14,9 @@ class DressBase(BaseModel):
     image_url: Optional[str] = None
     ai_model_url: Optional[str] = None
     is_ai_enabled: Optional[bool] = True
+    # AI Try-On standardization state (see app/models/dress.py).
+    standardization_status: Optional[str] = None
+    standardized_image_url: Optional[str] = None
     boutique_id: Optional[int] = None
 
 # Properties to receive via API on creation
@@ -32,7 +37,7 @@ class DressInDBBase(DressBase):
 
 # Additional properties to return via API
 class Dress(DressInDBBase):
-    pass
+    images: List[DressImage] = []
 
 # Additional properties stored in DB
 class DressInDB(DressInDBBase):

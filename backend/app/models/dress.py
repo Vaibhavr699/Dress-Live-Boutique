@@ -13,7 +13,19 @@ class Dress(Base):
     image_url = Column(String, nullable=True)
     ai_model_url = Column(String, nullable=True) # Path for AI engine
     is_ai_enabled = Column(Boolean(), default=True)
-    
+
+    # AI Try-On standardization state. `standardization_status` drives the
+    # boutique Accept / Regenerate / Upload-manually flow:
+    #   none -> pending -> ready -> approved | manual
+    # `standardized_image_url` is a fast pointer to the approved standardized
+    # image (mirrors the `standardized`-role DressImage row); the try-on path
+    # reads this one field instead of querying the images table.
+    standardization_status = Column(String, nullable=False, server_default="none")
+    standardized_image_url = Column(String, nullable=True)
+
     boutique_id = Column(Integer, ForeignKey("boutique.id"), nullable=False)
-    
+
     boutique = relationship("Boutique", backref="dresses")
+    images = relationship(
+        "DressImage", cascade="all, delete-orphan", back_populates="dress"
+    )
