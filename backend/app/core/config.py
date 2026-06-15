@@ -64,6 +64,10 @@ class Settings(BaseSettings):
 
     FASHN_API_KEY: Optional[str] = None
     FASHN_TIMEOUT_SECONDS: int = 120
+    # Shared secret to authenticate inbound FASHN webhook deliveries. Set the
+    # same value in the FASHN webhook config. Required for the async try-on
+    # webhook to be accepted (handler fails closed without it).
+    FASHN_WEBHOOK_SECRET: Optional[str] = None
 
     # ── fal.ai (FLUX Kontext / segmentation / Topaz) ─────────────────────
     # Server-side only. One key covers all fal models used by the AI Try-On

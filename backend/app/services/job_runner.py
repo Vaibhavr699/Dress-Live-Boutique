@@ -14,6 +14,7 @@ buildable and testable without keys.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -30,22 +31,31 @@ class ProviderNotConfigured(Exception):
     """Raised when a job's provider has no API key / config missing."""
 
 
-def _fal_webhook_url() -> str:
+def _webhook_url(path: str, secret: Optional[str]) -> str:
+    """Build a provider callback URL. The shared secret is appended as a `secret`
+    query param so the (fail-closed) receiver can authenticate the callback —
+    fal/FASHN deliver webhooks to a URL and don't support custom request headers,
+    so the URL is the only channel for the secret. The secret must be set, or the
+    receiver would reject the callback anyway."""
     base = (settings.BACKEND_PUBLIC_URL or "").strip().rstrip("/")
     if not base:
         raise ProviderNotConfigured(
-            "BACKEND_PUBLIC_URL unset — cannot build the fal webhook callback URL."
+            f"BACKEND_PUBLIC_URL unset — cannot build the {path} webhook callback URL."
         )
-    return f"{base}/api/v1/webhooks/fal"
+    if not secret:
+        raise ProviderNotConfigured(
+            f"Webhook secret unset — refusing to submit a job whose {path} callback "
+            "could not be authenticated."
+        )
+    return f"{base}/api/v1/webhooks/{path}?secret={secret}"
+
+
+def _fal_webhook_url() -> str:
+    return _webhook_url("fal", settings.FAL_WEBHOOK_SECRET)
 
 
 def _fashn_webhook_url() -> str:
-    base = (settings.BACKEND_PUBLIC_URL or "").strip().rstrip("/")
-    if not base:
-        raise ProviderNotConfigured(
-            "BACKEND_PUBLIC_URL unset — cannot build the FASHN webhook callback URL."
-        )
-    return f"{base}/api/v1/webhooks/fashn"
+    return _webhook_url("fashn", settings.FASHN_WEBHOOK_SECRET)
 
 
 def _submit_to_fal(job: AIJob) -> str:

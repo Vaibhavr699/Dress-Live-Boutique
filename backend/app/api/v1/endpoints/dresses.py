@@ -377,6 +377,11 @@ def set_manual_standardized_image(
     url = (body.url or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="A standardized image URL is required.")
+    # SSRF guard: this URL is later fetched server-side (QA), so reject private/
+    # loopback/non-https addresses at ingress.
+    from app.utils.url_guard import ensure_safe_public_url
+
+    url = ensure_safe_public_url(url)
 
     crud_dress_image.create(
         db,

@@ -66,7 +66,14 @@ class ProviderNotConfigured(Exception):
 
 
 def _fetch_image_part(client: httpx.Client, url: str) -> Dict[str, Any]:
-    resp = client.get(url)
+    # SSRF guard: only fetch public https URLs, and never follow redirects to a
+    # private host. These URLs come from our own storage in normal flow, but a
+    # hijacked webhook could otherwise smuggle an internal address through here.
+    from app.utils.url_guard import is_safe_public_url
+
+    if not is_safe_public_url(url):
+        raise RuntimeError("Refusing to fetch unsafe (non-public) image URL.")
+    resp = client.get(url, follow_redirects=False)
     resp.raise_for_status()
     mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
     b64 = base64.b64encode(resp.content).decode("ascii")
@@ -94,9 +101,11 @@ def run_qa(*, image_url: str, reference_url: str, timeout_seconds: float = 60.0)
                 "responseSchema": _QA_SCHEMA,
             },
         }
+        # Send the key as a header, not a query param — a key in the URL leaks
+        # into httpx exception messages / stack traces / any URL logging.
         resp = client.post(
             f"{_GEMINI_BASE}/{settings.GEMINI_QA_MODEL}:generateContent",
-            params={"key": settings.GEMINI_API_KEY},
+            headers={"x-goog-api-key": settings.GEMINI_API_KEY},
             json=body,
         )
         resp.raise_for_status()

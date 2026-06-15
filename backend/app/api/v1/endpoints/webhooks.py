@@ -503,6 +503,28 @@ def _on_job_failed(db: Session, *, job) -> None:
             db.commit()
 
 
+def _verify_webhook_secret(request: Request, *, expected: Optional[str], header: str) -> None:
+    """Authenticate an inbound provider webhook against a shared secret.
+
+    Fails CLOSED: if no secret is configured server-side, the webhook is rejected
+    (401) rather than accepted unauthenticated — an open webhook lets anyone mark
+    jobs completed with arbitrary image URLs. The secret is accepted either from a
+    header or a `secret` query param, since fal/FASHN deliver it via the callback
+    URL (they don't support custom request headers).
+    """
+    if not expected:
+        raise HTTPException(
+            status_code=401,
+            detail="Webhook secret not configured on the server.",
+        )
+    provided = request.headers.get(header) or request.query_params.get("secret")
+    # constant-time compare to avoid timing oracles
+    import hmac
+
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid webhook secret.")
+
+
 @router.post("/fal", response_model=dict)
 async def fal_webhook(
     request: Request,
@@ -510,15 +532,13 @@ async def fal_webhook(
 ) -> dict:
     """Receive a fal.ai job-completion webhook.
 
-    fal posts a JSON body with the request id and status/payload. We verify the
-    optional shared secret when configured, then record the result on the AIJob.
-    The exact fal payload field names are finalized when the provider call is
-    wired (SP2/SP4); this reads them defensively.
+    fal posts a JSON body with the request id and status/payload. The request is
+    authenticated against FAL_WEBHOOK_SECRET (fails closed if unset). The exact
+    fal payload field names are read defensively.
     """
-    if settings.FAL_WEBHOOK_SECRET:
-        provided = request.headers.get("x-fal-webhook-secret")
-        if provided != settings.FAL_WEBHOOK_SECRET:
-            raise HTTPException(status_code=401, detail="Invalid fal webhook secret.")
+    _verify_webhook_secret(
+        request, expected=settings.FAL_WEBHOOK_SECRET, header="x-fal-webhook-secret"
+    )
 
     try:
         body = await request.json()
@@ -549,8 +569,13 @@ async def fashn_webhook(
 ) -> dict:
     """Receive a FASHN async job webhook (used by the SP4 try-on step).
 
-    FASHN reports `id` + `status` (`completed`/`failed`) and an `output` list.
+    Authenticated against FASHN_WEBHOOK_SECRET (fails closed if unset). FASHN
+    reports `id` + `status` (`completed`/`failed`) and an `output` list.
     """
+    _verify_webhook_secret(
+        request, expected=settings.FASHN_WEBHOOK_SECRET, header="x-fashn-webhook-secret"
+    )
+
     try:
         body = await request.json()
     except Exception:
