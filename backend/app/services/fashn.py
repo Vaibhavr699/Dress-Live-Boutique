@@ -4,8 +4,55 @@ import time
 
 import httpx
 
+from app.core.config import settings
+
 _FASHN_API_BASE = "https://api.fashn.ai/v1"
 _POLL_INTERVAL = 2.0
+
+
+class ProviderNotConfigured(Exception):
+    """Raised when FASHN_API_KEY is not set."""
+
+
+def submit_tryon_async(
+    *,
+    person_image_url: str,
+    garment_image_url: str,
+    webhook_url: str,
+    model_name: str = "tryon-max",
+    category: str = "one-pieces",
+    timeout_seconds: float = 30.0,
+) -> str:
+    """Submit a FASHN try-on to the queue with a webhook, returning the job id.
+
+    Unlike `run_tryon` (the synchronous live-call path), this does NOT poll — it
+    submits and returns immediately. FASHN later calls `webhook_url` (our
+    /api/v1/webhooks/fashn receiver), which records the result on the AIJob.
+
+    Used by the SP4 Approach-A pipeline (model `tryon-max` for dress fidelity).
+    """
+    if not settings.FASHN_API_KEY:
+        raise ProviderNotConfigured("FASHN is not configured (FASHN_API_KEY unset).")
+
+    headers = {"Authorization": f"Bearer {settings.FASHN_API_KEY}"}
+    body = {
+        "model_name": model_name,
+        "inputs": {
+            "model_image": person_image_url,
+            "garment_image": garment_image_url,
+            "category": category,
+        },
+        "webhook_url": webhook_url,
+    }
+    with httpx.Client(timeout=timeout_seconds) as client:
+        resp = client.post(f"{_FASHN_API_BASE}/run", headers=headers, json=body)
+        resp.raise_for_status()
+        data = resp.json()
+
+    job_id = data.get("id")
+    if not job_id:
+        raise RuntimeError("FASHN did not return a prediction id.")
+    return job_id
 
 
 async def run_tryon(

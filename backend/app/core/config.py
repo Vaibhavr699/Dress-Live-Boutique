@@ -65,6 +65,34 @@ class Settings(BaseSettings):
     FASHN_API_KEY: Optional[str] = None
     FASHN_TIMEOUT_SECONDS: int = 120
 
+    # ── fal.ai (FLUX Kontext / segmentation / Topaz) ─────────────────────
+    # Server-side only. One key covers all fal models used by the AI Try-On
+    # pipeline (standardization, masking, upscale). Optional until provided —
+    # the job runner stays in `pending` and reports "not configured" when unset,
+    # so the rest of the pipeline can be built and tested without a key.
+    FAL_API_KEY: Optional[str] = None
+    # Shared secret used to verify inbound fal webhook deliveries (set the same
+    # value in the fal dashboard webhook config). Optional in dev.
+    FAL_WEBHOOK_SECRET: Optional[str] = None
+    # Public base URL of THIS backend (e.g. https://api.dresslive.app), used to
+    # build the `fal_webhook` callback URL. Distinct from WEB_CALL_BASE_URL,
+    # which is the frontend. Optional until provided — without it, async fal
+    # jobs stay pending (we can't tell fal where to call back).
+    BACKEND_PUBLIC_URL: Optional[str] = None
+
+    # ── Gemini (AI Try-On QA) ────────────────────────────────────────────
+    # Server-side only. Used by the Step-4 QA judge to score the editorial
+    # output against the standardized garment (dress fidelity / body not
+    # reshaped). Optional until provided — QA is skipped when unset and the
+    # editorial image still ships.
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_QA_MODEL: str = "gemini-2.5-flash"
+    # QA gate: dress fidelity score (0-100) at/above which an image passes.
+    QA_DRESS_THRESHOLD: int = 75
+    # Max automatic regeneration attempts when QA fails before queueing for
+    # human review.
+    TRYON_MAX_REGEN: int = 2
+
     # ── Decart realtime VTON (Lucy 2.1) ──────────────────────────────────
     # Server-side only. `DECART_API_KEY` is the long-lived `dct_*` / `sk_*`
     # secret used to mint short-lived per-session client tokens (`ek_*`)
