@@ -88,7 +88,8 @@ def _submit_to_fal(job: AIJob) -> str:
         if not tryon_image_url:
             raise RuntimeError("editorial job missing input.image_url (tryon output)")
         try:
-            mask_url = fal_service.segment_subject_mask(image_url=tryon_image_url)
+            # Mask the BACKGROUND (dress/subject protected) for the editorial pass.
+            mask_url = fal_service.background_mask_url(image_url=tryon_image_url)
             return fal_service.submit_editorial_inpaint(
                 image_url=tryon_image_url,
                 mask_url=mask_url,

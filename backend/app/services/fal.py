@@ -21,9 +21,10 @@ _FAL_SYNC_BASE = "https://fal.run"
 _KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
 _BIREFNET_MODEL = "fal-ai/birefnet"
 _TOPAZ_MODEL = "fal-ai/topaz/upscale/image"
-# Inpaint model used for the editorial pass — repaints the non-dress region
-# (background / skin / lighting) while the masked dress is preserved.
-_INPAINT_MODEL = "fal-ai/flux-pro/kontext/max"
+# Real inpaint model for the editorial pass: takes image_url + mask_image_url and
+# repaints ONLY the masked (white) region. We mask the background so the dress is
+# pixel-preserved. (flux-pro/kontext has no mask param — it can't protect a region.)
+_INPAINT_MODEL = "fal-ai/z-image/turbo/inpaint"
 
 # Editorial pass prompt. The dress is masked, so this only affects the scene.
 EDITORIAL_PROMPT = (
@@ -133,17 +134,50 @@ def segment_subject_mask(*, image_url: str, timeout_seconds: float = 60.0) -> st
         "Authorization": f"Key {settings.FAL_API_KEY}",
         "Content-Type": "application/json",
     }
-    body = {"image_url": image_url, "mask_only": True, "output_format": "png"}
+    # `output_mask: true` makes BiRefNet return the binary subject mask in the
+    # `mask_image` field (white = subject incl. dress).
+    body = {"image_url": image_url, "output_mask": True, "output_format": "png"}
     with httpx.Client(timeout=timeout_seconds) as client:
         resp = client.post(f"{_FAL_SYNC_BASE}/{_BIREFNET_MODEL}", headers=headers, json=body)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise RuntimeError(f"BiRefNet {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
 
-    image = data.get("image") or {}
-    mask_url = image.get("url") if isinstance(image, dict) else None
+    mask = data.get("mask_image") or {}
+    mask_url = mask.get("url") if isinstance(mask, dict) else None
     if not mask_url:
         raise RuntimeError("BiRefNet did not return a mask url.")
     return mask_url
+
+
+def background_mask_url(*, image_url: str) -> str:
+    """Produce a mask that marks the BACKGROUND for inpainting.
+
+    BiRefNet returns white = subject (person + dress). The editorial inpaint
+    repaints WHITE regions, but we want to repaint the background and PROTECT the
+    dress — so we invert the subject mask (background becomes white). Returns a
+    public URL to the inverted mask.
+    """
+    import cv2
+    import numpy as np
+
+    from app.utils.storage import upload_bytes
+
+    subject_mask_url = segment_subject_mask(image_url=image_url)
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.get(subject_mask_url)
+        resp.raise_for_status()
+        raw = resp.content
+
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise RuntimeError("Could not decode the subject mask.")
+    inverted = cv2.bitwise_not(img)  # subject->black, background->white
+    ok, buf = cv2.imencode(".png", inverted)
+    if not ok:
+        raise RuntimeError("Could not encode the inverted mask.")
+    return upload_bytes(data=buf.tobytes(), folder="tryon-masks", content_type="image/png")
 
 
 def submit_editorial_inpaint(
@@ -179,7 +213,8 @@ def submit_editorial_inpaint(
             params=params,
             json=body,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise RuntimeError(f"fal inpaint {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
 
     request_id = data.get("request_id") or data.get("id")
