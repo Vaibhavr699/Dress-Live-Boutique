@@ -358,52 +358,33 @@ def _on_job_completed(db: Session, *, job) -> None:
         if not tryon_url:
             logger.warning("tryon job %s completed with no output image", job.id)
             return
-        # The FASHN step is done, but the PIPELINE isn't — the editorial +
-        # finishing steps still run. Keep the head job `submitted` (in-flight)
-        # so the polling client doesn't read it as `completed` before the final
-        # image exists. It flips to `completed` in _run_finishing_and_qa once
-        # `final_image_url` is merged. Preserve the FASHN output for the chain.
-        job.status = "submitted"
-        db.add(job)
-        db.commit()
-        editorial = crud_ai_job.create(
-            db,
-            obj_in=AIJobCreate(
-                kind="editorial",
-                provider="fal",
-                dress_id=job.dress_id,
-                booking_id=job.booking_id,
-                parent_job_id=job.id,
-                input={"image_url": tryon_url},
-            ),
-        )
-        job_runner.submit_job(db, job=editorial)
-        return
-
-    if job.kind == "editorial" and job.parent_job_id:
-        _run_finishing_and_qa(db, editorial_job=job)
+        # Approach A, simplified: FASHN tryon-max places the REAL dress on the
+        # customer faithfully, so we use its output directly and skip the
+        # generative editorial inpaint (which was reinventing the garment and
+        # failing QA every time). Finishing = upscale + QA only. The head job is
+        # still the polled job; _run_finishing_and_qa flips it to completed with
+        # the final image.
+        _run_finishing_and_qa(db, head=job, source_image_url=tryon_url)
         return
 
 
-def _run_finishing_and_qa(db: Session, *, editorial_job) -> None:
-    """SP5 finishing chain, run after the editorial pass completes.
+def _run_finishing_and_qa(db: Session, *, head, source_image_url: str) -> None:
+    """Finishing chain run on the FASHN try-on output.
 
     upscale (Topaz, sync) -> QA (Gemini, sync) -> gate:
-      pass            -> head.result.final_image_url = upscaled url; head completed
-      fail & retries  -> spawn a fresh editorial (regenerate); head stays pending
-      fail & exhausted-> head.result.needs_review = true (human queue)
+      pass             -> head.result.final_image_url = upscaled url; head completed
+      fail & exhausted -> head.result.needs_review = true (human queue)
 
-    Hero/marketing images (head.input.hero == true) always go to review even on
-    pass. If keys are missing, upscale/QA are skipped and the editorial image is
-    surfaced as-is.
+    `source_image_url` is the FASHN try-on image. Hero/marketing images
+    (head.input.hero == true) always go to review even on pass. If keys are
+    missing, upscale/QA are skipped and the try-on image is surfaced as-is.
+
+    Note: with the generative editorial step removed there is no per-image
+    "regenerate a different render" — a QA failure now means the FASHN try-on
+    itself is off, so we route to human review rather than re-running an
+    identical generation.
     """
-    head = crud_ai_job.get(db, id=editorial_job.parent_job_id)
     if head is None:
-        return
-
-    editorial_url = _result_image_url(editorial_job.result)
-    if not editorial_url:
-        logger.warning("editorial job %s completed with no image", editorial_job.id)
         return
 
     # 1) Upscale (sync; skipped gracefully if fal unconfigured).
@@ -415,11 +396,11 @@ def _run_finishing_and_qa(db: Session, *, editorial_job) -> None:
             dress_id=head.dress_id,
             booking_id=head.booking_id,
             parent_job_id=head.id,
-            input={"image_url": editorial_url},
+            input={"image_url": source_image_url},
         ),
     )
     upscale = job_runner.run_sync_job(db, job=upscale)
-    final_url = _result_image_url(upscale.result) or editorial_url
+    final_url = _result_image_url(upscale.result) or source_image_url
 
     # 2) QA (sync) against the standardized garment reference.
     reference_url = None
@@ -448,53 +429,16 @@ def _run_finishing_and_qa(db: Session, *, editorial_job) -> None:
 
             qa_passed = gemini_service.passes(rubric)
 
-    # 3) Gate.
-    attempts = int((head.input or {}).get("regen_attempts", 0))
+    # 3) Gate. The job always completes with the best image we have; a QA failure
+    # (or a hero image) flags it for human review rather than blocking the result.
     is_hero = bool((head.input or {}).get("hero", False))
-
-    if qa_passed:
-        merged = dict(head.result or {})
-        merged["final_image_url"] = final_url
-        if rubric is not None:
-            merged["qa"] = rubric
-        if is_hero:
-            merged["needs_review"] = True
-            head.needs_review = True
-        crud_ai_job.mark_completed(db, db_obj=head, result=merged)
-        db.add(head)
-        db.commit()
-        return
-
-    # QA failed → regenerate or queue for human review.
-    if attempts < settings.TRYON_MAX_REGEN:
-        new_input = dict(head.input or {})
-        new_input["regen_attempts"] = attempts + 1
-        head.input = new_input
-        head.status = "submitted"  # still in-flight from the client's view
-        db.add(head)
-        db.commit()
-        # Re-run the editorial pass on the same tryon output with a fresh seed.
-        regen = crud_ai_job.create(
-            db,
-            obj_in=AIJobCreate(
-                kind="editorial",
-                provider="fal",
-                dress_id=head.dress_id,
-                booking_id=head.booking_id,
-                parent_job_id=head.id,
-                input={"image_url": (editorial_job.input or {}).get("image_url")},
-            ),
-        )
-        job_runner.submit_job(db, job=regen)
-        return
-
-    # Exhausted retries → human review with the best image we have.
     merged = dict(head.result or {})
     merged["final_image_url"] = final_url
     if rubric is not None:
         merged["qa"] = rubric
-    merged["needs_review"] = True
-    head.needs_review = True
+    if is_hero or not qa_passed:
+        merged["needs_review"] = True
+        head.needs_review = True
     crud_ai_job.mark_completed(db, db_obj=head, result=merged)
     db.add(head)
     db.commit()
