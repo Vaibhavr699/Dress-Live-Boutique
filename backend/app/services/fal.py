@@ -339,6 +339,19 @@ def replace_background(*, image_url: str) -> str:
     h, w = fg.shape[:2]
     mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
+    # Auto-center the subject horizontally: find the mask bounding box and shift
+    # both fg and mask so the subject's centre sits at the image centre. Pure
+    # translation — the dress pixels are unchanged, just repositioned. (Only
+    # horizontal; vertical stays so feet/hem keep their ground line.)
+    cols = np.where(mask.max(axis=0) > 16)[0]
+    if cols.size:
+        subj_center = int((cols[0] + cols[-1]) / 2)
+        shift_x = (w // 2) - subj_center
+        if shift_x != 0:
+            M = np.float32([[1, 0, shift_x], [0, 1, 0]])
+            fg = cv2.warpAffine(fg, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
+            mask = cv2.warpAffine(mask, M, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
     # Generate a backdrop at the same size and decode it.
     bg_bytes = _generate_background(width=w, height=h)
     bg = cv2.imdecode(np.frombuffer(bg_bytes, np.uint8), cv2.IMREAD_COLOR)

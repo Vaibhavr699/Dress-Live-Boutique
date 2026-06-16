@@ -45,15 +45,13 @@ type AIJob = {
   error?: string | null;
 };
 
-// Pull the finished editorial image off a head try-on job, tolerating the
-// shapes the backend can surface (final_image_url merged on completion, or a
-// raw images/output array on intermediate steps).
-function jobImageUrl(job: AIJob | null): string | null {
+// The POLISHED final image only (face-enhanced + centered + backdrop + upscaled).
+// We deliberately do NOT fall back to the raw `output`/`images` here — those are
+// the un-enhanced FASHN/intermediate frames, and showing them first then swapping
+// to the final causes a quality "pop". The poll waits until final_image_url is set.
+function finalImageUrl(job: AIJob | null): string | null {
   if (!job?.result) return null;
   if (typeof job.result.final_image_url === 'string') return job.result.final_image_url;
-  const imgs = job.result.images;
-  if (Array.isArray(imgs) && imgs[0]?.url) return imgs[0].url;
-  if (typeof job.result.output === 'string') return job.result.output;
   return null;
 }
 
@@ -280,16 +278,16 @@ export default function AITryOnScreen() {
   // Poll an async editorial try-on job until it finishes, then surface the
   // final image. Returns true if a finished image was set.
   const pollEditorialJob = useCallback(async (jobId: number): Promise<boolean> => {
-    const deadline = Date.now() + 240_000; // full chain: tryon + editorial + upscale + QA
+    const deadline = Date.now() + 240_000; // full chain: tryon + face + bg + upscale + QA
     while (Date.now() < deadline) {
       const job = (await api.get(`/ai/jobs/${jobId}`)) as AIJob;
-      if (job.status === 'completed') {
-        const url = jobImageUrl(job);
-        if (url) {
-          setRenderedUri(url);
-          return true;
-        }
-        return false;
+      // Only resolve on the POLISHED final image. A completed job without a
+      // final_image_url means the finishing chain is still wrapping up — keep
+      // waiting rather than flashing the raw try-on frame.
+      const url = finalImageUrl(job);
+      if (url) {
+        setRenderedUri(url);
+        return true;
       }
       if (job.status === 'failed' || job.status === 'canceled') {
         throw new Error('The AI try-on could not be generated. Please try again.');
