@@ -28,10 +28,12 @@ _TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell"
 # person+dress are composited on top untouched, so this only describes the wall
 # behind them. Explicitly exclude studio equipment / props / strong colours.
 BACKGROUND_PROMPT = (
-    "Plain seamless studio backdrop, soft even neutral lighting, smooth pale "
-    "off-white to light grey gradient, elegant minimal bridal photography "
-    "background, no people, no objects, no furniture, no lighting equipment, "
-    "no light stands, no windows, no patterns, no text."
+    "Professional fashion catalog studio backdrop in warm taupe greige, seamless "
+    "sweep from wall to floor with no visible horizon line, soft even diffused "
+    "lighting, subtle gentle shadow gradient near the floor, premium e-commerce "
+    "lookbook background like Zara and Zalando, elegant and minimal. No people, "
+    "no objects, no furniture, no lighting equipment, no light stands, no "
+    "windows, no patterns, no text."
 )
 
 # Garment-locking prompt. The whole point of standardization is that the dress is
