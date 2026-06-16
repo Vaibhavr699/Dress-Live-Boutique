@@ -387,14 +387,21 @@ def _run_finishing_and_qa(db: Session, *, head, source_image_url: str) -> None:
     if head is None:
         return
 
-    # 0) Background replacement (mask-composite). Swaps in a studio backdrop
-    # WITHOUT touching the person/dress pixels — the dress can't drift. Best
-    # effort: if it fails (or keys missing), fall back to the raw try-on image.
-    composited_url = source_image_url
-    try:
-        from app.services import fal as fal_service
+    from app.services import fal as fal_service
 
-        composited_url = fal_service.replace_background(image_url=source_image_url)
+    # 0a) Face enhancement (face-region only — dress never touched). Best effort.
+    enhanced_url = source_image_url
+    try:
+        enhanced_url = fal_service.enhance_face(image_url=source_image_url)
+    except Exception as exc:  # noqa: BLE001 — never block on face polish
+        logger.warning("face enhancement skipped for head %s: %s", head.id, exc)
+
+    # 0b) Background replacement (mask-composite). Swaps in a studio backdrop
+    # WITHOUT touching the person/dress pixels — the dress can't drift. Best
+    # effort: if it fails (or keys missing), fall back to the previous image.
+    composited_url = enhanced_url
+    try:
+        composited_url = fal_service.replace_background(image_url=enhanced_url)
     except Exception as exc:  # noqa: BLE001 — never block the result on bg polish
         logger.warning("background replace skipped for head %s: %s", head.id, exc)
 

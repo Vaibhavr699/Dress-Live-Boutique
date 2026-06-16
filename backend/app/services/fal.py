@@ -22,6 +22,17 @@ _KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
 _BIREFNET_MODEL = "fal-ai/birefnet"
 _TOPAZ_MODEL = "fal-ai/topaz/upscale/image"
 _TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell"
+_FACE_EDIT_MODEL = "fal-ai/nano-banana-2/edit"
+
+# Subtle face polish prompt. Applied ONLY to a cropped face region (the dress is
+# never in frame), so it cannot affect the garment. Kept gentle so the person
+# still looks like themselves — the client freed the face, not the identity.
+FACE_ENHANCE_PROMPT = (
+    "Subtle natural makeup and gentle skin retouch on this face: even skin tone, "
+    "soft natural foundation, light blush, defined but natural eyes and lashes, "
+    "soft lipstick. Keep the same person, same facial features and expression, "
+    "photorealistic, no heavy or artificial makeup."
+)
 
 # Backdrop prompt for background replacement. Bridal boutique → keep it plain,
 # soft and timeless: a seamless neutral studio wall, NOT a flashy set. The
@@ -209,6 +220,91 @@ def _generate_background(*, width: int, height: int, timeout_seconds: float = 60
         bg_resp = client.get(bg_url)
         bg_resp.raise_for_status()
         return bg_resp.content
+
+
+def _edit_face_crop(face_png: bytes, timeout_seconds: float = 90.0) -> bytes:
+    """Send a cropped face to nano-banana edit for subtle makeup; return bytes."""
+    if not settings.FAL_API_KEY:
+        raise ProviderNotConfigured("fal.ai is not configured (FAL_API_KEY unset).")
+    from app.utils.storage import upload_bytes
+
+    crop_url = upload_bytes(data=face_png, folder="tryon-face", content_type="image/png")
+    headers = {
+        "Authorization": f"Key {settings.FAL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {"prompt": FACE_ENHANCE_PROMPT, "image_urls": [crop_url]}
+    with httpx.Client(timeout=timeout_seconds) as client:
+        resp = client.post(f"{_FAL_SYNC_BASE}/{_FACE_EDIT_MODEL}", headers=headers, json=body)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"face edit {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        images = data.get("images") or []
+        out_url = images[0].get("url") if images and isinstance(images[0], dict) else None
+        if not out_url:
+            raise RuntimeError("Face edit returned no image.")
+        return client.get(out_url).content
+
+
+def enhance_face(*, image_url: str) -> str:
+    """Apply subtle makeup/skin polish to the FACE region only, leaving the rest
+    of the image (and the dress) untouched.
+
+    Detect the largest frontal face → crop with padding → nano-banana edit on the
+    crop → feather-paste it back. The garment is never sent to a generative model,
+    so it cannot drift. Returns a public URL (or the original on any failure).
+    """
+    import os
+    import cv2
+    import numpy as np
+
+    from app.utils.storage import upload_bytes
+
+    with httpx.Client(timeout=60.0) as client:
+        img_bytes = client.get(image_url).content
+    img = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise RuntimeError("Could not decode image for face enhancement.")
+    h, w = img.shape[:2]
+
+    cascade = cv2.CascadeClassifier(
+        os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+    )
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+    if len(faces) == 0:
+        # No detectable face — nothing to enhance, return original unchanged.
+        return image_url
+
+    # Largest face, padded by 40% so makeup blends around the jaw/hairline.
+    fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+    pad_x, pad_y = int(fw * 0.4), int(fh * 0.4)
+    x0, y0 = max(0, fx - pad_x), max(0, fy - pad_y)
+    x1, y1 = min(w, fx + fw + pad_x), min(h, fy + fh + pad_y)
+    crop = img[y0:y1, x0:x1]
+
+    ok, crop_buf = cv2.imencode(".png", crop)
+    if not ok:
+        return image_url
+    enhanced_bytes = _edit_face_crop(crop_buf.tobytes())
+    enhanced = cv2.imdecode(np.frombuffer(enhanced_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if enhanced is None:
+        return image_url
+    enhanced = cv2.resize(enhanced, (x1 - x0, y1 - y0), interpolation=cv2.INTER_AREA)
+
+    # Feathered paste: soft-edged ellipse so the enhanced crop blends in.
+    ch, cw = enhanced.shape[:2]
+    feather = np.zeros((ch, cw), np.float32)
+    cv2.ellipse(feather, (cw // 2, ch // 2), (int(cw * 0.45), int(ch * 0.48)), 0, 0, 360, 1.0, -1)
+    feather = cv2.GaussianBlur(feather, (0, 0), sigmaX=cw * 0.06)[:, :, None]
+    region = img[y0:y1, x0:x1].astype(np.float32)
+    blended = enhanced.astype(np.float32) * feather + region * (1.0 - feather)
+    img[y0:y1, x0:x1] = blended.astype(np.uint8)
+
+    ok, out_buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not ok:
+        return image_url
+    return upload_bytes(data=out_buf.tobytes(), folder="tryon-face-out", content_type="image/jpeg")
 
 
 def replace_background(*, image_url: str) -> str:
