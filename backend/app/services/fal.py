@@ -23,11 +23,15 @@ _BIREFNET_MODEL = "fal-ai/birefnet"
 _TOPAZ_MODEL = "fal-ai/topaz/upscale/image"
 _TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell"
 
-# Studio backdrop prompt for background replacement. The person+dress are
-# composited on top untouched, so this only describes the scene behind them.
+# Backdrop prompt for background replacement. Bridal boutique → keep it plain,
+# soft and timeless: a seamless neutral studio wall, NOT a flashy set. The
+# person+dress are composited on top untouched, so this only describes the wall
+# behind them. Explicitly exclude studio equipment / props / strong colours.
 BACKGROUND_PROMPT = (
-    "Elegant fashion editorial studio backdrop, soft seamless gradient, gentle "
-    "professional lighting, minimal, neutral warm tones, no people, no objects."
+    "Plain seamless studio backdrop, soft even neutral lighting, smooth pale "
+    "off-white to light grey gradient, elegant minimal bridal photography "
+    "background, no people, no objects, no furniture, no lighting equipment, "
+    "no light stands, no windows, no patterns, no text."
 )
 
 # Garment-locking prompt. The whole point of standardization is that the dress is
