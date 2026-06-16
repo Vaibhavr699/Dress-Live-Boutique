@@ -1442,6 +1442,16 @@ def get_ai_job_chain(
             break
         head = parent
 
+    # Same boutique-scope gate as get_ai_job — a partner may only inspect chains
+    # for dresses in their own boutique. 404 (not 403) so job existence isn't
+    # leaked to other boutiques.
+    if current_user.role == "partner":
+        if not current_user.boutique_id:
+            raise HTTPException(status_code=404, detail="Job not found")
+        owner_dress = crud_dress.get(db, id=head.dress_id) if head.dress_id else None
+        if not owner_dress or owner_dress.boutique_id != current_user.boutique_id:
+            raise HTTPException(status_code=404, detail="Job not found")
+
     steps = [head] + (
         db.query(AIJob).filter(AIJob.parent_job_id == head.id).order_by(AIJob.id).all()
     )
