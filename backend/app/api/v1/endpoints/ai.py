@@ -1420,6 +1420,67 @@ def get_ai_job(
     return job
 
 
+@router.get("/jobs/{job_id}/chain", response_model=dict)
+def get_ai_job_chain(
+    *,
+    job_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Debug: return every step in a try-on pipeline (head + children) with the
+    image URL each produced, so a wrong result can be traced to the exact step.
+    """
+    from app.models.ai_job import AIJob
+
+    head = crud_ai_job.get(db, id=job_id)
+    if not head:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # Resolve to the actual head (in case a child id was passed).
+    while head.parent_job_id:
+        parent = crud_ai_job.get(db, id=head.parent_job_id)
+        if not parent:
+            break
+        head = parent
+
+    steps = [head] + (
+        db.query(AIJob).filter(AIJob.parent_job_id == head.id).order_by(AIJob.id).all()
+    )
+
+    def image_of(result):
+        if not isinstance(result, dict):
+            return None
+        if isinstance(result.get("final_image_url"), str):
+            return result["final_image_url"]
+        imgs = result.get("images")
+        if isinstance(imgs, list) and imgs and isinstance(imgs[0], dict):
+            return imgs[0].get("url")
+        out = result.get("output")
+        if isinstance(out, list) and out:
+            return out[0]
+        if isinstance(out, str):
+            return out
+        return None
+
+    return {
+        "head_id": head.id,
+        "dress_id": head.dress_id,
+        "steps": [
+            {
+                "id": s.id,
+                "kind": s.kind,
+                "provider": s.provider,
+                "status": s.status,
+                "image_url": image_of(s.result),
+                "input_image_url": (s.input or {}).get("image_url")
+                or (s.input or {}).get("person_image_url"),
+                "garment_image_url": (s.input or {}).get("garment_image_url"),
+                "error": s.error,
+            }
+            for s in steps
+        ],
+    }
+
+
 @router.post("/tryon", response_model=AIJobRead)
 async def start_tryon(
     *,
