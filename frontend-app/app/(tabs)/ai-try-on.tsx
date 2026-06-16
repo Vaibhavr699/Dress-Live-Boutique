@@ -33,9 +33,29 @@ type Dress = {
   name?: string | null;
   image_url?: string | null;
   ai_model_url?: string | null;
+  standardized_image_url?: string | null;
   is_ai_enabled?: boolean | null;
   boutique_id?: number | null;
 };
+
+type AIJob = {
+  id: number;
+  status: 'pending' | 'submitted' | 'completed' | 'failed' | 'canceled';
+  result?: { final_image_url?: string; images?: { url: string }[]; output?: string } | null;
+  error?: string | null;
+};
+
+// Pull the finished editorial image off a head try-on job, tolerating the
+// shapes the backend can surface (final_image_url merged on completion, or a
+// raw images/output array on intermediate steps).
+function jobImageUrl(job: AIJob | null): string | null {
+  if (!job?.result) return null;
+  if (typeof job.result.final_image_url === 'string') return job.result.final_image_url;
+  const imgs = job.result.images;
+  if (Array.isArray(imgs) && imgs[0]?.url) return imgs[0].url;
+  if (typeof job.result.output === 'string') return job.result.output;
+  return null;
+}
 
 function toJpegDataUrl(base64: string) {
   return `data:image/jpeg;base64,${base64}`;
@@ -257,9 +277,55 @@ export default function AITryOnScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const createTryOnPreview = useCallback(async (fullBodyImageDataUrl: string) => {
+  // Poll an async editorial try-on job until it finishes, then surface the
+  // final image. Returns true if a finished image was set.
+  const pollEditorialJob = useCallback(async (jobId: number): Promise<boolean> => {
+    const deadline = Date.now() + 240_000; // full chain: tryon + editorial + upscale + QA
+    while (Date.now() < deadline) {
+      const job = (await api.get(`/ai/jobs/${jobId}`)) as AIJob;
+      if (job.status === 'completed') {
+        const url = jobImageUrl(job);
+        if (url) {
+          setRenderedUri(url);
+          return true;
+        }
+        return false;
+      }
+      if (job.status === 'failed' || job.status === 'canceled') {
+        throw new Error('The AI try-on could not be generated. Please try again.');
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    throw new Error('The AI try-on is taking longer than expected. Please try again.');
+  }, []);
+
+  const createTryOnPreview = useCallback(async (
+    fullBodyImageDataUrl: string,
+    fullBodyUriForUpload?: string,
+  ) => {
     if (!normalizedDressId) {
       throw new Error('Open AI Try On from a specific dress to generate a preview.');
+    }
+
+    // Premium editorial path: when the dress has an approved standardized
+    // garment image, run the async pipeline (FASHN tryon-max → masked editorial
+    // → upscale → QA) and poll for the finished image. Falls back to the quick
+    // sync preview for dresses that haven't been standardized yet.
+    const hasStandardized = !!(dress?.standardized_image_url);
+    if (hasStandardized && fullBodyUriForUpload) {
+      const form = new FormData();
+      form.append('dress_id', String(normalizedDressId));
+      form.append('full_body_file', {
+        uri: fullBodyUriForUpload,
+        name: `tryon-${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      } as any);
+      const job = (await api.postMultipart('/ai/tryon', form)) as AIJob;
+      const ok = await pollEditorialJob(job.id);
+      if (!ok) {
+        throw new Error('The AI try-on finished but returned no image.');
+      }
+      return;
     }
 
     const res = (await api.post(
@@ -277,7 +343,7 @@ export default function AITryOnScreen() {
       throw new Error('The AI preview was created, but no image was returned.');
     }
     setRenderedUri(res.image_data_url);
-  }, [normalizedDressId, selfieDataUrl]);
+  }, [normalizedDressId, selfieDataUrl, dress?.standardized_image_url, pollEditorialJob]);
 
   const processFullBodyCandidate = useCallback(async (candidate: SavedPhoto) => {
     setFullBodyUri(candidate.uri);
@@ -288,7 +354,7 @@ export default function AITryOnScreen() {
     setStep(7);
 
     try {
-      await createTryOnPreview(candidate.dataUrl);
+      await createTryOnPreview(candidate.dataUrl, candidate.uri);
       setStep(8);
     } catch (renderError: any) {
       setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
@@ -729,7 +795,9 @@ export default function AITryOnScreen() {
               </Text>
               {currentStep.type === 'analysis' ? (
                 <Text className="text-black/45 text-[11px] leading-5 mt-3 text-center px-6">
-                  This first version uses your selected dress image to create a quick preview before booking.
+                  {dress?.standardized_image_url
+                    ? 'Creating an editorial studio image of you in this dress. This can take up to a minute.'
+                    : 'This first version uses your selected dress image to create a quick preview before booking.'}
                 </Text>
               ) : null}
             </View>

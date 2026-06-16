@@ -358,6 +358,14 @@ def _on_job_completed(db: Session, *, job) -> None:
         if not tryon_url:
             logger.warning("tryon job %s completed with no output image", job.id)
             return
+        # The FASHN step is done, but the PIPELINE isn't — the editorial +
+        # finishing steps still run. Keep the head job `submitted` (in-flight)
+        # so the polling client doesn't read it as `completed` before the final
+        # image exists. It flips to `completed` in _run_finishing_and_qa once
+        # `final_image_url` is merged. Preserve the FASHN output for the chain.
+        job.status = "submitted"
+        db.add(job)
+        db.commit()
         editorial = crud_ai_job.create(
             db,
             obj_in=AIJobCreate(
