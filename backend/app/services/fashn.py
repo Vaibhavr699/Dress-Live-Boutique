@@ -35,18 +35,39 @@ def submit_tryon_async(
         raise ProviderNotConfigured("FASHN is not configured (FASHN_API_KEY unset).")
 
     headers = {"Authorization": f"Bearer {settings.FASHN_API_KEY}"}
-    body = {
-        "model_name": model_name,
-        "inputs": {
-            "model_image": person_image_url,
-            "garment_image": garment_image_url,
-            "category": category,
-        },
-        "webhook_url": webhook_url,
-    }
+
+    # tryon-max and tryon-v1.6 take DIFFERENT input shapes:
+    #   tryon-max  → inputs.product_image + inputs.model_image (no `category`)
+    #   tryon-v1.6 → inputs.garment_image + inputs.model_image + `category`
+    if model_name == "tryon-max":
+        body = {
+            "model_name": model_name,
+            "inputs": {
+                "product_image": garment_image_url,
+                "model_image": person_image_url,
+            },
+            "resolution": "2k",
+        }
+    else:
+        body = {
+            "model_name": model_name,
+            "inputs": {
+                "model_image": person_image_url,
+                "garment_image": garment_image_url,
+                "category": category,
+            },
+        }
+
+    # FASHN takes the webhook as a query param, not a body field.
+    params = {"webhook_url": webhook_url} if webhook_url else None
+
     with httpx.Client(timeout=timeout_seconds) as client:
-        resp = client.post(f"{_FASHN_API_BASE}/run", headers=headers, json=body)
-        resp.raise_for_status()
+        resp = client.post(
+            f"{_FASHN_API_BASE}/run", headers=headers, params=params, json=body
+        )
+        if resp.status_code >= 400:
+            # Surface FASHN's actual error message instead of an opaque 400.
+            raise RuntimeError(f"FASHN /run {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
 
     job_id = data.get("id")
