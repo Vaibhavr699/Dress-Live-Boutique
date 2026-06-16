@@ -387,6 +387,17 @@ def _run_finishing_and_qa(db: Session, *, head, source_image_url: str) -> None:
     if head is None:
         return
 
+    # 0) Background replacement (mask-composite). Swaps in a studio backdrop
+    # WITHOUT touching the person/dress pixels — the dress can't drift. Best
+    # effort: if it fails (or keys missing), fall back to the raw try-on image.
+    composited_url = source_image_url
+    try:
+        from app.services import fal as fal_service
+
+        composited_url = fal_service.replace_background(image_url=source_image_url)
+    except Exception as exc:  # noqa: BLE001 — never block the result on bg polish
+        logger.warning("background replace skipped for head %s: %s", head.id, exc)
+
     # 1) Upscale (sync; skipped gracefully if fal unconfigured).
     upscale = crud_ai_job.create(
         db,
@@ -396,11 +407,11 @@ def _run_finishing_and_qa(db: Session, *, head, source_image_url: str) -> None:
             dress_id=head.dress_id,
             booking_id=head.booking_id,
             parent_job_id=head.id,
-            input={"image_url": source_image_url},
+            input={"image_url": composited_url},
         ),
     )
     upscale = job_runner.run_sync_job(db, job=upscale)
-    final_url = _result_image_url(upscale.result) or source_image_url
+    final_url = _result_image_url(upscale.result) or composited_url
 
     # 2) QA (sync) against the standardized garment reference.
     reference_url = None

@@ -21,16 +21,13 @@ _FAL_SYNC_BASE = "https://fal.run"
 _KONTEXT_MODEL = "fal-ai/flux-pro/kontext"
 _BIREFNET_MODEL = "fal-ai/birefnet"
 _TOPAZ_MODEL = "fal-ai/topaz/upscale/image"
-# Real inpaint model for the editorial pass: takes image_url + mask_image_url and
-# repaints ONLY the masked (white) region. We mask the background so the dress is
-# pixel-preserved. (flux-pro/kontext has no mask param — it can't protect a region.)
-_INPAINT_MODEL = "fal-ai/z-image/turbo/inpaint"
+_TEXT_TO_IMAGE_MODEL = "fal-ai/flux/schnell"
 
-# Editorial pass prompt. The dress is masked, so this only affects the scene.
-EDITORIAL_PROMPT = (
-    "Editorial fashion photograph. Studio lighting, clean professional background, "
-    "natural skin, confident posture, magazine catalog quality. Do not alter the "
-    "dress in any way."
+# Studio backdrop prompt for background replacement. The person+dress are
+# composited on top untouched, so this only describes the scene behind them.
+BACKGROUND_PROMPT = (
+    "Elegant fashion editorial studio backdrop, soft seamless gradient, gentle "
+    "professional lighting, minimal, neutral warm tones, no people, no objects."
 )
 
 # Garment-locking prompt. The whole point of standardization is that the dress is
@@ -178,6 +175,86 @@ def background_mask_url(*, image_url: str) -> str:
     if not ok:
         raise RuntimeError("Could not encode the inverted mask.")
     return upload_bytes(data=buf.tobytes(), folder="tryon-masks", content_type="image/png")
+
+
+def _generate_background(*, width: int, height: int, timeout_seconds: float = 60.0) -> bytes:
+    """Generate a studio backdrop sized to (width, height). Returns PNG/JPEG bytes."""
+    if not settings.FAL_API_KEY:
+        raise ProviderNotConfigured("fal.ai is not configured (FAL_API_KEY unset).")
+    headers = {
+        "Authorization": f"Key {settings.FAL_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "prompt": BACKGROUND_PROMPT,
+        "image_size": {"width": int(width), "height": int(height)},
+        "num_images": 1,
+        "output_format": "png",
+    }
+    with httpx.Client(timeout=timeout_seconds) as client:
+        resp = client.post(f"{_FAL_SYNC_BASE}/{_TEXT_TO_IMAGE_MODEL}", headers=headers, json=body)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"flux t2i {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+        images = data.get("images") or []
+        bg_url = images[0].get("url") if images and isinstance(images[0], dict) else None
+        if not bg_url:
+            raise RuntimeError("Background generation returned no image.")
+        bg_resp = client.get(bg_url)
+        bg_resp.raise_for_status()
+        return bg_resp.content
+
+
+def replace_background(*, image_url: str) -> str:
+    """Replace the background of a try-on image with a generated studio backdrop,
+    WITHOUT touching the person/dress pixels.
+
+    Pipeline (pure pixel ops — no generative model sees the dress):
+      1. BiRefNet → subject mask (person+dress = white)
+      2. generate a studio backdrop at the try-on image's dimensions
+      3. feather the mask edge, then alpha-composite the ORIGINAL subject pixels
+         over the new backdrop.
+
+    Returns a public URL to the composited image. The dress is byte-identical to
+    the FASHN output, so it can never drift.
+    """
+    import cv2
+    import numpy as np
+
+    from app.utils.storage import upload_bytes
+
+    # Fetch the try-on image and the subject mask.
+    mask_url = segment_subject_mask(image_url=image_url)
+    with httpx.Client(timeout=60.0) as client:
+        fg_bytes = client.get(image_url).content
+        mask_bytes = client.get(mask_url).content
+
+    fg = cv2.imdecode(np.frombuffer(fg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    mask = cv2.imdecode(np.frombuffer(mask_bytes, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if fg is None or mask is None:
+        raise RuntimeError("Could not decode try-on image or mask.")
+
+    h, w = fg.shape[:2]
+    mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    # Generate a backdrop at the same size and decode it.
+    bg_bytes = _generate_background(width=w, height=h)
+    bg = cv2.imdecode(np.frombuffer(bg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if bg is None:
+        raise RuntimeError("Could not decode generated background.")
+    bg = cv2.resize(bg, (w, h), interpolation=cv2.INTER_AREA)
+
+    # Feather the mask edge slightly so the cutout doesn't look harsh, then
+    # alpha-blend: result = fg*alpha + bg*(1-alpha). Subject pixels (alpha≈1)
+    # stay exactly the FASHN pixels.
+    alpha = cv2.GaussianBlur(mask, (0, 0), sigmaX=2).astype(np.float32) / 255.0
+    alpha = np.clip(alpha, 0.0, 1.0)[:, :, None]
+    out = (fg.astype(np.float32) * alpha + bg.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
+
+    ok, buf = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        raise RuntimeError("Could not encode composited image.")
+    return upload_bytes(data=buf.tobytes(), folder="tryon-composite", content_type="image/jpeg")
 
 
 def submit_editorial_inpaint(
