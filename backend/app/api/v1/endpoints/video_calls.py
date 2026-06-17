@@ -592,6 +592,16 @@ async def web_join(
     # Stamp started_at on first join (same as RN /token endpoint).
     crud_booking.mark_session_started(db, db_obj=booking)
 
+    # The bride is now joining (on web) — answer any incoming ring so her phone
+    # app's incoming-call popup / "waiting" poller clears. Only clear a ring that
+    # came from the OTHER party (the advisor), not her own outgoing ring, mirroring
+    # the /dismiss-ring rule used by the native apps.
+    if (
+        booking.video_ring_from_user_id is not None
+        and booking.video_ring_from_user_id != claims.user_id
+    ):
+        crud_booking.clear_video_ring(db, db_obj=booking)
+
     dresses = _load_session_dresses(db, booking)
 
     # Decart is optional — if the key isn't set or budget is exhausted,
