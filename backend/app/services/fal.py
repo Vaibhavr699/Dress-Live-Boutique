@@ -307,6 +307,27 @@ def enhance_face(*, image_url: str) -> str:
     return upload_bytes(data=out_buf.tobytes(), folder="tryon-face-out", content_type="image/jpeg")
 
 
+def _studio_gradient(w: int, h: int):
+    """A clean premium studio backdrop drawn programmatically (no API): a soft
+    warm-taupe vertical gradient (lighter at top, slightly deeper toward the
+    floor) with a gentle vignette. Guaranteed non-black, always available."""
+    import numpy as np
+
+    # BGR. Top = light greige, bottom = slightly deeper taupe (floor sweep feel).
+    top = np.array([222, 226, 230], dtype=np.float32)     # light warm grey
+    bottom = np.array([188, 196, 205], dtype=np.float32)  # deeper taupe
+    t = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None, None]
+    grad = (top[None, None, :] * (1 - t) + bottom[None, None, :] * t)
+    bg = np.repeat(grad, w, axis=1).astype(np.float32)
+
+    # Subtle radial vignette to add depth (premium, not flat).
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    cx, cy = w / 2.0, h * 0.42
+    dist = np.sqrt(((xx - cx) / (w * 0.75)) ** 2 + ((yy - cy) / (h * 0.75)) ** 2)
+    vignette = np.clip(1.0 - 0.12 * dist, 0.85, 1.0)[:, :, None]
+    return (bg * vignette).clip(0, 255).astype("uint8")
+
+
 def replace_background(*, image_url: str) -> str:
     """Replace the background of a try-on image with a generated studio backdrop,
     WITHOUT touching the person/dress pixels.
@@ -352,12 +373,19 @@ def replace_background(*, image_url: str) -> str:
             fg = cv2.warpAffine(fg, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
             mask = cv2.warpAffine(mask, M, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
-    # Generate a backdrop at the same size and decode it.
-    bg_bytes = _generate_background(width=w, height=h)
-    bg = cv2.imdecode(np.frombuffer(bg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    # Backdrop: try the generated taupe studio sweep; if it fails or comes back
+    # too dark/empty, fall back to a clean programmatic premium gradient so the
+    # result is NEVER black or cluttered.
+    bg = None
+    try:
+        bg_bytes = _generate_background(width=w, height=h)
+        decoded = cv2.imdecode(np.frombuffer(bg_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if decoded is not None and float(decoded.mean()) > 60:  # reject black/too-dark
+            bg = cv2.resize(decoded, (w, h), interpolation=cv2.INTER_AREA)
+    except Exception:
+        bg = None
     if bg is None:
-        raise RuntimeError("Could not decode generated background.")
-    bg = cv2.resize(bg, (w, h), interpolation=cv2.INTER_AREA)
+        bg = _studio_gradient(w, h)
 
     # Feather the mask edge slightly so the cutout doesn't look harsh, then
     # alpha-blend: result = fg*alpha + bg*(1-alpha). Subject pixels (alpha≈1)
