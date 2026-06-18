@@ -7,6 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { api } from '@shared/api/api';
 import { SvgXml } from 'react-native-svg';
 import { Image } from 'expo-image';
+import { StatusModal, type StatusTone } from '../../components/StatusModal';
 
 const CALENDAR_EMPTY_SVG = `<svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M3.97375 26.2962C2.39558 25.4221 1.41667 23.7589 1.41667 21.9583V11.3333H28.3333V23.375C28.3333 23.766 28.6507 24.0833 29.0417 24.0833C29.4327 24.0833 29.75 23.766 29.75 23.375V9.20833C29.75 5.69358 26.8897 2.83333 23.375 2.83333H22.6667V0.708333C22.6667 0.317333 22.3493 0 21.9583 0C21.5673 0 21.25 0.317333 21.25 0.708333V2.83333H8.5V0.708333C8.5 0.317333 8.18267 0 7.79167 0C7.40067 0 7.08333 0.317333 7.08333 0.708333V2.83333H6.375C2.86025 2.83333 0 5.69358 0 9.20833V21.9583C0 24.2746 1.25942 26.4123 3.28667 27.5372C3.39575 27.5967 3.51333 27.625 3.6295 27.625C3.87883 27.625 4.11967 27.4932 4.25 27.2609C4.43983 26.9181 4.31517 26.486 3.97375 26.2962ZM6.375 4.25H23.375C26.1092 4.25 28.3333 6.47417 28.3333 9.20833V9.91667H1.41667V9.20833C1.41667 6.47417 3.64083 4.25 6.375 4.25ZM34 33.2917C34 33.6827 33.6827 34 33.2917 34C32.9007 34 32.5833 33.6827 32.5833 33.2917C32.5833 30.9726 31.1752 29.0048 28.9057 28.1534L21.709 25.4547C21.4328 25.3512 21.25 25.0863 21.25 24.7917V17.8599C21.25 16.7422 20.4921 15.776 19.4877 15.6131C18.8487 15.5082 18.2325 15.6768 17.7494 16.0891C17.2734 16.4942 17 17.085 17 17.7083V28.2257C17 28.8207 16.6671 29.3519 16.1302 29.6112C15.5947 29.869 14.9713 29.7996 14.5052 29.4298C14.5052 29.4298 12.0757 27.4918 12.07 27.4862C11.2115 26.69 9.86992 26.7367 9.07375 27.5896C8.27333 28.4452 8.31725 29.7953 9.16442 30.5901L11.4778 32.7873C11.9382 33.2251 11.6294 34 10.9933 34C10.8134 34 10.6406 33.932 10.5103 33.8088L8.18692 31.6157C6.77025 30.2883 6.70225 28.0486 8.03675 26.6234C9.35142 25.2152 11.5515 25.1302 12.9795 26.4109C12.9837 26.4152 15.385 28.322 15.385 28.322L15.5805 28.2271V17.7097C15.5805 16.6699 16.0352 15.6853 16.8286 15.011C17.6219 14.3367 18.6787 14.0505 19.7115 14.2148C21.3945 14.4897 22.6638 16.0565 22.6638 17.8599V24.3001L29.4015 26.826C32.2362 27.8899 33.9972 30.3677 33.9972 33.2902L34 33.2917Z" fill="black"/>
@@ -102,6 +103,17 @@ export default function BookingsScreen() {
   const [updatingBookingId, setUpdatingBookingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [rescheduleSlots, setRescheduleSlots] = useState<Record<number, string>>({});
+  // On-brand status pop-up (replaces the native OS Alert for accept/reject/etc).
+  const [statusModal, setStatusModal] = useState<{
+    visible: boolean;
+    tone: StatusTone;
+    title: string;
+    message?: string;
+  }>({ visible: false, tone: 'success', title: '' });
+  const closeStatusModal = useCallback(
+    () => setStatusModal((s) => ({ ...s, visible: false })),
+    []
+  );
   // const [search, setSearch] = useState('');
 
   // Stamp the last successful fetch so the focus-effect can skip refetches
@@ -194,12 +206,23 @@ export default function BookingsScreen() {
         current.map((booking) => (booking.id === bookingId ? updatedBooking : booking))
       );
       if (payload.status) {
-        Alert.alert('Booking updated', `Status set to ${statusLabel(updatedBooking.status)}.`);
+        const friendly: Partial<Record<BookingStatus, { title: string; message: string }>> = {
+          accepted: { title: 'Call request accepted', message: 'The customer has been notified. You can start the fitting at the scheduled time.' },
+          rejected: { title: 'Request declined', message: 'The customer has been notified.' },
+          rescheduled: { title: 'Booking rescheduled', message: 'The new time has been sent to the customer.' },
+          completed: { title: 'Marked completed', message: 'This fitting has been wrapped up.' },
+          cancelled: { title: 'Booking cancelled', message: 'The customer has been notified.' },
+        };
+        const f = friendly[updatedBooking.status] ?? {
+          title: 'Booking updated',
+          message: `Status set to ${statusLabel(updatedBooking.status)}.`,
+        };
+        setStatusModal({ visible: true, tone: 'success', title: f.title, message: f.message });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not update booking.';
       setActionError(message);
-      Alert.alert('Booking Update Failed', message);
+      setStatusModal({ visible: true, tone: 'error', title: 'Update failed', message });
     } finally {
       setUpdatingBookingId(null);
     }
@@ -779,6 +802,14 @@ export default function BookingsScreen() {
           )}
         </View>
       </ScrollView>
+
+      <StatusModal
+        visible={statusModal.visible}
+        tone={statusModal.tone}
+        title={statusModal.title}
+        message={statusModal.message}
+        onClose={closeStatusModal}
+      />
     </SafeAreaView>
   );
 }

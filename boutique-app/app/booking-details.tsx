@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
+import { StatusModal, type StatusTone } from '../components/StatusModal';
 
 type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed' | 'cancelled';
 
@@ -35,6 +36,12 @@ export default function BookingDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState<Booking | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [statusModal, setStatusModal] = useState<{
+    visible: boolean;
+    tone: StatusTone;
+    title: string;
+    message?: string;
+  }>({ visible: false, tone: 'success', title: '' });
 
   useEffect(() => {
     if (!bookingId) return;
@@ -65,8 +72,20 @@ export default function BookingDetailsScreen() {
     try {
       const updated = await api.put(`/bookings/${bookingId}`, { status });
       setBooking(updated as Booking);
+      const friendly: Partial<Record<BookingStatus, { title: string; message: string }>> = {
+        accepted: { title: 'Call request accepted', message: 'The customer has been notified. You can start the fitting at the scheduled time.' },
+        rejected: { title: 'Request declined', message: 'The customer has been notified.' },
+        completed: { title: 'Marked completed', message: 'This fitting has been wrapped up.' },
+      };
+      const f = friendly[status] ?? { title: 'Booking updated', message: '' };
+      setStatusModal({ visible: true, tone: 'success', title: f.title, message: f.message });
     } catch (error) {
-      Alert.alert('Booking', error instanceof Error ? error.message : 'Could not update booking.');
+      setStatusModal({
+        visible: true,
+        tone: 'error',
+        title: 'Update failed',
+        message: error instanceof Error ? error.message : 'Could not update booking.',
+      });
     } finally {
       setUpdating(false);
     }
@@ -174,6 +193,14 @@ export default function BookingDetailsScreen() {
           </View>
         </ScrollView>
       )}
+
+      <StatusModal
+        visible={statusModal.visible}
+        tone={statusModal.tone}
+        title={statusModal.title}
+        message={statusModal.message}
+        onClose={() => setStatusModal((s) => ({ ...s, visible: false }))}
+      />
     </View>
   );
 }
