@@ -459,6 +459,10 @@ export default function BoutiqueVideoCallScreen() {
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [lkConnected, setLkConnected] = useState(false);
+  // Surfaces a LiveKit connect/disconnect failure to the screen. Without this
+  // a failed r.connect() inside <LiveKitRoom> is invisible — the advisor just
+  // sits on "waiting for customer" forever with no clue the room never came up.
+  const [lkError, setLkError] = useState<string | null>(null);
 
   const bookingId = useMemo(() => {
     const raw = params.bookingId;
@@ -872,6 +876,21 @@ export default function BoutiqueVideoCallScreen() {
                     options={{ adaptiveStream: { pixelDensity: 'screen' } }}
                     onConnected={() => {
                       setLkConnected(true);
+                      setLkError(null);
+                    }}
+                    onError={(e: any) => {
+                      // A failed connect/handshake lands here. Surface it so the
+                      // advisor (and we) can see WHY the room never came up
+                      // instead of staring at "waiting" forever.
+                      const msg = e?.message || String(e) || 'Unknown LiveKit error';
+                      console.warn('LiveKit room error:', msg);
+                      setLkError(msg);
+                    }}
+                    onDisconnected={(reason?: any) => {
+                      setLkConnected(false);
+                      if (reason != null) {
+                        console.warn('LiveKit disconnected:', reason);
+                      }
                     }}
                   >
                     {/* elevation forces this wrapper into Android's hardware
@@ -906,15 +925,32 @@ export default function BoutiqueVideoCallScreen() {
                           className="absolute inset-0 bg-black/70 items-center justify-center px-8"
                           pointerEvents="none"
                         >
-                          <ActivityIndicator color="white" />
-                          <Text className="text-white text-[13px] font-medium text-center mt-4 mb-1">
-                            Waiting for the customer to join…
-                          </Text>
-                          <Text className="text-white/60 text-[11px] text-center leading-4">
-                            {lkConnected
-                              ? "You're connected. The fitting starts as soon as they arrive."
-                              : 'Connecting you to the room…'}
-                          </Text>
+                          {lkError ? (
+                            <>
+                              <Ionicons name="warning-outline" size={26} color="#FFB37A" />
+                              <Text className="text-white text-[13px] font-medium text-center mt-4 mb-1">
+                                Couldn't connect to the call
+                              </Text>
+                              <Text className="text-white/70 text-[11px] text-center leading-4">
+                                {lkError}
+                              </Text>
+                              <Text className="text-white/45 text-[10px] text-center leading-4 mt-2">
+                                Close and re-open the call. If it keeps failing, check your network.
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <ActivityIndicator color="white" />
+                              <Text className="text-white text-[13px] font-medium text-center mt-4 mb-1">
+                                Waiting for the customer to join…
+                              </Text>
+                              <Text className="text-white/60 text-[11px] text-center leading-4">
+                                {lkConnected
+                                  ? "You're connected. The fitting starts as soon as they arrive."
+                                  : 'Connecting you to the room…'}
+                              </Text>
+                            </>
+                          )}
                         </View>
                       ) : null}
                     </View>
