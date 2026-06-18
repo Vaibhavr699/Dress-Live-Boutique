@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { api } from '@shared/api/api';
@@ -760,10 +760,14 @@ export default function BoutiqueVideoCallScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-white">
+      {/* NOTE: do NOT key this on `stage`. A changing key remounts the whole
+          subtree — including <LiveKitRoom> — on every waiting→live→ended
+          transition, which disconnects the call ("Client initiated disconnect")
+          and, because presence drives stage and stage drove the key, created an
+          infinite connect/disconnect churn so the advisor never stabilized. The
+          room must stay mounted for the call's lifetime. */}
       <Animated.View
-        key={stage}
         entering={FadeIn.duration(220)}
-        exiting={FadeOut.duration(180)}
         className="flex-1"
         style={{ paddingTop: insets.top + 6 }}
       >
