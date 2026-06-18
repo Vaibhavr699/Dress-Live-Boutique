@@ -11,14 +11,24 @@ class CRUDDress:
     def get_multi(
         self, db: Session, *, skip: int = 0, limit: int = 100
     ) -> List[Dress]:
-        return db.query(Dress).offset(skip).limit(limit).all()
-        
+        # Newest first — without an explicit ORDER BY Postgres returns rows in
+        # heap order (effectively oldest-first), so a freshly added dress would
+        # never surface at the top of the catalog/dashboard.
+        return (
+            db.query(Dress)
+            .order_by(Dress.id.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
     def get_multi_by_boutique(
         self, db: Session, *, boutique_id: int, skip: int = 0, limit: int = 100
     ) -> List[Dress]:
         return (
             db.query(Dress)
             .filter(Dress.boutique_id == boutique_id)
+            .order_by(Dress.id.desc())
             .offset(skip)
             .limit(limit)
             .all()
@@ -31,6 +41,7 @@ class CRUDDress:
             db.query(Dress)
             .join(Boutique, Dress.boutique_id == Boutique.id)
             .filter(Boutique.is_visible_to_customers.is_(True))
+            .order_by(Dress.id.desc())
             .offset(skip)
             .limit(limit)
             .all()
