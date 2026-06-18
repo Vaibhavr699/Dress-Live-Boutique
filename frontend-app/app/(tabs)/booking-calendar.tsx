@@ -222,8 +222,19 @@ export default function BookingCalendarScreen() {
   );
   const availableSlots = useMemo(() => {
     const daySchedule = parsedSchedule.find((item) => item.day === selectedWeekday);
-    return buildTimeSlots(daySchedule?.value);
-  }, [parsedSchedule, selectedWeekday]);
+    const slots = buildTimeSlots(daySchedule?.value);
+    // When the selected date is today, hide slots that have already started (or
+    // are about to). Booking a time earlier than "now" makes no sense and the
+    // join window would already be closed. A 30-min lead means you can't grab a
+    // slot that's basically starting this minute either.
+    if (isSameDay(selectedDate, new Date())) {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const LEAD_MINUTES = 30;
+      return slots.filter((slot) => timeToMinutes(slot) >= nowMinutes + LEAD_MINUTES);
+    }
+    return slots;
+  }, [parsedSchedule, selectedWeekday, selectedDate]);
   const scheduleLabel = useMemo(
     () => (selectedTime ? formatScheduleLabel(selectedDate, selectedTime) : ''),
     [selectedDate, selectedTime]
@@ -597,7 +608,9 @@ export default function BookingCalendarScreen() {
         {availableSlots.length === 0 ? (
           <View className="border border-[#F0F0F0] p-4 mb-10">
             <Text className="text-black/50 text-[12px] leading-5">
-              This boutique is not available on {selectedWeekday}. Please choose another date.
+              {isSameDay(selectedDate, new Date())
+                ? "No more time slots are available today. Please choose another date."
+                : `This boutique is not available on ${selectedWeekday}. Please choose another date.`}
             </Text>
           </View>
         ) : (
