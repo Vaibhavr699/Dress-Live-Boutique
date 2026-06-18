@@ -177,6 +177,24 @@ def run_sync_job(db: Session, *, job: AIJob) -> AIJob:
     `qa` (gemini): input.image_url + input.reference_url -> result (rubric)
     """
     try:
+        if job.kind == "tryon":
+            # gpt-image-2 swap engine: synchronous, no webhook. Composite the
+            # selected dress onto the customer photo and store the result.
+            from app.services import openai_images
+
+            person_url = (job.input or {}).get("person_image_url")
+            garment_url = (job.input or {}).get("garment_image_url")
+            if not person_url or not garment_url:
+                raise RuntimeError(
+                    "tryon job missing person_image_url/garment_image_url"
+                )
+            url = openai_images.run_tryon(
+                person_image_url=person_url, garment_image_url=garment_url
+            )
+            return crud_ai_job.mark_completed(
+                db, db_obj=job, result={"images": [{"url": url}]}
+            )
+
         if job.kind == "upscale":
             image_url = (job.input or {}).get("image_url")
             if not image_url:

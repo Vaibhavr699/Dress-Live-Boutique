@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -1495,18 +1495,19 @@ def get_ai_job_chain(
 async def start_tryon(
     *,
     db: Session = Depends(deps.get_db),
+    background_tasks: BackgroundTasks,
     dress_id: int = Form(...),
     full_body_file: UploadFile = File(...),
     booking_id: Optional[int] = Form(None),
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
-    """Start an Approach-A try-on pipeline (FASHN tryon-max → masked editorial).
+    """Start a gpt-image-2 try-on (dress composited onto the customer photo).
 
     Validates a person is present in the photo, requires the dress to have an
     approved/standardized garment image, uploads the customer photo, then creates
-    and submits the head `tryon` AIJob. The editorial step is chained
-    automatically when the tryon webhook completes. The client polls
-    `GET /ai/jobs/{id}`; the finished image arrives as `result.final_image_url`.
+    the head `tryon` AIJob and runs it on OpenAI gpt-image-2 in a background task
+    (synchronous provider — no webhook). The client polls `GET /ai/jobs/{id}`; the
+    finished image arrives in `result.images[0].url`.
     """
     if not full_body_file.content_type or not full_body_file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image uploads are supported.")
@@ -1579,18 +1580,33 @@ async def start_tryon(
         db,
         obj_in=AIJobCreate(
             kind="tryon",
-            provider="fashn",
+            provider="openai",
             dress_id=dress_id,
             booking_id=booking_id,
             input={
                 "person_image_url": person_url,
                 "garment_image_url": garment_url,
-                "model_name": "tryon-max",
             },
         ),
     )
-    job = job_runner.submit_job(db, job=job)
+    # gpt-image-2 is synchronous (no webhook) and takes ~10-30s, so run it in a
+    # background task with its own DB session — the request's `db` closes when we
+    # return the pending job. The client polls GET /ai/jobs/{id} for the result.
+    background_tasks.add_task(_run_tryon_job, job.id)
     return job
+
+
+def _run_tryon_job(job_id: int) -> None:
+    """Run a pending gpt-image-2 try-on job to completion (background task)."""
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        job = crud_ai_job.get(db, id=job_id)
+        if job is not None:
+            job_runner.run_sync_job(db, job=job)
+    finally:
+        db.close()
 
 
 @router.get("/review-queue", response_model=list[AIJobRead])

@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     # editorial image still ships.
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_QA_MODEL: str = "gemini-2.5-flash"
+
+    # ── OpenAI (gpt-image-2 AI Try-On swap engine) ───────────────────────
+    # Server-side only. Primary `tryon` provider: gpt-image-2's image-edit
+    # endpoint composites the selected dress onto the customer photo in one
+    # synchronous call (no webhook). Optional until provided — the try-on job
+    # stays `pending` when unset (same convention as fal/fashn).
+    # NOTE: gpt-image-2 requires OpenAI *organization verification* and a
+    # non-zero billing limit, or calls 403 / billing_hard_limit_reached.
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_IMAGE_MODEL: str = "gpt-image-2"
+    OPENAI_IMAGE_QUALITY: str = "high"
+    OPENAI_TIMEOUT_SECONDS: int = 180
     # QA gate: dress fidelity score (0-100) at/above which an image passes.
     QA_DRESS_THRESHOLD: int = 75
     # Max automatic regeneration attempts when QA fails before queueing for
