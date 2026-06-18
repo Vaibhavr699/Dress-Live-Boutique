@@ -564,31 +564,47 @@ export default function VideoCallScreen() {
   const [advisorPresent, setAdvisorPresent] = useState(false);
   const [advisorLeft, setAdvisorLeft] = useState(false);
   const advisorWasPresentRef = useRef(false);
-  // LiveKit presence flickers during connection/renegotiation — don't end the
-  // call on a transient drop. Only declare the advisor "left" after a grace
-  // period, cancelled the moment they reappear.
+  // LiveKit presence flickers HARD during the join handshake and Decart video
+  // renegotiation — the remote pops in and out before it settles. Don't latch
+  // "was present" on the first blip: only arm the "left" detector after the
+  // advisor has been CONTINUOUSLY present for a stability window, and only a
+  // drop after that — held past a grace period — ends the call.
   const advisorLeftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const ADVISOR_LEFT_GRACE_MS = 8000;
+  const advisorStableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ADVISOR_LEFT_GRACE_MS = 12000;
+  const ADVISOR_STABLE_MS = 4000;
   const handleAdvisorPresence = useCallback((present: boolean) => {
     setAdvisorPresent(present);
     if (present) {
-      advisorWasPresentRef.current = true;
       if (advisorLeftTimerRef.current) {
         clearTimeout(advisorLeftTimerRef.current);
         advisorLeftTimerRef.current = null;
       }
-    } else if (advisorWasPresentRef.current) {
-      if (advisorLeftTimerRef.current) clearTimeout(advisorLeftTimerRef.current);
-      advisorLeftTimerRef.current = setTimeout(() => {
-        advisorLeftTimerRef.current = null;
-        setAdvisorLeft(true);
-      }, ADVISOR_LEFT_GRACE_MS);
+      if (!advisorWasPresentRef.current && !advisorStableTimerRef.current) {
+        advisorStableTimerRef.current = setTimeout(() => {
+          advisorStableTimerRef.current = null;
+          advisorWasPresentRef.current = true;
+        }, ADVISOR_STABLE_MS);
+      }
+    } else {
+      if (advisorStableTimerRef.current) {
+        clearTimeout(advisorStableTimerRef.current);
+        advisorStableTimerRef.current = null;
+      }
+      if (advisorWasPresentRef.current) {
+        if (advisorLeftTimerRef.current) clearTimeout(advisorLeftTimerRef.current);
+        advisorLeftTimerRef.current = setTimeout(() => {
+          advisorLeftTimerRef.current = null;
+          setAdvisorLeft(true);
+        }, ADVISOR_LEFT_GRACE_MS);
+      }
     }
   }, []);
 
   useEffect(() => {
     return () => {
       if (advisorLeftTimerRef.current) clearTimeout(advisorLeftTimerRef.current);
+      if (advisorStableTimerRef.current) clearTimeout(advisorStableTimerRef.current);
     };
   }, []);
 

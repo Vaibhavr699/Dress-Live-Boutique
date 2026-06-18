@@ -175,21 +175,34 @@ export function BrideCallView({
         consultantVideoTrackRef.current = null;
       }
     };
-    // Track whether the consultant has ever joined so we can tell
-    // "hasn't arrived yet" apart from "joined then left".
-    let consultantWasPresent = false;
-    // LiveKit presence flickers during connection / Decart video renegotiation —
-    // the remote can briefly drop to 0 and reappear. Don't close the call on a
-    // transient blip: wait out a grace period and cancel it if they return.
+    // Track whether the consultant has STABLY joined so we can tell
+    // "hasn't arrived yet" / "join-handshake flicker" apart from "joined
+    // then left". LiveKit presence flickers hard during connection and
+    // Decart video renegotiation — the remote pops in and out repeatedly
+    // before it settles. We only arm the "left" detector once the consultant
+    // has been continuously present for a stability window, and only a drop
+    // after that — held past a grace period — closes the call.
+    let consultantWasStablyPresent = false;
     let leftTimer: ReturnType<typeof setTimeout> | null = null;
-    const GRACE_MS = 8000;
+    let stableTimer: ReturnType<typeof setTimeout> | null = null;
+    const GRACE_MS = 12000;
+    const STABLE_MS = 4000;
     const syncPresence = () => {
       if (cancelled) return;
       const present = r.remoteParticipants.size > 0;
       setConsultantPresent(present);
       if (present) {
-        consultantWasPresent = true;
         if (leftTimer) { clearTimeout(leftTimer); leftTimer = null; }
+        if (!consultantWasStablyPresent && !stableTimer) {
+          stableTimer = setTimeout(() => {
+            stableTimer = null;
+            consultantWasStablyPresent = true;
+          }, STABLE_MS);
+        }
+      } else if (stableTimer) {
+        // Dipped before confirming stable presence → just join noise.
+        clearTimeout(stableTimer);
+        stableTimer = null;
       }
     };
     const handleParticipantConnected = () => { syncPresence(); };
@@ -197,9 +210,9 @@ export function BrideCallView({
       if (cancelled) return;
       syncPresence();
       // Spec: "Either party hangs up → web page closes". Only end the call if
-      // the consultant had actually joined AND stays gone past the grace period
-      // — a stray disconnect or a brief flicker shouldn't kill the call.
-      if (consultantWasPresent && r.remoteParticipants.size === 0) {
+      // the consultant had STABLY joined AND stays gone past the grace period —
+      // a stray disconnect or join-handshake flicker shouldn't kill the call.
+      if (consultantWasStablyPresent && r.remoteParticipants.size === 0) {
         if (leftTimer) clearTimeout(leftTimer);
         leftTimer = setTimeout(() => {
           leftTimer = null;
@@ -238,6 +251,7 @@ export function BrideCallView({
     return () => {
       cancelled = true;
       if (leftTimer) { clearTimeout(leftTimer); leftTimer = null; }
+      if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
       r.off(RoomEvent.ConnectionStateChanged, handleConnectionChange);
       r.off(RoomEvent.DataReceived, handleDataReceived);
       r.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);

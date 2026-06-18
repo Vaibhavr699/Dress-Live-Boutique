@@ -541,37 +541,60 @@ export default function BoutiqueVideoCallScreen() {
   // EVER present so we can tell "hasn't joined yet" apart from "joined then
   // left" — only the latter ends the call.
   const customerWasPresentRef = useRef(false);
-  // LiveKit presence flickers during connection negotiation and Decart video
-  // renegotiation — the remote participant can briefly drop to 0 and reappear.
-  // Don't end the call on a transient blip: only treat the customer as "left"
-  // if they stay absent for a grace period, and cancel it the moment they're
-  // back.
+  // LiveKit presence flickers HARD during the bride's join: she connects to the
+  // room (audio-only — her video lives in Decart), which renegotiates several
+  // times before it settles. During that window the remote participant pops in
+  // and out repeatedly. The old code latched "was present" on the very first
+  // blip, so the next dip armed the kill timer and the call ended within ~10s
+  // before the advisor ever saw the customer.
+  //
+  // New rule: don't arm the "left" detector until the customer has been
+  // CONTINUOUSLY present for a stability window. Only a drop AFTER that counts
+  // as a real departure, and even then we wait out a grace period.
   const leftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const PEER_LEFT_GRACE_MS = 8000;
+  const presentSinceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const PEER_LEFT_GRACE_MS = 12000; // tolerate long renegotiation gaps
+  const PRESENCE_STABLE_MS = 4000; // must be here this long before "left" can fire
   const handlePresenceChange = useCallback((present: boolean) => {
     setCustomerPresent(present);
     if (present) {
-      customerWasPresentRef.current = true;
       // Reappeared (or never really gone) → cancel any pending "left" timer.
       if (leftTimerRef.current) {
         clearTimeout(leftTimerRef.current);
         leftTimerRef.current = null;
       }
-    } else if (customerWasPresentRef.current) {
-      // Was here, now gone → wait out the grace period before ending; a quick
-      // flicker will cancel this via the `present` branch above.
-      if (leftTimerRef.current) clearTimeout(leftTimerRef.current);
-      leftTimerRef.current = setTimeout(() => {
-        leftTimerRef.current = null;
-        setPeerLeft(true);
-      }, PEER_LEFT_GRACE_MS);
+      // Arm "was stably present" only after a continuous stability window. A
+      // flicker that dips before the window elapses cancels this below, so the
+      // kill detector never arms during the noisy join handshake.
+      if (!customerWasPresentRef.current && !presentSinceTimerRef.current) {
+        presentSinceTimerRef.current = setTimeout(() => {
+          presentSinceTimerRef.current = null;
+          customerWasPresentRef.current = true;
+        }, PRESENCE_STABLE_MS);
+      }
+    } else {
+      // Absent → cancel the not-yet-confirmed stability timer (the customer
+      // hasn't settled yet, so this isn't a "departure", just join noise).
+      if (presentSinceTimerRef.current) {
+        clearTimeout(presentSinceTimerRef.current);
+        presentSinceTimerRef.current = null;
+      }
+      // Only a drop AFTER confirmed-stable presence is a real departure.
+      if (customerWasPresentRef.current) {
+        if (leftTimerRef.current) clearTimeout(leftTimerRef.current);
+        leftTimerRef.current = setTimeout(() => {
+          leftTimerRef.current = null;
+          setPeerLeft(true);
+        }, PEER_LEFT_GRACE_MS);
+      }
     }
   }, []);
 
-  // Clean up the pending timer on unmount.
+  // Clean up pending timers on unmount.
   useEffect(() => {
     return () => {
       if (leftTimerRef.current) clearTimeout(leftTimerRef.current);
+      if (presentSinceTimerRef.current) clearTimeout(presentSinceTimerRef.current);
     };
   }, []);
 
