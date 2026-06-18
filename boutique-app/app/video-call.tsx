@@ -478,6 +478,16 @@ export default function BoutiqueVideoCallScreen() {
 
   const videoFrameHeight = useMemo(() => Math.max(360, Math.min(500, Math.round(screenHeight * 0.52))), [screenHeight]);
 
+  // Stable options object for <LiveKitRoom>. CRITICAL: useLiveKitRoom() re-runs
+  // its connect effect whenever the `options` prop changes identity, and on
+  // re-run it DISCONNECTS the room ("Client initiated disconnect") before
+  // reconnecting. Passing an inline `{{ adaptiveStream: {...} }}` literal makes
+  // a fresh object every render, so each of the many re-renders here
+  // (onConnected→setState, AudioSession, presence updates) tore the room down
+  // mid-connect and the advisor never stabilized / never saw the customer.
+  // Memoizing it (empty deps) keeps the connection alive across re-renders.
+  const liveKitRoomOptions = useMemo(() => ({ adaptiveStream: { pixelDensity: 'screen' as const } }), []);
+
   // ── Camera + microphone permissions ────────────────────────────────────
   // Without an explicit prompt + denied UI the LiveKit room silently
   // publishes nothing and the partner just sees a black PiP. Auto-fire
@@ -873,7 +883,7 @@ export default function BoutiqueVideoCallScreen() {
                     connect={true}
                     audio={micOn}
                     video={cameraOn}
-                    options={{ adaptiveStream: { pixelDensity: 'screen' } }}
+                    options={liveKitRoomOptions}
                     onConnected={() => {
                       setLkConnected(true);
                       setLkError(null);

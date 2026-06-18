@@ -666,6 +666,13 @@ export default function VideoCallScreen() {
     [screenHeight],
   );
 
+  // Stable options for <LiveKitRoom>. An inline object literal here is a fresh
+  // identity every render, which makes useLiveKitRoom() re-run its connect
+  // effect and DISCONNECT the room ("Client initiated disconnect") mid-connect
+  // on each re-render — the call never stabilizes. Memoize it so the connection
+  // survives re-renders.
+  const liveKitRoomOptions = useMemo(() => ({ adaptiveStream: { pixelDensity: 'screen' as const } }), []);
+
   // ── Camera + microphone permissions ────────────────────────────────────
   // Without explicit prompting + an explicit "denied" UI, the LiveKit room
   // silently publishes nothing and the user just sees a black PiP with no
@@ -1230,7 +1237,7 @@ export default function VideoCallScreen() {
                     connect={true}
                     audio={micOn}
                     video={cameraOn && !decartOwnsVideo}
-                    options={{ adaptiveStream: { pixelDensity: 'screen' } }}
+                    options={liveKitRoomOptions}
                     onConnected={() => { setCallState('active'); setLkConnected(true); }}
                   >
                     <BuyerRoomView
