@@ -541,14 +541,38 @@ export default function BoutiqueVideoCallScreen() {
   // EVER present so we can tell "hasn't joined yet" apart from "joined then
   // left" — only the latter ends the call.
   const customerWasPresentRef = useRef(false);
+  // LiveKit presence flickers during connection negotiation and Decart video
+  // renegotiation — the remote participant can briefly drop to 0 and reappear.
+  // Don't end the call on a transient blip: only treat the customer as "left"
+  // if they stay absent for a grace period, and cancel it the moment they're
+  // back.
+  const leftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const PEER_LEFT_GRACE_MS = 8000;
   const handlePresenceChange = useCallback((present: boolean) => {
     setCustomerPresent(present);
     if (present) {
       customerWasPresentRef.current = true;
+      // Reappeared (or never really gone) → cancel any pending "left" timer.
+      if (leftTimerRef.current) {
+        clearTimeout(leftTimerRef.current);
+        leftTimerRef.current = null;
+      }
     } else if (customerWasPresentRef.current) {
-      // Was here, now gone → the customer left the call.
-      setPeerLeft(true);
+      // Was here, now gone → wait out the grace period before ending; a quick
+      // flicker will cancel this via the `present` branch above.
+      if (leftTimerRef.current) clearTimeout(leftTimerRef.current);
+      leftTimerRef.current = setTimeout(() => {
+        leftTimerRef.current = null;
+        setPeerLeft(true);
+      }, PEER_LEFT_GRACE_MS);
     }
+  }, []);
+
+  // Clean up the pending timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (leftTimerRef.current) clearTimeout(leftTimerRef.current);
+    };
   }, []);
 
   // Stage is now derived from REAL state, not a cosmetic timer:

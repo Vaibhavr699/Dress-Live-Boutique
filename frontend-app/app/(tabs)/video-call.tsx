@@ -564,14 +564,32 @@ export default function VideoCallScreen() {
   const [advisorPresent, setAdvisorPresent] = useState(false);
   const [advisorLeft, setAdvisorLeft] = useState(false);
   const advisorWasPresentRef = useRef(false);
+  // LiveKit presence flickers during connection/renegotiation — don't end the
+  // call on a transient drop. Only declare the advisor "left" after a grace
+  // period, cancelled the moment they reappear.
+  const advisorLeftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ADVISOR_LEFT_GRACE_MS = 8000;
   const handleAdvisorPresence = useCallback((present: boolean) => {
     setAdvisorPresent(present);
     if (present) {
       advisorWasPresentRef.current = true;
+      if (advisorLeftTimerRef.current) {
+        clearTimeout(advisorLeftTimerRef.current);
+        advisorLeftTimerRef.current = null;
+      }
     } else if (advisorWasPresentRef.current) {
-      // Advisor was here and is now gone → the call is over for the buyer.
-      setAdvisorLeft(true);
+      if (advisorLeftTimerRef.current) clearTimeout(advisorLeftTimerRef.current);
+      advisorLeftTimerRef.current = setTimeout(() => {
+        advisorLeftTimerRef.current = null;
+        setAdvisorLeft(true);
+      }, ADVISOR_LEFT_GRACE_MS);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (advisorLeftTimerRef.current) clearTimeout(advisorLeftTimerRef.current);
+    };
   }, []);
 
   // ── AI Try-On state ─────────────────────────────────────────────────────
