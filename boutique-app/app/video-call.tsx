@@ -93,8 +93,10 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   /** Report customer presence up to the parent so it can drive the call
    * stage off REAL presence instead of a timer. */
   onPresenceChange: (present: boolean) => void;
+  /** Live diagnostic line emitter (shown in the on-screen debug overlay). */
+  onDebug?: (line: string) => void;
 }) {
-  const { deps, bookingDresses, bookingId, frameHeight, onPresenceChange } = props;
+  const { deps, bookingDresses, bookingId, frameHeight, onPresenceChange, onDebug } = props;
   const room = deps.useRoomContext();
   const remoteParticipants = deps.useRemoteParticipants();
 
@@ -102,7 +104,37 @@ const PartnerRoomView = React.memo(function PartnerRoomView(props: {
   // contains the customer (1:1 call), so length > 0 == customer is here.
   React.useEffect(() => {
     onPresenceChange(remoteParticipants.length > 0);
-  }, [remoteParticipants.length, onPresenceChange]);
+    onDebug?.(`remoteParticipants=${remoteParticipants.length}`);
+  }, [remoteParticipants.length, onPresenceChange, onDebug]);
+
+  // Diagnostic: log this room instance's full connection lifecycle. If the
+  // room is churning (connect→disconnect loop) or rejected, the reasons land
+  // here so we can see the exact cause on-device instead of guessing.
+  React.useEffect(() => {
+    if (!room) return;
+    onDebug?.(`room mounted (state=${room.state})`);
+    const onConn = () => onDebug?.('event: connected');
+    const onReconn = () => onDebug?.('event: reconnected');
+    const onDisc = (reason?: any) => onDebug?.(`event: DISCONNECTED reason=${reason ?? '?'}`);
+    const onState = (s: any) => onDebug?.(`state=${s}`);
+    const onPartConn = (p: any) => onDebug?.(`participant JOINED: ${p?.identity ?? '?'}`);
+    const onPartDisc = (p: any) => onDebug?.(`participant LEFT: ${p?.identity ?? '?'}`);
+    room.on('connected', onConn);
+    room.on('reconnected', onReconn);
+    room.on('disconnected', onDisc as any);
+    room.on('connectionStateChanged', onState as any);
+    room.on('participantConnected', onPartConn as any);
+    room.on('participantDisconnected', onPartDisc as any);
+    return () => {
+      onDebug?.('room UNMOUNTED (cleanup)');
+      room.off('connected', onConn);
+      room.off('reconnected', onReconn);
+      room.off('disconnected', onDisc as any);
+      room.off('connectionStateChanged', onState as any);
+      room.off('participantConnected', onPartConn as any);
+      room.off('participantDisconnected', onPartDisc as any);
+    };
+  }, [room, onDebug]);
 
   // Remote camera track (customer video)
   const tracks = deps.useTracks([deps.Track.Source.Camera], { onlySubscribed: false });
@@ -463,6 +495,23 @@ export default function BoutiqueVideoCallScreen() {
   // a failed r.connect() inside <LiveKitRoom> is invisible — the advisor just
   // sits on "waiting for customer" forever with no clue the room never came up.
   const [lkError, setLkError] = useState<string | null>(null);
+  // Live diagnostic log overlay (tap the header timer 5× to toggle). Keeps the
+  // last ~14 connection-lifecycle lines so we can see on-device whether the
+  // room is churning, rejected, or whether the customer ever joins.
+  const [debugLines, setDebugLines] = useState<string[]>([]);
+  const [debugVisible, setDebugVisible] = useState(false);
+  const debugTapCountRef = useRef(0);
+  const pushDebug = useCallback((line: string) => {
+    const stamp = `${line}`;
+    setDebugLines((prev) => [...prev.slice(-13), stamp]);
+  }, []);
+  const handleDebugTap = useCallback(() => {
+    debugTapCountRef.current += 1;
+    if (debugTapCountRef.current >= 5) {
+      debugTapCountRef.current = 0;
+      setDebugVisible((v) => !v);
+    }
+  }, []);
 
   const bookingId = useMemo(() => {
     const raw = params.bookingId;
@@ -778,14 +827,17 @@ export default function BoutiqueVideoCallScreen() {
             </Text>
 
             <View className="flex-row items-center">
-              <StatusChip
-                label={
-                  stage === 'live'
-                    ? `00:${String(Math.floor(liveSeconds / 60)).padStart(2, '0')}:${String(liveSeconds % 60).padStart(2, '0')}`
-                    : 'Good Connection'
-                }
-                tone={stage === 'live' ? 'timer' : 'green'}
-              />
+              {/* Tap 5× to toggle the connection-diagnostics overlay. */}
+              <TouchableOpacity activeOpacity={1} onPress={handleDebugTap}>
+                <StatusChip
+                  label={
+                    stage === 'live'
+                      ? `00:${String(Math.floor(liveSeconds / 60)).padStart(2, '0')}:${String(liveSeconds % 60).padStart(2, '0')}`
+                      : 'Good Connection'
+                  }
+                  tone={stage === 'live' ? 'timer' : 'green'}
+                />
+              </TouchableOpacity>
               <TouchableOpacity onPress={handleLeave} className="ml-3">
                 <Feather name="x" size={18} color="#D68067" />
               </TouchableOpacity>
@@ -891,6 +943,7 @@ export default function BoutiqueVideoCallScreen() {
                     onConnected={() => {
                       setLkConnected(true);
                       setLkError(null);
+                      pushDebug('LiveKitRoom onConnected');
                     }}
                     onError={(e: any) => {
                       // A failed connect/handshake lands here. Surface it so the
@@ -899,9 +952,11 @@ export default function BoutiqueVideoCallScreen() {
                       const msg = e?.message || String(e) || 'Unknown LiveKit error';
                       console.warn('LiveKit room error:', msg);
                       setLkError(msg);
+                      pushDebug(`onError: ${msg}`);
                     }}
                     onDisconnected={(reason?: any) => {
                       setLkConnected(false);
+                      pushDebug(`LiveKitRoom onDisconnected reason=${reason ?? '?'}`);
                       if (reason != null) {
                         console.warn('LiveKit disconnected:', reason);
                       }
@@ -929,6 +984,7 @@ export default function BoutiqueVideoCallScreen() {
                         bookingId={bookingId}
                         frameHeight={videoFrameHeight}
                         onPresenceChange={handlePresenceChange}
+                        onDebug={pushDebug}
                       />
                       {/* Waiting overlay — the room is connected but the
                           customer hasn't joined yet. Sits on top of the
@@ -1056,6 +1112,42 @@ export default function BoutiqueVideoCallScreen() {
           </View>
         ) : null}
       </Animated.View>
+
+      {debugVisible ? (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 8,
+            right: 8,
+            bottom: insets.bottom + 8,
+            backgroundColor: 'rgba(0,0,0,0.85)',
+            borderRadius: 10,
+            padding: 10,
+            maxHeight: 240,
+          }}
+        >
+          <View className="flex-row items-center justify-between mb-1">
+            <Text style={{ color: '#7CFC9B', fontSize: 10, fontWeight: '700' }}>
+              LIVEKIT DEBUG (tap timer 5× to hide)
+            </Text>
+            <TouchableOpacity onPress={() => setDebugLines([])}>
+              <Text style={{ color: '#FFB37A', fontSize: 10 }}>clear</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ maxHeight: 200 }}>
+            {debugLines.length === 0 ? (
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>No events yet…</Text>
+            ) : (
+              debugLines.map((l, i) => (
+                <Text key={i} style={{ color: '#FFFFFF', fontSize: 10, lineHeight: 14 }}>
+                  {l}
+                </Text>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
