@@ -116,10 +116,10 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "4ed0be65-298e-4dc6-bc7b-21618ea7ff8b"
+        "projectId": "efdd2f65-c614-4fa7-945d-faaca5181c66"
       },
       "apiBaseUrl": "https://dress-live-boutique-production.up.railway.app"
     },
-    "owner": "atul_kumar007"
+    "owner": "vaibhavr699"
   }
 }
