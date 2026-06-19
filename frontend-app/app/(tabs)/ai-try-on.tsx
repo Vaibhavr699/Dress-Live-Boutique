@@ -51,7 +51,13 @@ type AIJob = {
 // to the final causes a quality "pop". The poll waits until final_image_url is set.
 function finalImageUrl(job: AIJob | null): string | null {
   if (!job?.result) return null;
+  // gpt-image-2 try-on writes result.images[0].url. The legacy editorial chain
+  // wrote result.final_image_url. Accept either (plus result.output) so the poll
+  // resolves whichever provider produced the image.
   if (typeof job.result.final_image_url === 'string') return job.result.final_image_url;
+  const fromImages = job.result.images?.[0]?.url;
+  if (typeof fromImages === 'string') return fromImages;
+  if (typeof job.result.output === 'string') return job.result.output;
   return null;
 }
 

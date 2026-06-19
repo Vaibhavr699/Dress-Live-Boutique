@@ -101,7 +101,9 @@ class Settings(BaseSettings):
     # non-zero billing limit, or calls 403 / billing_hard_limit_reached.
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_IMAGE_MODEL: str = "gpt-image-2"
-    OPENAI_IMAGE_QUALITY: str = "high"
+    # medium ~20-40s/image (~$0.05); high ~100s/image (~$0.21). medium is the
+    # default for a usable try-on wait; override per-env if hero-quality needed.
+    OPENAI_IMAGE_QUALITY: str = "medium"
     OPENAI_TIMEOUT_SECONDS: int = 180
     # QA gate: dress fidelity score (0-100) at/above which an image passes.
     QA_DRESS_THRESHOLD: int = 75
