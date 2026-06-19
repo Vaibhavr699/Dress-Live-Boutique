@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_IMAGE_MODEL: str = "gpt-image-2"
     OPENAI_IMAGE_QUALITY: str = "high"
-    OPENAI_TIMEOUT_SECONDS: int = 180
+    OPENAI_TIMEOUT_SECONDS: int = 300
     QA_DRESS_THRESHOLD: int = 75
     TRYON_MAX_REGEN: int = 2
 
