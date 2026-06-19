@@ -1555,21 +1555,11 @@ async def start_tryon(
             detail="Standardize this dress before running an editorial try-on.",
         )
 
-    # Validate a person is clearly present (reuse the existing validator).
-    image_bytes = await full_body_file.read()
-    person_img_bgr = _decode_image_bytes(image_bytes)
-    validation = _validate_human_present(person_img_bgr)
-    if not validation.ok:
-        raise HTTPException(
-            status_code=400,
-            detail=validation.reason or "Please pick a photo with a person clearly visible.",
-        )
-
-    # Upload the customer photo to storage so providers can fetch it by URL.
+    # Upload the customer photo to storage so gpt-image-2 can fetch it by URL.
+    # No MediaPipe person-validation here — gpt-image-2 is the only engine on this
+    # path; we send the photo straight through.
     from app.api.v1.endpoints.dresses import _upload_image_to_storage
 
-    # Re-wrap the already-read bytes into an UploadFile-like for the helper.
-    full_body_file.file.seek(0)
     person_url = await _upload_image_to_storage(
         file=full_body_file,
         boutique_id=dress.boutique_id,
