@@ -32,44 +32,58 @@ logger = logging.getLogger(__name__)
 _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
 _OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
-# The ChatGPT website silently runs an "AI copilot" that expands the user's
-# prompt with concrete visual detail before the image model ever sees it — which
-# is the main reason the same prompt looks richer there than over the raw API.
-# We replicate that here: a vision model looks at THIS dress and writes a dense,
-# concrete description, which we graft onto the locked TRYON_PROMPT so gpt-image-2
-# reproduces the actual fabric / lace / beadwork instead of a generic gown.
-_GARMENT_DESCRIBE_SYSTEM = (
-    "You are a couture describer for a bridal virtual try-on. Look ONLY at the "
-    "dress in the image and write one dense paragraph (60-90 words) of concrete, "
-    "reproducible visual detail: silhouette, neckline, sleeves/straps, fabric "
-    "type and sheen, lace/embroidery/beadwork patterns and placement, exact "
-    "color and tone, train length, transparency, and surface texture. Describe "
-    "only the garment — no person, no face, no background, no preamble, no "
-    "styling advice. Output the paragraph and nothing else."
+# The ChatGPT website silently runs an "AI copilot" that rewrites/expands the
+# prompt with concrete visual + photographic detail before the image model ever
+# sees it, and post-processes the result — the main reason the same prompt looks
+# richer and crisper there than over the raw API. We replicate the rewriter here:
+# a vision model looks at THIS dress and emits two enrichment sections (garment
+# detail + photographic finish) that we graft onto the locked TRYON_PROMPT. The
+# base prompt stays authoritative (identity / dress / taupe-greige background are
+# never overridden); the copilot only ADDS concrete richness on top.
+_PROMPT_EXPAND_SYSTEM = (
+    "You are the prompt copilot for a luxury bridal virtual try-on rendered by an "
+    "image-edit model. Look at the dress in the image and output EXACTLY two "
+    "sections, with these literal headers and nothing else:\n\n"
+    "GARMENT DETAIL (reproduce exactly)\n"
+    "One dense paragraph (60-90 words) of concrete, reproducible detail: "
+    "silhouette, neckline, sleeves/straps, fabric type and sheen, "
+    "lace/embroidery/beadwork patterns and placement, exact color and tone, "
+    "train length, transparency, and surface texture.\n\n"
+    "PHOTOGRAPHIC FINISH\n"
+    "One dense paragraph (50-80 words) directing a real medium-format studio "
+    "photograph look: natural skin with visible pores and micro-texture (never "
+    "waxy, plastic, airbrushed, or over-smoothed); crisp, high-frequency lace and "
+    "thread detail (never blurred, painted, or averaged); three-dimensional light "
+    "sculpting on the bodice boning and fabric folds; rich dynamic range with "
+    "clean highlight roll-off on the white gown; sharp, editorial, photoreal.\n\n"
+    "Rules: describe only the garment and the photographic finish. Do NOT mention "
+    "or change the woman's identity, the dress design, the pose, or the "
+    "background. No preamble, no styling advice, no extra text."
 )
 
 
-def _describe_garment(client: httpx.Client, headers: dict, garment_data_url: str) -> str:
-    """Best-effort: ask a vision model to describe THIS dress in concrete detail.
+def _expand_prompt(client: httpx.Client, headers: dict, garment_data_url: str) -> str:
+    """Best-effort: ask a vision model for the two enrichment sections (garment
+    detail + photographic finish) to graft onto the locked prompt.
 
-    Returns a dense description paragraph, or "" on any failure. Self-contained:
-    the caller passes a base64 data URL (no dependency on OpenAI being able to
-    reach our storage URLs). Never raises — try-on must not break if the copilot
-    step fails; we just fall back to the base prompt.
+    Returns the enrichment text, or "" on any failure. Self-contained: the caller
+    passes a base64 data URL (no dependency on OpenAI being able to reach our
+    storage URLs). Never raises — try-on must not break if the copilot step fails;
+    we just fall back to the base prompt.
     """
     payload = {
         "model": settings.OPENAI_PROMPT_MODEL,
         "messages": [
-            {"role": "system", "content": _GARMENT_DESCRIBE_SYSTEM},
+            {"role": "system", "content": _PROMPT_EXPAND_SYSTEM},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Describe this dress for exact reproduction."},
+                    {"type": "text", "text": "Enrich the prompt for this dress."},
                     {"type": "image_url", "image_url": {"url": garment_data_url}},
                 ],
             },
         ],
-        "max_tokens": 240,
+        "max_tokens": 420,
     }
     resp = client.post(_OPENAI_CHAT_URL, headers=headers, json=payload)
     resp.raise_for_status()
@@ -208,18 +222,21 @@ def run_tryon(
         person_bytes, person_ct = _download(client, person_image_url)
         garment_bytes, garment_ct = _download(client, garment_image_url)
 
-        # "Be the copilot": enrich the locked prompt with a concrete description
-        # of THIS dress before the edit, mirroring the ChatGPT website's hidden
-        # prompt-rewriter. Best-effort — on any failure we keep the base prompt.
+        # "Be the copilot": enrich the locked prompt with concrete garment detail
+        # AND photographic-finish direction for THIS dress before the edit,
+        # mirroring the ChatGPT website's hidden prompt-rewriter. The model emits
+        # its own section headers, so we append the whole block. Best-effort — on
+        # any failure we keep the base prompt.
         prompt = TRYON_PROMPT
         if settings.OPENAI_TRYON_EXPAND_PROMPT:
             try:
                 garment_data_url = (
                     f"data:{garment_ct};base64,{base64.b64encode(garment_bytes).decode()}"
                 )
-                detail = _describe_garment(client, headers, garment_data_url)
-                if detail:
-                    prompt = f"{TRYON_PROMPT}\n\nGARMENT DETAIL (reproduce exactly)\n{detail}"
+                enrichment = _expand_prompt(client, headers, garment_data_url)
+                if enrichment:
+                    prompt = f"{TRYON_PROMPT}\n\n{enrichment}"
+                    logger.info("tryon prompt expanded (+%d chars)", len(enrichment))
             except Exception as exc:  # pragma: no cover — copilot must never break try-on
                 logger.warning("tryon prompt expansion failed, using base prompt: %s", exc)
 
