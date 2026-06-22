@@ -285,13 +285,15 @@ export default function RootLayout() {
   }, [router]);
 
   const onBuyerVideoCallRoute = segments[0] === '(tabs)' && segments[1] === 'video-call';
-  const hasActiveVideoBooking = useBookingHistoryStore(
-    (s) => s.items.some(
-      (b) => b.appointment_type === 'video' && ['requested', 'accepted', 'rescheduled'].includes(b.status)
-    )
-  );
+  // Mirror the partner app: poll whenever an authenticated buyer is logged in and
+  // not already on the call screen. Do NOT gate on a local "has active video
+  // booking" flag — that reads from the persisted booking-history store, which is
+  // only populated when the bride opens the bookings tab. A freshly-accepted
+  // booking (or a fresh login / cleared storage) leaves it empty, which silently
+  // suppressed the incoming-ring poller so advisor calls never reached the bride.
+  // The /incoming-ring endpoint is cheap and returns null when nothing is ringing.
   useIncomingVideoRingPoller(
-    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute && hasActiveVideoBooking
+    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute
   );
 
   if (!appReady) {
