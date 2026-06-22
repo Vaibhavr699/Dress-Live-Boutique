@@ -20,13 +20,64 @@ AIJob.error column is actionable.
 from __future__ import annotations
 
 import base64
+import logging
 
 import httpx
 
 from app.core.config import settings
 from app.utils.storage import upload_bytes
 
+logger = logging.getLogger(__name__)
+
 _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
+_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+
+# The ChatGPT website silently runs an "AI copilot" that expands the user's
+# prompt with concrete visual detail before the image model ever sees it — which
+# is the main reason the same prompt looks richer there than over the raw API.
+# We replicate that here: a vision model looks at THIS dress and writes a dense,
+# concrete description, which we graft onto the locked TRYON_PROMPT so gpt-image-2
+# reproduces the actual fabric / lace / beadwork instead of a generic gown.
+_GARMENT_DESCRIBE_SYSTEM = (
+    "You are a couture describer for a bridal virtual try-on. Look ONLY at the "
+    "dress in the image and write one dense paragraph (60-90 words) of concrete, "
+    "reproducible visual detail: silhouette, neckline, sleeves/straps, fabric "
+    "type and sheen, lace/embroidery/beadwork patterns and placement, exact "
+    "color and tone, train length, transparency, and surface texture. Describe "
+    "only the garment — no person, no face, no background, no preamble, no "
+    "styling advice. Output the paragraph and nothing else."
+)
+
+
+def _describe_garment(client: httpx.Client, headers: dict, garment_data_url: str) -> str:
+    """Best-effort: ask a vision model to describe THIS dress in concrete detail.
+
+    Returns a dense description paragraph, or "" on any failure. Self-contained:
+    the caller passes a base64 data URL (no dependency on OpenAI being able to
+    reach our storage URLs). Never raises — try-on must not break if the copilot
+    step fails; we just fall back to the base prompt.
+    """
+    payload = {
+        "model": settings.OPENAI_PROMPT_MODEL,
+        "messages": [
+            {"role": "system", "content": _GARMENT_DESCRIBE_SYSTEM},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this dress for exact reproduction."},
+                    {"type": "image_url", "image_url": {"url": garment_data_url}},
+                ],
+            },
+        ],
+        "max_tokens": 240,
+    }
+    resp = client.post(_OPENAI_CHAT_URL, headers=headers, json=payload)
+    resp.raise_for_status()
+    body = resp.json()
+    choices = body.get("choices") or []
+    if not choices:
+        return ""
+    return (choices[0].get("message", {}).get("content") or "").strip()
 
 # The locked instruction sent with EVERY try-on. One prompt for every user; only
 # the two input images vary. Canonical copy + rationale live in
@@ -157,6 +208,21 @@ def run_tryon(
         person_bytes, person_ct = _download(client, person_image_url)
         garment_bytes, garment_ct = _download(client, garment_image_url)
 
+        # "Be the copilot": enrich the locked prompt with a concrete description
+        # of THIS dress before the edit, mirroring the ChatGPT website's hidden
+        # prompt-rewriter. Best-effort — on any failure we keep the base prompt.
+        prompt = TRYON_PROMPT
+        if settings.OPENAI_TRYON_EXPAND_PROMPT:
+            try:
+                garment_data_url = (
+                    f"data:{garment_ct};base64,{base64.b64encode(garment_bytes).decode()}"
+                )
+                detail = _describe_garment(client, headers, garment_data_url)
+                if detail:
+                    prompt = f"{TRYON_PROMPT}\n\nGARMENT DETAIL (reproduce exactly)\n{detail}"
+            except Exception as exc:  # pragma: no cover — copilot must never break try-on
+                logger.warning("tryon prompt expansion failed, using base prompt: %s", exc)
+
         # Multipart: repeated `image[]` fields, order = woman then dress.
         files = [
             ("image[]", ("person.png", person_bytes, person_ct)),
@@ -164,8 +230,12 @@ def run_tryon(
         ]
         data = {
             "model": settings.OPENAI_IMAGE_MODEL,
-            "prompt": TRYON_PROMPT,
+            "prompt": prompt,
             "quality": quality,
+            # Portrait by default — the API otherwise defaults to 1024x1024 square,
+            # which crops/flattens a full-body bridal shot. The website picks
+            # portrait for you; we match it.
+            "size": settings.OPENAI_IMAGE_SIZE,
             "n": "1",
         }
         resp = client.post(_OPENAI_EDITS_URL, headers=headers, data=data, files=files)

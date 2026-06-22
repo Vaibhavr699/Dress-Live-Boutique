@@ -61,7 +61,13 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_IMAGE_MODEL: str = "gpt-image-2"
     OPENAI_IMAGE_QUALITY: str = "high"
+    OPENAI_IMAGE_SIZE: str = "1024x1536"  # portrait — full-body bridal; avoid square crop
     OPENAI_TIMEOUT_SECONDS: int = 0  # 0 = no timeout (gpt-image-2 high can run several min)
+    # "Be the copilot": expand the locked try-on prompt with a per-dress visual
+    # description (vision model) before the edit, mirroring the ChatGPT website's
+    # hidden prompt-rewriter. OPENAI_PROMPT_MODEL must be vision-capable.
+    OPENAI_TRYON_EXPAND_PROMPT: bool = True
+    OPENAI_PROMPT_MODEL: str = "gpt-4.1"
     QA_DRESS_THRESHOLD: int = 75
     TRYON_MAX_REGEN: int = 2
 
