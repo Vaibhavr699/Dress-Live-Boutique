@@ -270,3 +270,82 @@ def run_tryon(
     return upload_bytes(
         data=image_bytes, folder="tryon-openai", content_type="image/png"
     )
+
+
+# OpenAI-only garment standardization. Old dresses have only a raw `image_url`
+# (often the gown on a model with a busy background); when used as the try-on
+# reference, gpt-image-2 can't cleanly replace the background and the result is
+# poor. This turns that single photo into a clean, plain-background catalog image
+# of the SAME dress — the equivalent of the fal/4-angle `standardized_image_url`,
+# but produced entirely with gpt-image-2 (no fal).
+GARMENT_STANDARDIZE_PROMPT = """Clean studio product image of THIS EXACT dress.
+Reconstruct, do not redesign.
+
+Keep the exact same dress: same design, silhouette, fabric, color, lace,
+embroidery, beadwork, stitching, train, transparency — every detail identical.
+No redesign, no reinterpretation, no simplification.
+
+Present it as a premium e-commerce catalog product shot on an invisible
+(ghost-mannequin) form: the gown worn and filled out naturally, with realistic
+volume, drape, and structure. No human model, no face, no body, no skin, no hands.
+
+Background: plain, clean, seamless light neutral studio backdrop. Soft, even,
+diffused lighting with a gentle grounding shadow. No props, no objects, no people,
+no text. Remove the original background entirely.
+
+Sharp, high-resolution, true-to-life fabric texture and crisp lace detail.
+
+OUTPUT: this exact dress, ghost-mannequin, clean neutral studio background.
+Catalog-ready. No model. No original background."""
+
+
+def standardize_garment(
+    *,
+    image_url: str,
+    quality: str | None = None,
+    timeout_seconds: float | None = None,
+) -> str:
+    """Clean a single raw dress photo into a plain-background catalog image.
+
+    Synchronous gpt-image-2 edit: downloads the source image, asks the model to
+    re-present the SAME dress on a ghost-mannequin against a clean neutral studio
+    backdrop (no model, no original background), uploads the result, and returns
+    its public URL — suitable to store as `dress.standardized_image_url`.
+
+    Raises ProviderNotConfigured if the key is unset, or RuntimeError surfacing
+    OpenAI's error body on any API failure.
+    """
+    if not settings.OPENAI_API_KEY:
+        raise ProviderNotConfigured("OpenAI is not configured (OPENAI_API_KEY unset).")
+
+    quality = quality or settings.OPENAI_IMAGE_QUALITY
+    timeout_setting = (
+        timeout_seconds if timeout_seconds is not None else settings.OPENAI_TIMEOUT_SECONDS
+    )
+    timeout = None if (timeout_setting is None or timeout_setting <= 0) else timeout_setting
+    headers = {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+
+    with httpx.Client(timeout=timeout) as client:
+        img_bytes, img_ct = _download(client, image_url)
+        files = [("image[]", ("garment.png", img_bytes, img_ct))]
+        data = {
+            "model": settings.OPENAI_IMAGE_MODEL,
+            "prompt": GARMENT_STANDARDIZE_PROMPT,
+            "quality": quality,
+            "size": settings.OPENAI_IMAGE_SIZE,
+            "n": "1",
+        }
+        resp = client.post(_OPENAI_EDITS_URL, headers=headers, data=data, files=files)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"OpenAI images/edits {resp.status_code}: {resp.text[:500]}")
+        payload = resp.json()
+
+    items = payload.get("data") or []
+    b64 = items[0].get("b64_json") if items and isinstance(items[0], dict) else None
+    if not b64:
+        raise RuntimeError("gpt-image-2 returned no standardized image.")
+
+    image_bytes = base64.b64decode(b64)
+    return upload_bytes(
+        data=image_bytes, folder="standardized-openai", content_type="image/png"
+    )
