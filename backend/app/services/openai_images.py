@@ -142,12 +142,12 @@ with a medium-format studio camera and even, world-class catalog lighting.
 The woman is unchanged. The dress is unchanged. Only the photography is elevated.
 
 BACKGROUND
-Replace the original background with a soft, clean white fashion studio backdrop.
+Replace the original background with a premium fashion e-commerce studio backdrop
+in warm taupe greige.
 
-Seamless white sweep from wall to floor, no visible horizon line.
-Soft, even, diffused lighting; a gentle grounding shadow beneath the subject.
-Soft luminous off-white to white tone — never a harsh, flat, or blown-out pure white.
-The elegant, minimal, premium look of a high-end fashion catalog.
+Seamless sweep from wall to floor, no visible horizon line.
+Soft, even, diffused lighting with a subtle gentle shadow gradient near the floor.
+The elegant, minimal, premium e-commerce lookbook background of Zara and Zalando.
 No people, no objects, no furniture, no lighting equipment, no light stands,
 no windows, no patterns, no text.
 Lighting and rendering consistent with the premium photography direction above.
@@ -156,7 +156,7 @@ Only the background changes.
 The woman and dress remain identical.
 
 OUTPUT
-This woman. This dress. Soft white studio. Real photoshoot. No visible AI."""
+This woman. This dress. Warm taupe greige e-commerce studio. Real photoshoot. No visible AI."""
 
 
 class ProviderNotConfigured(Exception):

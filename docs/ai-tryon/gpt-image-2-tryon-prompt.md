@@ -69,12 +69,12 @@ with a medium-format studio camera and even, world-class catalog lighting.
 The woman is unchanged. The dress is unchanged. Only the photography is elevated.
 
 BACKGROUND
-Replace the original background with a soft, clean white fashion studio backdrop.
+Replace the original background with a premium fashion e-commerce studio backdrop
+in warm taupe greige.
 
-Seamless white sweep from wall to floor, no visible horizon line.
-Soft, even, diffused lighting; a gentle grounding shadow beneath the subject.
-Soft luminous off-white to white tone — never a harsh, flat, or blown-out pure white.
-The elegant, minimal, premium look of a high-end fashion catalog.
+Seamless sweep from wall to floor, no visible horizon line.
+Soft, even, diffused lighting with a subtle gentle shadow gradient near the floor.
+The elegant, minimal, premium e-commerce lookbook background of Zara and Zalando.
 No people, no objects, no furniture, no lighting equipment, no light stands,
 no windows, no patterns, no text.
 Lighting and rendering consistent with the premium photography direction above.
@@ -83,7 +83,7 @@ Only the background changes.
 The woman and dress remain identical.
 
 OUTPUT
-This woman. This dress. Soft white studio. Real photoshoot. No visible AI.
+This woman. This dress. Warm taupe greige e-commerce studio. Real photoshoot. No visible AI.
 ```
 
 ---
@@ -93,9 +93,10 @@ This woman. This dress. Soft white studio. Real photoshoot. No visible AI.
 - **Image order matters.** `image[0]` = source woman, `image[1]` = garment dress.
   The prompt refers to "source image" and "garment reference" — wire the call so
   the order matches.
-- **Background.** This prompt makes `gpt-image-2` produce a soft, clean white
-  studio backdrop itself. The fal background-replace step is therefore redundant
-  on the OpenAI try-on path and should be skipped to avoid double-processing / a
+- **Background.** This prompt makes `gpt-image-2` produce the Zara/Zalando-style
+  warm taupe-greige e-commerce backdrop itself (matching the look of fal's
+  `BACKGROUND_PROMPT`). The fal background-replace step is therefore redundant on
+  the OpenAI try-on path and should be skipped to avoid double-processing / a
   conflicting backdrop.
 - **Fidelity caveat.** `gpt-image-2` regenerates the scene; it does not preserve
   source pixels byte-for-byte. The LOCKED language minimizes identity/garment
