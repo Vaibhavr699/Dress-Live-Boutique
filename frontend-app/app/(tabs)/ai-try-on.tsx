@@ -284,8 +284,9 @@ export default function AITryOnScreen() {
   // Poll an async editorial try-on job until it finishes, then surface the
   // final image. Returns true if a finished image was set.
   const pollEditorialJob = useCallback(async (jobId: number): Promise<boolean> => {
-    const deadline = Date.now() + 300_000; // gpt-image-2 high quality can take ~2-4 min
-    while (Date.now() < deadline) {
+    // No client-side time cap: gpt-image-2 high quality can run several minutes.
+    // Poll until the job yields a final image or reaches a terminal state.
+    while (true) {
       const job = (await api.get(`/ai/jobs/${jobId}`)) as AIJob;
       // Only resolve on the POLISHED final image. A completed job without a
       // final_image_url means the finishing chain is still wrapping up — keep
@@ -300,7 +301,6 @@ export default function AITryOnScreen() {
       }
       await new Promise((r) => setTimeout(r, 3000));
     }
-    throw new Error('The AI try-on is taking longer than expected. Please try again.');
   }, []);
 
   const createTryOnPreview = useCallback(async (

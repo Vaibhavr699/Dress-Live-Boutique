@@ -62,25 +62,28 @@ Ultra-detailed fabric rendering. Subtle cinematic dimensionality.
 The image should feel expensive, elegant, and premium.
 Create the wow effect through photography alone.
 
-The result should feel like a luxury bridal editorial photographed for Vogue Bridal
-or Harper's Bazaar Bridal with a medium-format studio camera
-and world-class fashion lighting.
+The result should feel like a premium bridal e-commerce campaign shot for a
+high-end fashion catalog — the clean, elevated look of Zara and Zalando lookbooks —
+with a medium-format studio camera and even, world-class catalog lighting.
 
 The woman is unchanged. The dress is unchanged. Only the photography is elevated.
 
 BACKGROUND
-Replace the original background with a pure white luxury fashion studio backdrop.
+Replace the original background with a premium fashion e-commerce studio backdrop
+in warm taupe greige.
 
-Clean white cyclorama.
-Professional bridal campaign studio.
-Soft grounding shadows.
+Seamless sweep from wall to floor, no visible horizon line.
+Soft, even, diffused lighting with a subtle gentle shadow gradient near the floor.
+The elegant, minimal, premium e-commerce lookbook background of Zara and Zalando.
+No people, no objects, no furniture, no lighting equipment, no light stands,
+no windows, no patterns, no text.
 Lighting and rendering consistent with the premium photography direction above.
 
 Only the background changes.
 The woman and dress remain identical.
 
 OUTPUT
-This woman. This dress. White luxury studio. Real photoshoot. No visible AI.
+This woman. This dress. Warm taupe greige e-commerce studio. Real photoshoot. No visible AI.
 ```
 
 ---
@@ -90,10 +93,11 @@ This woman. This dress. White luxury studio. Real photoshoot. No visible AI.
 - **Image order matters.** `image[0]` = source woman, `image[1]` = garment dress.
   The prompt refers to "source image" and "garment reference" — wire the call so
   the order matches.
-- **Background.** This prompt makes `gpt-image-2` produce the white-studio
-  backdrop itself. The existing fal background-replace step (taupe/greige
-  `BACKGROUND_PROMPT`) is therefore redundant on the OpenAI try-on path and
-  should be skipped to avoid double-processing / a conflicting backdrop.
+- **Background.** This prompt makes `gpt-image-2` produce the Zara/Zalando-style
+  warm taupe-greige e-commerce backdrop itself (matching the look of fal's
+  `BACKGROUND_PROMPT`). The fal background-replace step is therefore redundant on
+  the OpenAI try-on path and should be skipped to avoid double-processing / a
+  conflicting backdrop.
 - **Fidelity caveat.** `gpt-image-2` regenerates the scene; it does not preserve
   source pixels byte-for-byte. The LOCKED language minimizes identity/garment
   drift but cannot guarantee zero drift. Acceptable for a premium try-on preview;
