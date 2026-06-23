@@ -1,0 +1,511 @@
+"use client";
+
+/**
+ * Bride's laptop call view (the spec's landing page from her email link).
+ *
+ * Flow per spec:
+ *   1. Page validates token (no login) — by calling /web-join with the
+ *      JWT from ?token=. Server returns LiveKit + Decart creds + dresses.
+ *   2. Pre-call screen: page asks for cam+mic via getUserMedia, then
+ *      shows a "Join live fitting" button.
+ *   3. Bride taps Join → LiveKit room connect + Decart realtime session
+ *      starts. Audio goes via LK, video stays in Decart (we broadcast
+ *      the Decart subscribeToken over LK data channel so the consultant
+ *      can subscribe directly).
+ *   4. Bride sees herself fullscreen with the dress overlaid. No dress
+ *      controls on her side — the consultant taps thumbnails from the
+ *      boutique-app and the SET_DRESS message arrives on her data
+ *      channel, applied via the Decart publish hook.
+ *   5. Either party hangs up → web page closes. Bride opens her phone
+ *      app to pick a favorite.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ConnectionState,
+  RemoteTrack,
+  Room,
+  RoomEvent,
+  Track,
+} from "livekit-client";
+import {
+  buildDecartSubscribeTokenPayload,
+  parseTryonSwitchMessageFromBytes,
+} from "@/lib/video-call-signals-bride";
+import type { WebJoinResponse } from "@/lib/call-types";
+import { fetchWebJoin, WebJoinError } from "@/lib/web-join";
+import { useBrideDecartPublish } from "@/lib/use-bride-decart-publish";
+
+
+type Stage = "validating" | "ready-to-join" | "in-call" | "ended" | "error";
+
+
+export function BrideCallView({
+  bookingId,
+  token,
+}: {
+  bookingId: number | null;
+  token: string | null;
+}) {
+  // ── 1. Validate the email JWT against /web-join ────────────────────────
+  const [stage, setStage] = useState<Stage>("validating");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [joinData, setJoinData] = useState<WebJoinResponse | null>(null);
+
+  useEffect(() => {
+    if (bookingId == null || !token) {
+      setStage("error");
+      setErrorMessage(
+        bookingId == null
+          ? "This link is missing a booking. Open it from the email we sent."
+          : "This link is missing its security token. Open it directly from the email — don't copy-paste the URL.",
+      );
+      return;
+    }
+    let cancelled = false;
+    fetchWebJoin(bookingId, token)
+      .then((data) => {
+        if (cancelled) return;
+        setJoinData(data);
+        setStage("ready-to-join");
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setErrorMessage(e instanceof WebJoinError ? e.message : String(e));
+        setStage("error");
+      });
+    return () => { cancelled = true; };
+  }, [bookingId, token]);
+
+  // ── 2. Once the user clicks Join, open Decart + LiveKit ────────────────
+  const [decartEnabled, setDecartEnabled] = useState(false);
+
+  const decart = useBrideDecartPublish({
+    enabled: decartEnabled,
+    apiKey: joinData?.decart?.api_key ?? null,
+    model: joinData?.decart?.model ?? null,
+    dresses: joinData?.dresses ?? [],
+  });
+
+  // ── 3. LiveKit room (audio + data channel only — video stays in Decart)
+  const [room, setRoom] = useState<Room | null>(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>(
+    ConnectionState.Disconnected,
+  );
+  // Whether the consultant is actually in the room. Drives the "waiting for
+  // your advisor to join" overlay so the bride isn't left looking at herself
+  // with no idea whether the call is working or just empty.
+  const [consultantPresent, setConsultantPresent] = useState(false);
+  const audioContainerRef = useRef<HTMLDivElement | null>(null);
+  const remoteAudioTracksRef = useRef<Set<RemoteTrack>>(new Set());
+  const consultantVideoRef = useRef<HTMLVideoElement | null>(null);
+  const consultantVideoTrackRef = useRef<RemoteTrack | null>(null);
+  // Ref callback so we can re-attach an already-subscribed track if the
+  // <video> element mounts AFTER trackSubscribed fired (e.g. the JSX cell
+  // remounted because of a parent re-render).
+  const setConsultantVideoEl = useCallback((el: HTMLVideoElement | null) => {
+    consultantVideoRef.current = el;
+    const track = consultantVideoTrackRef.current;
+    if (el && track) {
+      try { track.attach(el); } catch {}
+    }
+  }, []);
+
+  // Decart action funnel — kept in a ref so the LiveKit setup effect doesn't
+  // need `decart` in its deps. Without this, the `decart` object literal
+  // returned by the publish hook changes every render (incl. when this very
+  // effect's own setConnectionState fires), tearing down and recreating the
+  // Room mid-handshake; consultant tracks never settle, and the subscribe-
+  // token publishData races the teardown.
+  const decartActionsRef = useRef({
+    switchDress: decart.switchDress,
+    clearDress: decart.clearDress,
+  });
+  useEffect(() => {
+    decartActionsRef.current = {
+      switchDress: decart.switchDress,
+      clearDress: decart.clearDress,
+    };
+  }, [decart.switchDress, decart.clearDress]);
+
+  useEffect(() => {
+    if (stage !== "in-call" || !joinData) return;
+
+    const r = new Room({ adaptiveStream: true, dynacast: true });
+    let cancelled = false;
+
+    const handleConnectionChange = (s: ConnectionState) => {
+      if (cancelled) return;
+      setConnectionState(s);
+    };
+    const handleDataReceived = (payload: Uint8Array) => {
+      // The only message we care about on the bride side is SET_DRESS
+      // (consultant tapped a thumbnail). Anything else is silently
+      // dropped.
+      const msg = parseTryonSwitchMessageFromBytes(payload);
+      if (!msg || msg.bookingId !== bookingId) return;
+      if (msg.dressId == null) {
+        decartActionsRef.current.clearDress();
+      } else {
+        decartActionsRef.current.switchDress(msg.dressId);
+      }
+    };
+    const handleTrackSubscribed = (track: RemoteTrack) => {
+      if (track.kind === Track.Kind.Audio) {
+        const el = track.attach() as HTMLAudioElement;
+        el.autoplay = true;
+        audioContainerRef.current?.appendChild(el);
+        remoteAudioTracksRef.current.add(track);
+      } else if (track.kind === Track.Kind.Video) {
+        // Consultant publishes their own camera so the bride can see
+        // who she's talking to (PiP in the corner). Stash the track even
+        // if the element isn't ready yet — the ref-callback will attach
+        // it when the <video> mounts.
+        consultantVideoTrackRef.current = track;
+        if (consultantVideoRef.current) {
+          track.attach(consultantVideoRef.current);
+        }
+      }
+    };
+    const handleTrackUnsubscribed = (track: RemoteTrack) => {
+      track.detach().forEach((el) => el.remove());
+      if (track.kind === Track.Kind.Audio) {
+        remoteAudioTracksRef.current.delete(track);
+      } else if (track.kind === Track.Kind.Video && consultantVideoTrackRef.current === track) {
+        consultantVideoTrackRef.current = null;
+      }
+    };
+    // Track whether the consultant has STABLY joined so we can tell
+    // "hasn't arrived yet" / "join-handshake flicker" apart from "joined
+    // then left". LiveKit presence flickers hard during connection and
+    // Decart video renegotiation — the remote pops in and out repeatedly
+    // before it settles. We only arm the "left" detector once the consultant
+    // has been continuously present for a stability window, and only a drop
+    // after that — held past a grace period — closes the call.
+    let consultantWasStablyPresent = false;
+    let leftTimer: ReturnType<typeof setTimeout> | null = null;
+    let stableTimer: ReturnType<typeof setTimeout> | null = null;
+    const GRACE_MS = 12000;
+    const STABLE_MS = 4000;
+    const syncPresence = () => {
+      if (cancelled) return;
+      const present = r.remoteParticipants.size > 0;
+      setConsultantPresent(present);
+      if (present) {
+        if (leftTimer) { clearTimeout(leftTimer); leftTimer = null; }
+        if (!consultantWasStablyPresent && !stableTimer) {
+          stableTimer = setTimeout(() => {
+            stableTimer = null;
+            consultantWasStablyPresent = true;
+          }, STABLE_MS);
+        }
+      } else if (stableTimer) {
+        // Dipped before confirming stable presence → just join noise.
+        clearTimeout(stableTimer);
+        stableTimer = null;
+      }
+    };
+    const handleParticipantConnected = () => { syncPresence(); };
+    const handleParticipantDisconnected = () => {
+      if (cancelled) return;
+      syncPresence();
+      // Spec: "Either party hangs up → web page closes". Only end the call if
+      // the consultant had STABLY joined AND stays gone past the grace period —
+      // a stray disconnect or join-handshake flicker shouldn't kill the call.
+      if (consultantWasStablyPresent && r.remoteParticipants.size === 0) {
+        if (leftTimer) clearTimeout(leftTimer);
+        leftTimer = setTimeout(() => {
+          leftTimer = null;
+          if (!cancelled && r.remoteParticipants.size === 0) endCallInternal();
+        }, GRACE_MS);
+      }
+    };
+
+    r.on(RoomEvent.ConnectionStateChanged, handleConnectionChange);
+    r.on(RoomEvent.DataReceived, handleDataReceived);
+    r.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+    r.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+    r.on(RoomEvent.ParticipantConnected, handleParticipantConnected);
+    r.on(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+
+    (async () => {
+      try {
+        await r.connect(joinData.livekit.url, joinData.livekit.token);
+        if (cancelled) { await r.disconnect(); return; }
+        // Publish ONLY audio. Video stays in Decart — never enters LK.
+        await r.localParticipant.setMicrophoneEnabled(true);
+        if (!cancelled) { setRoom(r); syncPresence(); }
+      } catch (e) {
+        if (cancelled) return;
+        setErrorMessage((e as { message?: string })?.message || "Could not join the call.");
+        setStage("error");
+      }
+    })();
+
+    function endCallInternal() {
+      setStage("ended");
+      setDecartEnabled(false);
+      try { r.disconnect(); } catch {}
+    }
+
+    return () => {
+      cancelled = true;
+      if (leftTimer) { clearTimeout(leftTimer); leftTimer = null; }
+      if (stableTimer) { clearTimeout(stableTimer); stableTimer = null; }
+      r.off(RoomEvent.ConnectionStateChanged, handleConnectionChange);
+      r.off(RoomEvent.DataReceived, handleDataReceived);
+      r.off(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+      r.off(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+      r.off(RoomEvent.ParticipantConnected, handleParticipantConnected);
+      r.off(RoomEvent.ParticipantDisconnected, handleParticipantDisconnected);
+      r.disconnect();
+    };
+    // `decart` deliberately excluded — its actions are funnelled through
+    // decartActionsRef so this effect can stay mounted for the call's
+    // lifetime instead of cycling on every parent render.
+  }, [stage, joinData, bookingId]);
+
+  // ── 4. When Decart's subscribeToken lands, broadcast it to consultant
+  // Re-broadcast on every participantConnected so a consultant who joins
+  // (or rejoins) after the bride still gets a usable token — LK data
+  // channel doesn't replay missed messages.
+  useEffect(() => {
+    if (!room || !decart.subscribeToken || bookingId == null) return;
+    const token = decart.subscribeToken;
+    const publish = () => {
+      try {
+        const payload = buildDecartSubscribeTokenPayload({ bookingId, token });
+        room.localParticipant.publishData(payload, { reliable: true });
+      } catch {
+        // best-effort — if the consultant doesn't get the token, the
+        // bride still sees herself; only the consultant's view is broken.
+      }
+    };
+    publish();
+    room.on(RoomEvent.ParticipantConnected, publish);
+    return () => { room.off(RoomEvent.ParticipantConnected, publish); };
+  }, [room, decart.subscribeToken, bookingId]);
+
+  // ── 5. Render the bride's video fullscreen ─────────────────────────────
+  // Prefer Decart's transformed (AI try-on) stream; if Decart isn't
+  // available (credits exhausted, misconfigured, still starting) fall back
+  // to her raw camera so she always sees herself and the call still works.
+  const mainVideoRef = useRef<HTMLVideoElement | null>(null);
+  const mainStream = decart.transformedStream ?? decart.rawStream;
+  const tryOnUnavailable = decart.status === "error";
+  useEffect(() => {
+    if (!mainVideoRef.current) return;
+    mainVideoRef.current.srcObject = mainStream;
+  }, [mainStream]);
+
+  const handleJoin = useCallback(() => {
+    // Go straight into the call. The fitting is the LiveKit call with the
+    // consultant; Decart's AI try-on is an OPTIONAL enhancement layered on
+    // top (see this file's header and backend /web-join — Decart is never
+    // allowed to block the bride). We used to wait for Decart to reach
+    // "connected" before entering the call, and route a Decart failure
+    // (e.g. provider "Insufficient credits") to the full-screen error
+    // screen — which killed the entire fitting even though LiveKit was
+    // perfectly healthy. Now the call opens on LiveKit and Decart simply
+    // upgrades the video to the AI overlay if/when it connects.
+    setStage("in-call");
+    setDecartEnabled(true);
+  }, []);
+
+  const handleEndCall = useCallback(() => {
+    setStage("ended");
+    setDecartEnabled(false);
+    try { room?.disconnect(); } catch {}
+  }, [room]);
+
+  const boutiqueName = useMemo(() => {
+    // /web-join doesn't return boutique info today; could add later
+    return "your boutique";
+  }, []);
+
+  // ── UI states ──────────────────────────────────────────────────────────
+  if (stage === "validating") {
+    return <Centered title="Opening your fitting…" body="One moment." />;
+  }
+  if (stage === "error") {
+    return <Centered title="We can't open this fitting" body={errorMessage ?? "Unknown error."} />;
+  }
+  if (stage === "ended") {
+    return (
+      <Centered
+        title="Your fitting is complete"
+        body="Open the Dress Live app on your phone to pick the dress you loved most."
+      />
+    );
+  }
+  if (stage === "ready-to-join") {
+    return (
+      <PreCall
+        scheduledFor={joinData?.scheduled_for ?? null}
+        dressCount={joinData?.dresses.length ?? 0}
+        onJoin={handleJoin}
+        boutiqueName={boutiqueName}
+      />
+    );
+  }
+
+  // in-call renders the live UI. LiveKit connects here and Decart layers
+  // its AI try-on on top when/if it connects; neither blocks the call.
+  return (
+    <div className="min-h-screen bg-black text-white flex flex-col">
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+        <span className="text-[10px] uppercase tracking-[2px] text-white/60">
+          Live fitting
+        </span>
+        <button
+          onClick={handleEndCall}
+          className="rounded-full bg-red-600 hover:bg-red-500 px-5 py-2 text-sm font-medium transition"
+        >
+          End call
+        </button>
+      </div>
+
+      {/* Fullscreen bride video */}
+      <div className="relative flex-1 bg-black flex items-center justify-center">
+        {mainStream ? (
+          <video
+            ref={mainVideoRef}
+            autoPlay
+            playsInline
+            muted    /* bride sees herself — own audio would echo */
+            className="w-full h-full object-cover -scale-x-100"
+          />
+        ) : (
+          <div className="text-center max-w-md px-6">
+            <div className="inline-block w-8 h-8 rounded-full border-2 border-white/20 border-t-white animate-spin mb-4" />
+            <p className="text-white/70 text-sm">
+              {decart.status === "requesting-camera"
+                ? "Allow camera + microphone in the popup, please."
+                : decart.status === "starting"
+                ? "Starting AI try-on…"
+                : "Connecting…"}
+            </p>
+          </div>
+        )}
+
+        {/* Waiting-for-advisor overlay: the bride is in the room and seeing
+            herself, but the consultant hasn't joined yet. Without this she'd
+            stare at her own video with no idea if the call is working. */}
+        {!consultantPresent ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/55 px-6 text-center">
+            <div className="inline-block w-8 h-8 rounded-full border-2 border-white/20 border-t-white animate-spin mb-4" />
+            <p className="text-white text-base font-medium mb-1">
+              Waiting for your advisor to join…
+            </p>
+            <p className="text-white/65 text-sm max-w-sm">
+              You’re connected. Your fitting will begin the moment your advisor arrives.
+            </p>
+          </div>
+        ) : null}
+
+        {/* Non-fatal notice: the call is live (LiveKit), but the AI try-on
+            layer couldn't start (e.g. Decart credits exhausted). The bride
+            sees her raw camera and can still talk to her consultant. Hidden
+            while still waiting on the advisor so we don't stack two overlays. */}
+        {tryOnUnavailable && consultantPresent ? (
+          <div className="absolute left-4 right-4 bottom-4 mx-auto max-w-md rounded-lg bg-black/75 border border-white/15 px-4 py-2.5">
+            <p className="text-white/80 text-xs text-center leading-4">
+              AI try-on is unavailable right now, but you’re connected — you can
+              still see and talk to your consultant.
+            </p>
+          </div>
+        ) : null}
+
+        {/* Consultant in a corner PiP */}
+        <div className="absolute right-4 top-4 w-40 h-56 rounded-xl overflow-hidden border border-white/30 bg-black/80 flex items-center justify-center">
+          <video
+            ref={setConsultantVideoEl}
+            autoPlay
+            playsInline
+            className="w-full h-full object-cover"
+          />
+          {!consultantPresent ? (
+            <span className="absolute text-white/55 text-[10px] text-center leading-tight px-2">
+              Waiting for advisor…
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Status footer — plain, user-facing wording only (no raw provider /
+          Decart status strings). */}
+      <div className="px-6 py-3 border-t border-white/10 flex items-center justify-between text-xs text-white/50">
+        <span>
+          {connectionState === ConnectionState.Connected ? "Connected" : "Connecting…"}
+          {" · "}
+          {consultantPresent ? "Advisor in call" : "Waiting for advisor"}
+          {" · "}
+          {decart.status === "connected"
+            ? "AI try-on live"
+            : decart.status === "error"
+            ? "AI try-on unavailable"
+            : "AI try-on starting…"}
+        </span>
+        <span>Live fitting</span>
+      </div>
+
+      <div ref={audioContainerRef} className="hidden" />
+    </div>
+  );
+}
+
+
+function PreCall({
+  scheduledFor,
+  dressCount,
+  onJoin,
+  boutiqueName,
+}: {
+  scheduledFor: string | null;
+  dressCount: number;
+  onJoin: () => void;
+  boutiqueName: string;
+}) {
+  return (
+    <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center px-6">
+      <div className="max-w-md text-center">
+        <p className="text-[10px] uppercase tracking-[2px] text-white/40 mb-4">Live fitting</p>
+        <h1 className="text-2xl font-light mb-3">You&apos;re ready for your fitting</h1>
+        <p className="text-white/70 text-sm leading-6 mb-6">
+          Your consultant from {boutiqueName} will start the session shortly.
+          {dressCount > 0 ? ` ${dressCount} dresses are ready to try.` : ""}
+        </p>
+        {scheduledFor ? (
+          <p className="text-white/40 text-xs mb-8">{scheduledFor}</p>
+        ) : null}
+
+        <button
+          onClick={onJoin}
+          className="rounded-full bg-emerald-600 hover:bg-emerald-500 transition px-10 py-3 text-sm font-medium"
+        >
+          Join live fitting
+        </button>
+
+        <p className="text-white/40 text-xs mt-6 leading-5">
+          We&apos;ll ask for camera and microphone access. You&apos;ll see yourself
+          fullscreen with your dress overlaid; your consultant will pick the dress
+          for you to try.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
+function Centered({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center px-6">
+      <div className="max-w-md text-center">
+        <p className="text-[10px] uppercase tracking-[2px] text-white/40 mb-3">Live fitting</p>
+        <h1 className="text-xl mb-3 font-light">{title}</h1>
+        <p className="text-white/70 text-sm leading-6">{body}</p>
+      </div>
+    </div>
+  );
+}

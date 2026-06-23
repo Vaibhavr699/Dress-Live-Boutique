@@ -16,6 +16,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Image } from 'expo-image';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 // IMPORTANT: react-native-maps is native-only and will crash web bundling if imported at the top level.
 // We lazy-require it only on iOS/Android.
@@ -260,6 +261,7 @@ export default function BusinessProfileEditScreen() {
   }, [user?.address, user?.boutique_id, user?.email, user?.full_name, user?.phone, user?.profile_image_url]);
 
   const pickImage = async (setter: (value: string | null) => void) => {
+    if (!(await ensureMediaPermission('library'))) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,

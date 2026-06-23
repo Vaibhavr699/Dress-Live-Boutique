@@ -72,22 +72,23 @@ export default function LandingPage() {
             </Text>
           </View>
 
-          {/* Section 2: Top */}
-          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+          {/* Section 2: Top — inset to line up with the second image + buttons */}
+          <View style={{ height: imageHeight, marginHorizontal: 2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+            <Image source={IMG_1} style={{ width: '100%', height: '100%' }} contentFit="cover" contentPosition={{ left: '50%' }} />
           </View>
 
-          {/* Section 3: Middle */}
-          <View style={{ width: '100%', height: imageHeight, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
-            <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="cover" />
+          {/* Section 3: Middle — inset so its left/right edges line up with the
+              Get Started / Log in / Sign up buttons (which sit at outer 16 + 8). */}
+          <View style={{ height: imageHeight, marginHorizontal: 2, backgroundColor: '#f3f4f6', overflow: 'hidden' }}>
+            <Image source={IMG_2} style={{ width: '100%', height: '100%' }} contentFit="fill" />
           </View>
         </View>
 
-        <View style={{ paddingHorizontal: 8, gap: 10, marginTop: 8 }}>
+        <View style={{ paddingHorizontal: 2, gap: 10, marginTop: 8 }}>
           <TouchableOpacity 
             activeOpacity={0.9}
             onPress={() => router.push('/(tabs)')}
-            style={{ backgroundColor: 'black', paddingVertical: 14, alignItems: 'center' }}
+            style={{ backgroundColor: 'black', paddingVertical: 10, alignItems: 'center' }}
           >
             <Text style={{ color: 'white', fontSize: 14, fontWeight: 'bold', letterSpacing: 3, textTransform: 'uppercase' }}>
               Get Started

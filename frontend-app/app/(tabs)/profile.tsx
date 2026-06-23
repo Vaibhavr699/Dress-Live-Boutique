@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import * as ImagePicker from 'expo-image-picker';
+import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
@@ -15,16 +18,55 @@ const LOGOUT_ICON = require('@/assets/svg/Logout.svg');
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { logout, user, isAuthenticated } = useAuthStore();
+  const { logout, user, isAuthenticated, setUser } = useAuthStore();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const clearCart = useCartStore((state) => state.clearCart);
   const clearShortlist = useShortlistStore((state) => state.clear);
   const clearBookingHistory = useBookingHistoryStore((state) => state.clear);
 
+  // Tap the avatar → pick a new photo from the library → upload to
+  // Supabase via /users/me/profile-image → store returns the public URL
+  // which we shove into the auth store so the avatar refreshes locally.
+  const handlePickAndUploadPhoto = async () => {
+    if (isUploadingPhoto) return;
+    try {
+      if (!(await ensureMediaPermission('library'))) return;
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+      if (result.canceled || !result.assets?.length) return;
+
+      setIsUploadingPhoto(true);
+      const asset = result.assets[0];
+      const formData = new FormData();
+      formData.append('file', {
+        uri: asset.uri,
+        name: 'profile.jpg',
+        type: asset.mimeType || 'image/jpeg',
+      } as unknown as Blob);
+      const updated = await api.postMultipart('/users/me/profile-image', formData);
+      // Backend returns the freshly-updated User row with profile_image_url
+      // pointing at the new Supabase public URL. Push it into the store so
+      // every screen using `user.profile_image_url` reflects it immediately.
+      if (updated && typeof updated === 'object') {
+        setUser(updated as any);
+      }
+    } catch (e: any) {
+      Alert.alert('Could not update photo', e?.message || 'Please try again.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
   const menuItems = [
     { label: 'ADRESSES', route: '/profile-edit-address' },
     { label: 'MY MEASUREMENTS', route: '/profile-my-measurements' },
-    { label: 'PAYMENT METHODS', route: '/profile-payment-methods' },
+    // Payment methods are now managed inside Stripe's PaymentSheet at
+    // checkout time — there's no longer a standalone screen.
     // { label: 'BOOKING HISTORY', route: '/booking-history' },
   ];
 
@@ -96,15 +138,47 @@ export default function ProfileScreen() {
                 className="flex-row items-end relative"
                 style={{ height: 90, width: '100%', maxWidth: 390, alignSelf: 'center' }}
               >
-                <Image
-                  source={
-                    user?.profile_image_url || user?.profile_image_uri
-                      ? { uri: user?.profile_image_url || user?.profile_image_uri || '' }
-                      : require('@/assets/images/Dashboard image 2.png')
-                  }
-                  style={{ width: 90, height: 90, borderRadius: 2 }}
-                  contentFit="cover"
-                />
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={handlePickAndUploadPhoto}
+                  disabled={isUploadingPhoto}
+                  style={{ width: 90, height: 90, position: 'relative' }}
+                  accessibilityLabel="Change profile photo"
+                  accessibilityHint="Pick a new picture from your library"
+                >
+                  <Image
+                    source={
+                      user?.profile_image_url || user?.profile_image_uri
+                        ? { uri: user?.profile_image_url || user?.profile_image_uri || '' }
+                        : require('@/assets/images/Dashboard image 2.png')
+                    }
+                    style={{ width: 90, height: 90, borderRadius: 2 }}
+                    contentFit="cover"
+                  />
+                  {/* Small camera badge in the bottom-right so it's
+                      visually obvious the avatar is tappable. */}
+                  <View
+                    style={{
+                      position: 'absolute',
+                      right: -4,
+                      bottom: -4,
+                      width: 26,
+                      height: 26,
+                      borderRadius: 13,
+                      backgroundColor: '#1A1A1A',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 2,
+                      borderColor: '#FFFFFF',
+                    }}
+                  >
+                    {isUploadingPhoto ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <Feather name="camera" size={12} color="#FFFFFF" />
+                    )}
+                  </View>
+                </TouchableOpacity>
 
                 <View className="ml-6 flex-1" style={{ justifyContent: 'flex-end', paddingBottom: 2 }}>
                   <Text

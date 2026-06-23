@@ -377,6 +377,11 @@ export function PartnerDashboardView({ page = "home" }: PartnerDashboardViewProp
                     {booking.language} • {booking.dress_ids.length} selected dress(es)
                   </p>
                   <div className="mt-4 flex flex-wrap gap-2">
+                    {/* Consultant joins video calls from the boutique-app
+                        tablet now (the spec's "Start session" tap there).
+                        The web /call/[id] page is the BRIDE's view via
+                        her email JWT link, not for partners. So no Join
+                        button here. */}
                     <button
                       type="button"
                       disabled={updatingBookingId === booking.id}

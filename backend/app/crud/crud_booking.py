@@ -46,11 +46,23 @@ class CRUDBooking:
         db.refresh(db_obj)
         return db_obj
 
+    # Statuses where the booking is no longer joinable — any active video
+    # ring must be cleared so the other party stops seeing the incoming-call
+    # banner the moment the call ends / is cancelled / declined.
+    _NON_JOINABLE_STATUSES = {"completed", "cancelled", "rejected"}
+
     def update(self, db: Session, *, db_obj: Booking, obj_in: BookingUpdate) -> Booking:
         update_data = obj_in.model_dump(exclude_unset=True)
         for field in update_data:
             if hasattr(db_obj, field):
                 setattr(db_obj, field, update_data[field])
+        # When the booking transitions to a non-joinable status (e.g. the
+        # advisor taps "End Call" → status='completed'), drop the ring marker
+        # too. Otherwise it lingers for the full _RING_TTL window and the
+        # consumer keeps seeing the incoming-call bar after the call ended.
+        if db_obj.status in self._NON_JOINABLE_STATUSES:
+            db_obj.video_ring_at = None
+            db_obj.video_ring_from_user_id = None
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
@@ -65,6 +77,41 @@ class CRUDBooking:
         return db_obj
 
     def clear_video_ring(self, db: Session, *, db_obj: Booking) -> Booking:
+        db_obj.video_ring_at = None
+        db_obj.video_ring_from_user_id = None
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
+
+    def mark_session_started(self, db: Session, *, db_obj: Booking) -> Booking:
+        """Stamp `started_at` if not already set. Called when the first
+        LiveKit token is issued for this booking — whichever party joins
+        first. Subsequent joins (e.g. consultant after the bride) leave the
+        timestamp untouched so we always measure from the earliest arrival.
+        """
+        if db_obj.started_at is None:
+            db_obj.started_at = datetime.now(timezone.utc)
+            db.add(db_obj)
+            db.commit()
+            db.refresh(db_obj)
+        return db_obj
+
+    def mark_session_completed(
+        self, db: Session, *, db_obj: Booking, ended_at: Optional[datetime] = None
+    ) -> Booking:
+        """Stamp `ended_at` + flip status to 'completed'. Idempotent: a
+        second call (e.g. webhook retry) does nothing if already completed.
+        Called from the LiveKit `room_finished` webhook only — never on
+        the first leave, because LiveKit fires `room_finished` only once
+        the room is empty (consultant might briefly disconnect and rejoin).
+        """
+        if db_obj.status == "completed":
+            return db_obj
+        db_obj.ended_at = ended_at or datetime.now(timezone.utc)
+        db_obj.status = "completed"
+        # The call is over — clear any lingering ring so neither party keeps
+        # seeing an incoming-call banner for a finished session.
         db_obj.video_ring_at = None
         db_obj.video_ring_from_user_id = None
         db.add(db_obj)

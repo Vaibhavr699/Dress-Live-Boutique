@@ -13,6 +13,7 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@decartai/sdk": "^0.0.67",
     "@expo-google-fonts/playfair-display": "^0.4.2",
     "@expo/vector-icons": "^15.0.3",
     "@livekit/react-native": "^2.10.0",
@@ -20,6 +21,7 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@stripe/stripe-react-native": "0.50.3",
     "expo": "~54.0.33",
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",

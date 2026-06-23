@@ -19,6 +19,13 @@ class Booking(Base):
     is_paid = Column(Boolean, nullable=False, default=False)
     video_ring_at = Column(DateTime(timezone=True), nullable=True)
     video_ring_from_user_id = Column(Integer, ForeignKey("user.id"), nullable=True, index=True)
+    # Video-call session timestamps. `started_at` is set when the first
+    # LiveKit token is issued for the booking (whichever party joins first).
+    # `ended_at` is set by the `/api/v1/webhooks/livekit` handler on the
+    # `room_finished` event (fired only once the room is empty). The delta
+    # between them is recorded against `decart_budget` for cost accounting.
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),

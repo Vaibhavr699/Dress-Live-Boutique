@@ -8,13 +8,16 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { FigmaSuccessModal } from '../components/FigmaSuccessModal';
+import { AITryOnSetup } from '../components/AITryOnSetup';
+import { markCatalogDirty } from '../store/catalogSignal';
 import { Image } from 'expo-image';
 import * as SecureStore from 'expo-secure-store';
 
@@ -23,6 +26,45 @@ const CATEGORY_OPTIONS = ['Abendkleider', 'Hochzeitskleider', 'Add Ons'] as cons
 const SERVICE_OPTIONS = ['AI TRY ON', 'LIVE TRY-ON', 'ADD TO CART', 'IN STORE VISIT'] as const;
 const SIZE_OPTIONS = ['34', '36', '38', '40', '42', '44', '46', '48'] as const;
 const COLOR_OPTIONS = ['White', 'Ivory', 'Champagne', 'Rose', 'Nude', 'Custom'] as const;
+
+// When editing, the stored `description` packs human text plus metadata lines
+// (Internal ID / Status / Services). Split them back out so the form shows a
+// clean description and the right chips — and re-packs cleanly on save.
+function parseStoredDescription(raw: string | null | undefined): {
+  description: string;
+  internalId: string;
+  status: '' | 'Published' | 'Private';
+  services: string[];
+} {
+  const parts = (raw ?? '').split('\n\n');
+  let description = '';
+  let internalId = '';
+  let status: '' | 'Published' | 'Private' = '';
+  let services: string[] = [];
+  for (const part of parts) {
+    const p = part.trim();
+    if (!p) continue;
+    if (p.startsWith('Internal ID:')) internalId = p.slice('Internal ID:'.length).trim();
+    else if (p.startsWith('Status:')) {
+      const v = p.slice('Status:'.length).trim();
+      if (v === 'Published' || v === 'Private') status = v;
+    } else if (p.startsWith('Services:')) {
+      services = p.slice('Services:'.length).split(',').map((s) => s.trim()).filter(Boolean);
+    } else {
+      description = description ? `${description}\n\n${p}` : p;
+    }
+  }
+  return { description, internalId, status, services };
+}
+
+// `sizes` is stored as a comma-joined string that may include the custom-size
+// sentence. Split it back into the size chips + the custom toggle.
+function splitStoredSizes(raw: string | null | undefined): { sizes: string[]; custom: boolean } {
+  const parts = (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const custom = parts.some((p) => p.toLowerCase().includes('custom size'));
+  const sizes = parts.filter((p) => (SIZE_OPTIONS as readonly string[]).includes(p));
+  return { sizes, custom };
+}
 
 type AddDressDraft = {
   name: string;
@@ -194,8 +236,22 @@ export default function AddDressScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
 
+  // When an `id` is passed we're editing an existing dress, not adding one.
+  const params = useLocalSearchParams<{ id?: string }>();
+  const editId = params.id ? String(params.id) : null;
+  const isEditing = !!editId;
+  const [editReady, setEditReady] = useState(!editId);
+
   const [loading, setLoading] = useState(false);
   const [successOpen, setSuccessOpen] = useState(false);
+  // AI Try-On setup wizard — opened after save when AI Try-On is enabled, so
+  // the partner can upload the 4 angles + standardize the garment image.
+  const [aiSetupOpen, setAiSetupOpen] = useState(false);
+  // True when the wizard was opened as part of the save flow (→ go to catalog on
+  // close); false when opened from the in-form "Set up AI Try-On" button (→ just
+  // return to the form).
+  const [aiSetupFromSave, setAiSetupFromSave] = useState(false);
+  const [savedDressId, setSavedDressId] = useState<number | null>(editId ? Number(editId) : null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [colorDropdownOpen, setColorDropdownOpen] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
@@ -264,7 +320,65 @@ export default function AddDressScreen() {
     ]
   );
 
+  // Load an existing dress into the form when editing. Skips the add-draft
+  // restore below so a half-finished "new dress" draft never leaks into an edit.
   useEffect(() => {
+    if (!editId) return;
+    let active = true;
+    (async () => {
+      try {
+        const d = (await api.get(`/dresses/${editId}`)) as {
+          name?: string;
+          description?: string | null;
+          price?: number | null;
+          sizes?: string | null;
+          colors?: string | null;
+          category?: string | null;
+          image_url?: string | null;
+          ai_model_url?: string | null;
+          is_ai_enabled?: boolean | null;
+        };
+        if (!active) return;
+        const meta = parseStoredDescription(d?.description);
+        const sizeInfo = splitStoredSizes(d?.sizes);
+        setName(d?.name ?? '');
+        setPrice(d?.price != null ? String(d.price) : '');
+        setDescription(meta.description);
+        setInternalId(meta.internalId);
+        if (meta.status) setStatus(meta.status);
+        if (sizeInfo.sizes.length) setSelectedSizes(sizeInfo.sizes);
+        setCustomSizing(sizeInfo.custom);
+        if (d?.colors) setSelectedColor(d.colors);
+        if (d?.category) {
+          const cats = d.category
+            .split(',')
+            .map((c) => c.trim())
+            .filter((c) => (CATEGORY_OPTIONS as readonly string[]).includes(c));
+          if (cats.length) setSelectedCategories(cats);
+        }
+        setFrontImage(d?.image_url ?? null);
+        setAiGarmentImage(d?.ai_model_url ?? null);
+        let services = meta.services.filter((s) => (SERVICE_OPTIONS as readonly string[]).includes(s));
+        if (d?.is_ai_enabled && !services.includes('AI TRY ON')) services = [...services, 'AI TRY ON'];
+        if (services.length) setSelectedServices(services);
+        else if (!d?.is_ai_enabled) setSelectedServices([]);
+      } catch (e: any) {
+        Alert.alert('Could not load dress', e?.message ?? 'Please try again.');
+      } finally {
+        if (active) setEditReady(true);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [editId]);
+
+  useEffect(() => {
+    if (isEditing) {
+      // Editing never uses the saved add-draft.
+      setDraftLoaded(true);
+      return;
+    }
     let isActive = true;
     (async () => {
       try {
@@ -301,7 +415,7 @@ export default function AddDressScreen() {
     return () => {
       isActive = false;
     };
-  }, [draftKey]);
+  }, [draftKey, isEditing]);
 
   const persistDraft = useCallback(async (payload: AddDressDraft) => {
     try {
@@ -320,7 +434,7 @@ export default function AddDressScreen() {
   }, [draftKey]);
 
   useEffect(() => {
-    if (!draftLoaded) return;
+    if (!draftLoaded || isEditing) return; // don't autosave the add-draft while editing
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       persistDraft(draftValue);
@@ -328,9 +442,10 @@ export default function AddDressScreen() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [draftLoaded, draftValue, persistDraft]);
+  }, [draftLoaded, draftValue, persistDraft, isEditing]);
 
   const pickAsset = async (setter: (uri: string | null) => void) => {
+    if (!(await ensureMediaPermission('library'))) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -416,6 +531,18 @@ export default function AddDressScreen() {
     [selectedServices]
   );
 
+  // The "Enable AI Try-On" checkbox is a clearer, spec-named entry point that
+  // drives the same `AI TRY ON` service (single source of truth, so the service
+  // chip + all aiServicesSelected logic stay in sync). Toggling it on opens the
+  // multi-angle setup wizard; off removes the service.
+  const aiTryOnEnabled = useMemo(() => selectedServices.includes('AI TRY ON'), [selectedServices]);
+  const toggleAiTryOn = useCallback(() => {
+    setSelectedServices((prev) => {
+      const on = prev.includes('AI TRY ON');
+      return on ? prev.filter((s) => s !== 'AI TRY ON') : [...prev, 'AI TRY ON'];
+    });
+  }, []);
+
   const handleSave = async () => {
     if (!name.trim() || !price.trim()) {
       Alert.alert('Error', 'Please fill in dress name and final price.');
@@ -441,7 +568,7 @@ export default function AddDressScreen() {
         ? await ensureRemoteImageUrl(aiGarmentImage, '/dresses/upload-ai-image')
         : null;
 
-      await api.post('/dresses/', {
+      const payload = {
         name: name.trim(),
         description: payloadDescription,
         price: parseFloat(price),
@@ -452,15 +579,55 @@ export default function AddDressScreen() {
           .filter(Boolean)
           .join(', '),
         colors: selectedColor,
+        // Comma-separated like sizes/colors. Drives the buyer Home category
+        // chips (Abendkleider / Hochzeitskleider / Add Ons).
+        category: selectedCategories.filter(Boolean).join(', '),
         image_url: uploadedUrl,
         ai_model_url: aiRequested ? uploadedAiGarmentUrl || uploadedUrl : null,
         boutique_id: user.boutique_id,
         is_ai_enabled: aiRequested,
-      });
+      };
 
-      await clearDraft();
-      setSuccessOpen(true);
+      let dressId: number | null = isEditing ? Number(editId) : null;
+      if (isEditing) {
+        await api.put(`/dresses/${editId}`, payload);
+      } else {
+        const created = (await api.post('/dresses/', payload)) as { id?: number };
+        dressId = created?.id ?? null;
+        await clearDraft();
+      }
+      setSavedDressId(dressId);
+      // Force the catalog/dashboard to refresh on next focus so the change is
+      // immediately visible even within their staleness window.
+      markCatalogDirty();
+      // When AI Try-On is enabled, open the standardization wizard instead of
+      // the plain success modal so the partner can upload the angle photos and
+      // generate the standardized garment image right away.
+      if (aiRequested && dressId) {
+        setAiSetupFromSave(true);
+        setAiSetupOpen(true);
+      } else {
+        setSuccessOpen(true);
+      }
     } catch (error: any) {
+      // 402 = require_active_subscription guard on the backend fired.
+      // Don't show a generic "Error" — give the partner a one-tap path
+      // to subscribe, AND keep their draft so they don't lose the form
+      // they just filled out.
+      if (error?.status === 402) {
+        Alert.alert(
+          'Subscription required',
+          'You need an active Dress Live Partner subscription to publish dresses. Your draft is saved — subscribe now to finish?',
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'Subscribe',
+              onPress: () => router.push('/subscribe' as any),
+            },
+          ],
+        );
+        return;
+      }
       Alert.alert('Error', error.message || 'Failed to add dress');
     } finally {
       setLoading(false);
@@ -475,6 +642,11 @@ export default function AddDressScreen() {
         </TouchableOpacity>
       </View>
 
+      {isEditing && !editReady ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator color="#1A1A1A" />
+        </View>
+      ) : (
       <ScrollView
         className="flex-1 px-4"
         showsVerticalScrollIndicator={false}
@@ -485,20 +657,22 @@ export default function AddDressScreen() {
             className="text-[30px] text-black mb-1"
             style={{ fontFamily: 'Helvetica Neue', fontWeight: '500' }}
           >
-            Add New Dress
+            {isEditing ? 'Edit Dress' : 'Add New Dress'}
           </Text>
           <Text className="text-[10px] text-black/35 leading-4">
-            Add pricing, materials, sizes & dress video assets.
+            {isEditing
+              ? 'Update pricing, materials, sizes & dress assets.'
+              : 'Add pricing, materials, sizes & dress video assets.'}
           </Text>
         </View>
             <SectionHeader
               title="Basic Information"
-              subtitle="Dress name, references id, and high-level info user across catalogs."
+              subtitle="Dress name, reference ID, and the core details shown across your catalog."
             />
 
             <LabeledInput
               label="Dress Name *"
-              placeholder="Type here"
+              placeholder="e.g. Elegant Satin A-Line"
               value={name}
               onChangeText={setName}
               errorText={nameError}
@@ -506,7 +680,7 @@ export default function AddDressScreen() {
 
             <LabeledInput
               label="Dress Description"
-              placeholder="Type here"
+              placeholder="Fabric, neckline, silhouette, train, fit…"
               value={description}
               onChangeText={setDescription}
             />
@@ -585,7 +759,10 @@ export default function AddDressScreen() {
               </View>
             </View>
 
-            <SectionHeader title="Choose Categories" />
+            <SectionHeader
+              title="Choose Categories"
+              subtitle="Where this dress appears in your catalog."
+            />
             <View className="flex-row flex-wrap mb-6">
               {CATEGORY_OPTIONS.map((option, index) => (
                 <View
@@ -602,7 +779,10 @@ export default function AddDressScreen() {
               ))}
             </View>
 
-            <SectionHeader title="Choose Options" subtitle="Service Options" />
+            <SectionHeader
+              title="Choose Options"
+              subtitle="What customers can do with this dress — AI try-on, live try-on, add to cart, in-store visit."
+            />
             <View className="flex-row flex-wrap mb-6">
               {SERVICE_OPTIONS.map((option, index) => (
                 <View
@@ -618,15 +798,55 @@ export default function AddDressScreen() {
                 </View>
               ))}
             </View>
-        
+
+            {/* Enable AI Try-On — dedicated checkbox (spec entry point). Drives
+                the same `AI TRY ON` service so it stays in sync with the chip
+                above. When on, the multi-angle setup wizard becomes available. */}
+            <View className="border border-[#D9D9D9] p-4 mb-6">
+              <CheckTile
+                label="Enable AI Try-On"
+                selected={aiTryOnEnabled}
+                onPress={toggleAiTryOn}
+              />
+              {aiTryOnEnabled ? (
+                <View className="mt-3">
+                  <Text className="text-[11px] text-black mb-1" style={{ fontWeight: '600' }}>
+                    Improve AI Try-On Quality
+                  </Text>
+                  <Text className="text-[9px] text-black/45 leading-4 mb-3">
+                    For the sharpest results, add 4 angle photos — front, back, left, right — in the multi-angle setup that opens after you save.
+                  </Text>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => {
+                      if (!savedDressId) {
+                        Alert.alert(
+                          'Save first',
+                          'Save the dress, then the multi-angle AI Try-On setup will open automatically.',
+                        );
+                        return;
+                      }
+                      setAiSetupFromSave(false);
+                      setAiSetupOpen(true);
+                    }}
+                    className="border border-black px-4 py-2.5 self-start"
+                  >
+                    <Text className="text-[10px] uppercase tracking-[1px] text-black">
+                      {savedDressId ? 'Open multi-angle setup' : 'Set up after saving'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+            </View>
+
             <SectionHeader
               title="Pricing & Sizes"
               subtitle="Price range and available sizes for appointments."
             />
 
             <LabeledInput
-              label="Add Final Fix Price *"
-              placeholder="Type here"
+              label="Final Price (€) *"
+              placeholder="e.g. 1800"
               value={price}
               onChangeText={setPrice}
               keyboardType="numeric"
@@ -746,6 +966,31 @@ export default function AddDressScreen() {
               onPress={() => pickAsset(setBackImage)}
             />
 
+            {/* Multi-angle AI Try-On setup — only meaningful once the dress
+                exists (needs an id to attach angle photos + run standardization).
+                Lets a partner editing an AI dress re-open the wizard to add
+                angles or regenerate the standardized image. */}
+            {aiServicesSelected && savedDressId ? (
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => {
+                  setAiSetupFromSave(false);
+                  setAiSetupOpen(true);
+                }}
+                className="border border-black px-4 py-3 mb-4 flex-row items-center justify-between"
+              >
+                <View className="flex-1 pr-3">
+                  <Text className="text-[11px] text-black" style={{ fontWeight: '600' }}>
+                    Set up AI Try-On (multi-angle)
+                  </Text>
+                  <Text className="text-[9px] text-black/45 mt-1 leading-4">
+                    Upload Front / Back / Left / Right + swatch and generate the standardized studio image.
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#1A1A1A" />
+              </TouchableOpacity>
+            ) : null}
+
             {/* AI Garment Image — shown always, more prominent when AI is selected */}
             <View className={`mb-2 ${aiServicesSelected ? 'border border-black/10 p-4 rounded-sm' : ''}`}>
               {aiServicesSelected && (
@@ -810,7 +1055,7 @@ export default function AddDressScreen() {
             </View>
 
             <UploadRow
-              label="Upload AI Video Try For AI 3D Photo *"
+              label="Upload Video Asset for AI 3D Photo *"
               hasFile={!!videoAsset}
               previewUri={videoAsset}
               onPress={() => pickAsset(setVideoAsset)}
@@ -833,7 +1078,7 @@ export default function AddDressScreen() {
                     Availability For Video Fitting
                   </Text>
                   <Text className="text-[10px] text-black/45 leading-5">
-                    Customers can only book if minimum 1 selected dresses are video-ready
+                    Customers can only book a video fitting if at least 1 of their selected dresses is video-ready.
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -858,8 +1103,8 @@ export default function AddDressScreen() {
                 subtitle="Only visible to advisors during calls."
               />
               <LabeledInput
-                label="Fit & Alteration Notes *"
-                placeholder="e.g., Romantic wedding lace mermaid dress with low back and lack details."
+                label="Fit & Alteration Notes"
+                placeholder="e.g. Runs small — size up; bustle adds ~20 min; sample is ivory."
                 value={internalNotes}
                 onChangeText={setInternalNotes}
                 multiline
@@ -879,21 +1124,40 @@ export default function AddDressScreen() {
                 <ActivityIndicator size="small" color="white" />
               ) : (
                 <Text className="text-[11px] uppercase tracking-[1.1px] text-white">
-                  Save
+                  {isEditing ? 'Update' : 'Save'}
                 </Text>
               )}
             </TouchableOpacity>
       </ScrollView>
+      )}
 
       <FigmaSuccessModal
         visible={successOpen}
         onClose={() => setSuccessOpen(false)}
-        title="Dress Added Successfully"
-        description="Your new dress listing is now added to your catalog and will be visible based on your shop visibility settings."
+        title={isEditing ? 'Dress Updated Successfully' : 'Dress Added Successfully'}
+        description={
+          isEditing
+            ? 'Your changes have been saved and the catalog has been updated.'
+            : 'Your new dress listing is now added to your catalog and will be visible based on your shop visibility settings.'
+        }
         buttonText="GO TO CATALOG"
         onButtonPress={() => {
           setSuccessOpen(false);
           router.replace('/(tabs)/catalog');
+        }}
+      />
+
+      <AITryOnSetup
+        visible={aiSetupOpen}
+        dressId={savedDressId}
+        onClose={() => {
+          setAiSetupOpen(false);
+          // From the save flow, finishing the wizard returns to the catalog.
+          // From the in-form button, just return to the form being edited.
+          if (aiSetupFromSave) router.replace('/(tabs)/catalog');
+        }}
+        onApproved={() => {
+          markCatalogDirty();
         }}
       />
     </View>

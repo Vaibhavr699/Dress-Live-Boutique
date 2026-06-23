@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Dimensions, Modal, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +12,7 @@ import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
 import {
   buildBookingNotificationDetails,
+  parseScheduledForToDate,
   sendLocalPhoneNotification,
   syncScheduledBookingReminder,
 } from '@/lib/buyerNotifications';
@@ -189,7 +191,7 @@ export default function BookingCalendarScreen() {
   const normalizedBookingId = typeof params.bookingId === 'string' ? Number(params.bookingId) : null;
   const normalizedAppointmentType = params.appointmentType === 'in_store' ? 'in_store' : 'video';
   const selectionSource = params.source === 'cart' ? 'cart' : params.source === 'product' ? 'product' : 'wishlist';
-  const [monthBase] = useState(() => {
+  const [monthBase, setMonthBase] = useState(() => {
     const date = new Date();
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
@@ -220,8 +222,19 @@ export default function BookingCalendarScreen() {
   );
   const availableSlots = useMemo(() => {
     const daySchedule = parsedSchedule.find((item) => item.day === selectedWeekday);
-    return buildTimeSlots(daySchedule?.value);
-  }, [parsedSchedule, selectedWeekday]);
+    const slots = buildTimeSlots(daySchedule?.value);
+    // When the selected date is today, hide slots that have already started (or
+    // are about to). Booking a time earlier than "now" makes no sense and the
+    // join window would already be closed. A 30-min lead means you can't grab a
+    // slot that's basically starting this minute either.
+    if (isSameDay(selectedDate, new Date())) {
+      const now = new Date();
+      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const LEAD_MINUTES = 30;
+      return slots.filter((slot) => timeToMinutes(slot) >= nowMinutes + LEAD_MINUTES);
+    }
+    return slots;
+  }, [parsedSchedule, selectedWeekday, selectedDate]);
   const scheduleLabel = useMemo(
     () => (selectedTime ? formatScheduleLabel(selectedDate, selectedTime) : ''),
     [selectedDate, selectedTime]
@@ -231,19 +244,40 @@ export default function BookingCalendarScreen() {
     [monthBase]
   );
 
+  // Midnight today + the current month's start — used to block past dates and
+  // to stop month navigation from going before the current month.
+  const today = useMemo(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }, []);
+  const currentMonthStart = useMemo(
+    () => new Date(today.getFullYear(), today.getMonth(), 1),
+    [today]
+  );
+  const canGoPrevMonth = monthBase.getTime() > currentMonthStart.getTime();
+  const goPrevMonth = () => {
+    if (!canGoPrevMonth) return;
+    setMonthBase((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
+  };
+  const goNextMonth = () => {
+    setMonthBase((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
+  };
+  const isPastDate = (date: Date) => date.getTime() < today.getTime();
+
   useEffect(() => {
-    const incomingDate = normalizedScheduledFor?.match(/,\s*(\d{1,2})\s+[A-Za-z]{3}/);
-    if (incomingDate?.[1]) {
-      const next = new Date(monthBase.getFullYear(), monthBase.getMonth(), Number(incomingDate[1]));
-      if (!Number.isNaN(next.getTime())) {
-        setSelectedDate(next);
-      }
+    // Restore the originally-booked date onto the correct month (the label
+    // carries the month; parseScheduledForToDate infers the year), so a
+    // reschedule lands on that month instead of the current one.
+    const incoming = parseScheduledForToDate(normalizedScheduledFor);
+    if (incoming) {
+      setMonthBase(new Date(incoming.getFullYear(), incoming.getMonth(), 1));
+      setSelectedDate(new Date(incoming.getFullYear(), incoming.getMonth(), incoming.getDate()));
     }
     const incomingTime = extractTimeFromScheduledFor(normalizedScheduledFor);
     if (incomingTime) {
       setSelectedTime(incomingTime);
     }
-  }, [monthBase, normalizedScheduledFor]);
+  }, [normalizedScheduledFor]);
 
   useEffect(() => {
     const loadSelectedDresses = async () => {
@@ -252,11 +286,36 @@ export default function BookingCalendarScreen() {
 
         let mergedDressIds: number[] = [];
 
-        // If booking is initiated from a product page, always preselect that dress only.
-        // This avoids pulling in wishlist items (possibly from other boutiques) and triggering backend validation errors.
         if (selectionSource === 'product') {
           if (directDressId && !Number.isNaN(directDressId)) {
-            mergedDressIds = [directDressId];
+            // Start with the current dress, then pull in wishlist dresses from the same boutique.
+            let currentDress: Dress | null = null;
+            try {
+              currentDress = await api.get(`/dresses/${directDressId}`) as Dress;
+            } catch {}
+            const currentBoutiqueId = currentDress?.boutique_id ? Number(currentDress.boutique_id) : null;
+
+            const wishlistIds: number[] = isAuthenticated
+              ? await api.get('/shortlists/me').then((res) => {
+                  const items = Array.isArray(res) ? (res as ShortlistItem[]) : [];
+                  return items.map((item) => item.dress_id);
+                }).catch(() => [] as number[])
+              : guestDressIds;
+
+            // Fetch wishlist dresses to filter by same boutique
+            let sameBoutiqueIds: number[] = [];
+            if (currentBoutiqueId && wishlistIds.length > 0) {
+              const wishlistDresses = await Promise.all(
+                wishlistIds.filter((id) => id !== directDressId).map(async (id) => {
+                  try { return await api.get(`/dresses/${id}`) as Dress; } catch { return null; }
+                })
+              );
+              sameBoutiqueIds = wishlistDresses
+                .filter((d): d is Dress => d !== null && Number(d.boutique_id) === currentBoutiqueId)
+                .map((d) => d.id);
+            }
+
+            mergedDressIds = [directDressId, ...sameBoutiqueIds].slice(0, 4);
           } else {
             mergedDressIds = [];
           }
@@ -454,6 +513,7 @@ export default function BookingCalendarScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : (
+      <FadeInView withTranslate={false} duration={260} style={{ flex: 1 }}>
       <ScrollView showsVerticalScrollIndicator={false} className="px-8">
         <Text className="text-black text-lg font-medium mb-4">
           {appointmentType === 'video' ? 'Booking Calendar Video Call' : 'Booking Calendar Visit Store'}
@@ -483,9 +543,24 @@ export default function BookingCalendarScreen() {
           )}
         </View>
 
-        <Text className="text-black/30 text-[10px] font-bold uppercase mb-6 tracking-[0.5px]">
-          {monthTitle} - Select a Date
-        </Text>
+        <View className="flex-row items-center justify-between mb-6">
+          <TouchableOpacity
+            onPress={goPrevMonth}
+            disabled={!canGoPrevMonth}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="chevron-back" size={18} color={canGoPrevMonth ? '#1A1A1A' : '#D8D8D8'} />
+          </TouchableOpacity>
+          <Text className="text-black/30 text-[10px] font-bold uppercase tracking-[0.5px]">
+            {monthTitle} - Select a Date
+          </Text>
+          <TouchableOpacity
+            onPress={goNextMonth}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Ionicons name="chevron-forward" size={18} color="#1A1A1A" />
+          </TouchableOpacity>
+        </View>
 
         {/* Calendar Grid */}
         <View className="flex-row flex-wrap mb-10">
@@ -497,21 +572,25 @@ export default function BookingCalendarScreen() {
           {calendarDays.map((cell) => {
             const isSelected = cell.isCurrentMonth && isSameDay(cell.date, selectedDate);
             const isOtherMonth = !cell.isCurrentMonth;
-            
+            // Past dates in the current month can't be booked.
+            const isPast = cell.isCurrentMonth && isPastDate(cell.date);
+            const disabled = isOtherMonth || isPast;
+
             return (
-              <TouchableOpacity 
-                key={cell.key} 
-                onPress={() => !isOtherMonth && setSelectedDate(cell.date)}
-                style={{ 
-                  width: (width - 64) / 7, 
+              <TouchableOpacity
+                key={cell.key}
+                disabled={disabled}
+                onPress={() => !disabled && setSelectedDate(cell.date)}
+                style={{
+                  width: (width - 64) / 7,
                   height: 40,
                   backgroundColor: isSelected ? 'black' : 'transparent',
-                }} 
+                }}
                 className="items-center justify-center"
               >
-                <Text 
-                  style={{ 
-                    color: isSelected ? 'white' : isOtherMonth ? '#E0E0E0' : 'black',
+                <Text
+                  style={{
+                    color: isSelected ? 'white' : disabled ? '#E0E0E0' : 'black',
                     fontSize: 10,
                     fontWeight: isSelected ? 'bold' : '400'
                   }}
@@ -529,7 +608,9 @@ export default function BookingCalendarScreen() {
         {availableSlots.length === 0 ? (
           <View className="border border-[#F0F0F0] p-4 mb-10">
             <Text className="text-black/50 text-[12px] leading-5">
-              This boutique is not available on {selectedWeekday}. Please choose another date.
+              {isSameDay(selectedDate, new Date())
+                ? "No more time slots are available today. Please choose another date."
+                : `This boutique is not available on ${selectedWeekday}. Please choose another date.`}
             </Text>
           </View>
         ) : (
@@ -580,6 +661,7 @@ export default function BookingCalendarScreen() {
           </Text>
         </TouchableOpacity>
       </ScrollView>
+      </FadeInView>
       )}
 
       {/* Language Dropdown Modal */}

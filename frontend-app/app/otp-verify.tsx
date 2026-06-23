@@ -103,7 +103,7 @@ export default function OTPVerifyScreen() {
                   lineHeight: 20
                 }}
               >
-                We send a reset link to {email || 'example@gmail.com'} enter 6 digital code that mentioned in the email.
+                We sent a 6-digit code to {email || 'your email'}. Enter it below to continue.
               </Text>
             </View>
 

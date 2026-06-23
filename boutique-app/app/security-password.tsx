@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,8 +17,10 @@ export default function SecurityPasswordScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [sendingOtp, setSendingOtp] = useState(false);
 
   const handleContinue = async () => {
+    if (sendingOtp) return;
     if (newPassword.trim().length < 8) {
       Alert.alert('Weak Password', 'Please enter a password with at least 8 characters.');
       return;
@@ -29,11 +31,14 @@ export default function SecurityPasswordScreen() {
       return;
     }
 
+    setSendingOtp(true);
     try {
       await api.post('/users/me/password/otp', { email: userEmail || undefined });
     } catch (error) {
       Alert.alert('OTP Failed', error instanceof Error ? error.message : 'Could not send verification code.');
       return;
+    } finally {
+      setSendingOtp(false);
     }
 
     router.push({
@@ -171,10 +176,15 @@ export default function SecurityPasswordScreen() {
         <TouchableOpacity
           activeOpacity={0.9}
           onPress={handleContinue}
+          disabled={sendingOtp}
           className="w-full bg-black py-4 items-center justify-center mt-auto mb-20"
-          style={{ marginTop: 240 }}
+          style={{ marginTop: 240, opacity: sendingOtp ? 0.6 : 1 }}
         >
-          <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Continue</Text>
+          {sendingOtp ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">Continue</Text>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </View>

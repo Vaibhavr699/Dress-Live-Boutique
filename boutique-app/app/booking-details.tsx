@@ -4,8 +4,9 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@shared/api/api';
+import { StatusModal, type StatusTone } from '../components/StatusModal';
 
-type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed';
+type BookingStatus = 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed' | 'cancelled';
 
 type Booking = {
   id: number;
@@ -35,6 +36,12 @@ export default function BookingDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState<Booking | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [statusModal, setStatusModal] = useState<{
+    visible: boolean;
+    tone: StatusTone;
+    title: string;
+    message?: string;
+  }>({ visible: false, tone: 'success', title: '' });
 
   useEffect(() => {
     if (!bookingId) return;
@@ -65,8 +72,20 @@ export default function BookingDetailsScreen() {
     try {
       const updated = await api.put(`/bookings/${bookingId}`, { status });
       setBooking(updated as Booking);
+      const friendly: Partial<Record<BookingStatus, { title: string; message: string }>> = {
+        accepted: { title: 'Call request accepted', message: 'The customer has been notified. You can start the fitting at the scheduled time.' },
+        rejected: { title: 'Request declined', message: 'The customer has been notified.' },
+        completed: { title: 'Marked completed', message: 'This fitting has been wrapped up.' },
+      };
+      const f = friendly[status] ?? { title: 'Booking updated', message: '' };
+      setStatusModal({ visible: true, tone: 'success', title: f.title, message: f.message });
     } catch (error) {
-      Alert.alert('Booking', error instanceof Error ? error.message : 'Could not update booking.');
+      setStatusModal({
+        visible: true,
+        tone: 'error',
+        title: 'Update failed',
+        message: error instanceof Error ? error.message : 'Could not update booking.',
+      });
     } finally {
       setUpdating(false);
     }
@@ -123,7 +142,7 @@ export default function BookingDetailsScreen() {
               <Text className="text-black text-[12px] leading-5">{dressesLabel}</Text>
             </View>
 
-            {booking.appointment_type === 'video' && booking.status !== 'rejected' ? (
+            {booking.appointment_type === 'video' && booking.status !== 'rejected' && booking.status !== 'cancelled' ? (
               <TouchableOpacity
                 activeOpacity={0.9}
                 onPress={() =>
@@ -142,7 +161,7 @@ export default function BookingDetailsScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => updateStatus('accepted')}
-                disabled={updating || booking.status === 'accepted' || booking.status === 'completed'}
+                disabled={updating || booking.status === 'accepted' || booking.status === 'completed' || booking.status === 'cancelled'}
                 className="flex-1 border border-black py-4 items-center justify-center mr-1"
                 style={{ opacity: updating || booking.status === 'completed' ? 0.4 : 1 }}
               >
@@ -151,7 +170,7 @@ export default function BookingDetailsScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={() => updateStatus('rejected')}
-                disabled={updating || booking.status === 'rejected' || booking.status === 'completed'}
+                disabled={updating || booking.status === 'rejected' || booking.status === 'completed' || booking.status === 'cancelled'}
                 className="flex-1 bg-[#C9491A] py-4 items-center justify-center ml-1"
                 style={{ opacity: updating || booking.status === 'completed' ? 0.4 : 1 }}
               >
@@ -162,7 +181,7 @@ export default function BookingDetailsScreen() {
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() => updateStatus('completed')}
-              disabled={updating || booking.status === 'completed'}
+              disabled={updating || booking.status === 'completed' || booking.status === 'cancelled'}
               className={`w-full py-4 items-center justify-center mt-3 ${
                 booking.status === 'completed' ? 'bg-black/30' : 'bg-black'
               }`}
@@ -174,6 +193,14 @@ export default function BookingDetailsScreen() {
           </View>
         </ScrollView>
       )}
+
+      <StatusModal
+        visible={statusModal.visible}
+        tone={statusModal.tone}
+        title={statusModal.title}
+        message={statusModal.message}
+        onClose={() => setStatusModal((s) => ({ ...s, visible: false }))}
+      />
     </View>
   );
 }

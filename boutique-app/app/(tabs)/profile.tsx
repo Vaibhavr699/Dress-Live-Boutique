@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, Text, SafeAreaView, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,18 +11,33 @@ const LOGOUT_ICON = require('../../assets/svg/Logout.svg');
 
 const MENU_ITEMS = [
   { label: 'Business Adresse', route: '/edit-address' },
-  { label: 'Payment Methods', route: '/payment-methods' },
+  // Payment methods moved into Earning Wallet — the partner now connects
+  // a bank account via Stripe Connect from there instead of a separate
+  // mock screen.
   { label: 'Earning Wallet', route: '/earning-wallet' },
   { label: 'Business Hours Availability', route: '/store-opening-hours' },
   { label: 'Security And Password', route: '/security-password' },
   { label: 'Delete Account', route: '/delete-account' },
 ];
 
+// Advisors don't own billing/boutique settings — their menu is limited to
+// their own availability and password. (Backend 403s the owner-only routes.)
+const ADVISOR_MENU_ITEMS = [
+  { label: 'Personal Details', route: '/advisor-profile-edit' },
+  { label: 'My Availability', route: '/advisor-availability' },
+  { label: 'Security And Password', route: '/security-password' },
+];
+
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { logout, user, setUser } = useAuthStore();
+  const isAdvisor = user?.role === 'advisor';
+  const menuItems = isAdvisor ? ADVISOR_MENU_ITEMS : MENU_ITEMS;
   const [loading, setLoading] = useState(true);
+  // Stamp the last successful profile load so the focus-effect can skip
+  // refetching within the staleness window and avoid blanking the screen.
+  const lastProfileFetchRef = useRef<number>(0);
   const [boutique, setBoutique] = useState<{
     name?: string | null;
     location?: string | null;
@@ -48,12 +63,14 @@ export default function ProfileScreen() {
     if (!boutiqueId) {
       setBoutique(null);
       setLoading(false);
+      lastProfileFetchRef.current = Date.now();
       return;
     }
 
     try {
       const data = await api.get(`/boutiques/${boutiqueId}`);
       setBoutique(data);
+      lastProfileFetchRef.current = Date.now();
     } catch (error) {
       console.error('Failed to load boutique profile:', error);
       setBoutique(null);
@@ -62,9 +79,17 @@ export default function ProfileScreen() {
     }
   }, [user?.boutique_id, setUser]);
 
+  // Skip the refetch if we loaded within the last 30s. The profile used to
+  // re-hit /users/me and /boutiques/{id} on every tab switch, blanking the
+  // screen to a spinner each time.
+  const PROFILE_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
-      setLoading(true);
+      const now = Date.now();
+      if (now - lastProfileFetchRef.current < PROFILE_STALE_MS) return;
+      // Stale-while-revalidate: only show the spinner on the very first load.
+      // After that, keep the current profile on screen and refresh quietly.
+      if (lastProfileFetchRef.current === 0) setLoading(true);
       loadProfile();
     }, [loadProfile])
   );
@@ -108,9 +133,8 @@ export default function ProfileScreen() {
         <View className="px-5">
           <View className="border-t border-[#EDEDED] pt-8">
             {loading ? (
-              <View className="py-16 items-center">
+              <View className="py-20 items-center">
                 <ActivityIndicator color="#1A1A1A" />
-                <Text className="text-[11px] text-black/45 mt-4">Loading profile…</Text>
               </View>
             ) : (
               <>
@@ -134,9 +158,11 @@ export default function ProfileScreen() {
                       />
                     </View>
 
-                    <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="absolute top-3 right-3 bg-white/90 w-9 h-9 items-center justify-center">
-                      <Feather name="edit-2" size={18} color="#1A1A1A" />
-                    </TouchableOpacity>
+                    {!isAdvisor ? (
+                      <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="absolute top-3 right-3 bg-white/90 w-9 h-9 items-center justify-center">
+                        <Feather name="edit-2" size={18} color="#1A1A1A" />
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
 
                   {interiorImageSource ? (
@@ -169,7 +195,7 @@ export default function ProfileScreen() {
                 </View>
 
                 <View className="mb-10">
-                  <Text className="text-[12px] uppercase tracking-[1px] text-black/75 mb-5">Owner Information</Text>
+                  <Text className="text-[12px] uppercase tracking-[1px] text-black/75 mb-5">{isAdvisor ? 'Your Information' : 'Owner Information'}</Text>
                   <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Full Name</Text>
                   <Text className="text-[14px] text-black/80 mb-5">{user?.full_name || 'Not available'}</Text>
                   <Text className="text-[10px] uppercase tracking-[0.6px] text-black/45 mb-2">Email</Text>
@@ -180,7 +206,7 @@ export default function ProfileScreen() {
                   <Text className="text-[14px] text-black/80">{ownerAddress || 'Not added yet'}</Text>
                 </View>
 
-                {MENU_ITEMS.map((item) => (
+                {menuItems.map((item) => (
                   <TouchableOpacity
                     key={item.label}
                     activeOpacity={0.85}

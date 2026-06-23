@@ -1,0 +1,38 @@
+<svg width="100%" viewBox="0 0 380 380" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+<title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Dress Live app logo</title>
+<desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">A monogram logo combining the letters D and L styled as a flowing dress silhouette, set inside a rounded square app icon.</desc>
+
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0%" stop-color="#F5E6E8"/>
+<stop offset="100%" stop-color="#E8B4BC"/>
+</linearGradient>
+<linearGradient id="dressGrad" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#2C1810"/>
+<stop offset="100%" stop-color="#5C2E2E"/>
+</linearGradient>
+</defs>
+
+<!-- App icon rounded square background -->
+<rect x="40" y="40" width="300" height="300" rx="66" fill="url(#bg)" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- Subtle inner glow ring -->
+<rect x="52" y="52" width="276" height="276" rx="58" fill="none" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="1" style="fill:none;stroke:rgb(255, 255, 255);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- D shape - left side, curved like a dress bodice opening into a skirt -->
+<path d="M 120 120 &#10;         L 120 280&#10;         Q 120 280 145 280&#10;         Q 215 280 215 200&#10;         Q 215 120 145 120&#10;         Q 120 120 120 120 Z" fill="url(#dressGrad)" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- Inner cutout of D, shaped like an elegant dress silhouette -->
+<path d="M 145 145&#10;         L 145 255&#10;         Q 175 255 188 220&#10;         Q 195 200 188 180&#10;         Q 175 145 145 145 Z" fill="url(#bg)" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- L shape integrated as a flowing train/sash -->
+<path d="M 235 120&#10;         L 235 250&#10;         Q 235 280 265 280&#10;         L 295 280&#10;         L 295 258&#10;         L 257 258&#10;         L 257 120 Z" fill="url(#dressGrad)" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- Decorative dot - represents the AI sparkle / pearl accent -->
+<circle cx="265" cy="140" r="6" fill="#D4AF37" style="fill:rgb(212, 175, 55);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+<!-- Tiny sparkle accents -->
+<circle cx="295" cy="115" r="2.5" fill="#D4AF37" opacity="0.8" style="fill:rgb(212, 175, 55);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.8;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+<circle cx="100" cy="295" r="2" fill="#D4AF37" opacity="0.6" style="fill:rgb(212, 175, 55);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.6;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+</svg>

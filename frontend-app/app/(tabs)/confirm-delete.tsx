@@ -15,12 +15,7 @@ export default function ConfirmDeleteScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleFinalDelete = async () => {
-    if (!email.trim() || !password.trim()) {
-      Alert.alert('Missing Details', 'Please confirm your email and password.');
-      return;
-    }
-
+  const performDelete = async () => {
     setLoading(true);
     try {
       await api.delete('/users/me', {
@@ -38,6 +33,24 @@ export default function ConfirmDeleteScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFinalDelete = () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Missing Details', 'Please confirm your email and password.');
+      return;
+    }
+    // Final guard before an irreversible action — a single tap on the red
+    // button (with a pre-filled email) shouldn't be enough to permanently
+    // delete the account.
+    Alert.alert(
+      'Delete account permanently?',
+      'This permanently deletes your account and all of your data. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => { void performDelete(); } },
+      ],
+    );
   };
   const handleBack = () => {
     if (source === 'profile') {

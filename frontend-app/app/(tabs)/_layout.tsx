@@ -4,6 +4,7 @@ import { View, StyleSheet, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { useCartStore } from '@/store/useCartStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { EdgeSwipeBackProvider } from '@/components/ui/edge-swipe-back';
 
 const HOME_ICON = require('../../assets/svg/Home.svg');
 const CART_ICON = require('../../assets/svg/Cart.svg');
@@ -76,11 +77,19 @@ export default function TabLayout() {
   const bottomInset = Math.max(insets.bottom, 8);
 
   return (
+    <EdgeSwipeBackProvider>
     <Tabs
+      // Detail screens (boutique-details, product-details, checkout, …) live
+      // inside this tab navigator. Default "firstRoute" back behavior sends
+      // back/swipe straight to Home; "history" walks back through the screens
+      // in the order they were actually visited (product → boutique → home).
+      backBehavior="history"
       screenOptions={{
         tabBarActiveTintColor: '#1A1A1A',
         tabBarInactiveTintColor: '#1A1A1A50',
         headerShown: false,
+        animation: 'shift',
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
           height: 62 + bottomInset,
           paddingBottom: bottomInset,
@@ -148,6 +157,7 @@ export default function TabLayout() {
         name="video-call"
         options={{
           href: null,
+          tabBarStyle: { display: 'none' },
         }}
       />
       <Tabs.Screen
@@ -176,18 +186,6 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="my-measurements"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="payment-methods"
-        options={{
-          href: null,
-        }}
-      />
-      <Tabs.Screen
-        name="payment-details"
         options={{
           href: null,
         }}
@@ -225,10 +223,7 @@ export default function TabLayout() {
       />
 
     </Tabs>
-
-
-
-
+    </EdgeSwipeBackProvider>
 
   );
 }

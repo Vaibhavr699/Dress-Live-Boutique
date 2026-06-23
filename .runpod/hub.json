@@ -1,0 +1,46 @@
+{
+  "title": "Dress Live — CatVTON Virtual Try-On",
+  "description": "Photoreal garment-on-person diffusion try-on for live boutique video calls. Wraps CatVTON (~899M params) on a CUDA 12.1 image with the model attention weights baked in for fast cold starts. Inputs are a customer photo + dress image; output is a JPEG composite in ~1.5–3s per call on RTX 4090. Note: CatVTON is CC BY-NC-SA 4.0 — contact the authors for commercial use.",
+  "type": "serverless",
+  "category": "image",
+  "iconUrl": "https://example.com/icon.png",
+  "config": {
+    "runsOn": "GPU",
+    "gpuCount": 1,
+    "gpuIds": "ADA_24",
+    "allowedCudaVersions": ["12.7", "12.6", "12.5", "12.4", "12.3", "12.2", "12.1"],
+    "containerDiskInGb": 30,
+    "presets": [
+      {
+        "name": "Cost-optimized (RTX 4090, autoscale-to-zero, FlashBoot)",
+        "defaults": {
+          "CATVTON_PRECISION": "bf16"
+        }
+      }
+    ],
+    "env": [
+      {
+        "key": "CATVTON_BASE_MODEL",
+        "input": {
+          "name": "Base SD-inpainting model",
+          "type": "string",
+          "description": "HuggingFace repo ID or local path of the Stable Diffusion inpainting checkpoint CatVTON wraps. Default downloads ~5GB on first request and caches on the worker disk.",
+          "default": "booksforcharlie/stable-diffusion-inpainting"
+        }
+      },
+      {
+        "key": "CATVTON_ATTN_REPO",
+        "value": "/opt/models/catvton"
+      },
+      {
+        "key": "CATVTON_PRECISION",
+        "input": {
+          "name": "Mixed precision",
+          "type": "string",
+          "description": "Inference precision. bf16 = recommended for Ada/Hopper (RTX 4090, L40S, H100). fp16 = older Ampere cards. no = full fp32, slower.",
+          "default": "bf16"
+        }
+      }
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
+import { useFloatingHeart } from '@/components/ui/floating-heart';
 import { Image } from 'expo-image';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -55,8 +57,16 @@ type Dress = {
 export default function BoutiqueDetailsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const { addItem } = useCartStore();
+  const { width, height } = useWindowDimensions();
+
+  // Floating heart animation — fires when adding to wishlist from a card.
+  // Wishlist is the middle (3rd of 5) bottom-tab, so targetX = 0 (centered)
+  // and targetY flies down to just above the safe-area inset.
+  const { overlay: heartOverlay, trigger: triggerHeartAnim } = useFloatingHeart({
+    targetX: 0,
+    targetY: height / 2 - (insets.bottom + 28),
+  });
+  const addItem = useCartStore((state) => state.addItem);
   const isAuthenticated = useAuthStore((state: { isAuthenticated: boolean }) => state.isAuthenticated);
   const guestDressIds = useShortlistStore((s) => s.dressIds);
   const toggleGuestShortlist = useShortlistStore((s) => s.toggle);
@@ -104,13 +114,23 @@ export default function BoutiqueDetailsScreen() {
 
   const handleToggleShortlist = async (dress: Dress) => {
     if (!isAuthenticated) {
+      const wasOn = guestDressIds.includes(dress.id);
       const r = toggleGuestShortlist(dress.id);
       if (!r.ok) {
         Alert.alert('Wishlist', 'You can select a maximum of 4 dresses.');
+        return;
       }
+      if (!wasOn) triggerHeartAnim();
       return;
     }
     const on = authShortlistIds.includes(dress.id);
+    // Client-side gate matching the backend's 4-dress cap so we don't
+    // fire the heart animation and immediately get a 400 alert.
+    if (!on && authShortlistIds.length >= 4) {
+      Alert.alert('Wishlist', 'You can save up to 4 dresses. Remove one first to add this.');
+      return;
+    }
+    if (!on) triggerHeartAnim();
     setShortlistBusyId(dress.id);
     try {
       if (on) {
@@ -128,15 +148,20 @@ export default function BoutiqueDetailsScreen() {
   };
 
   useEffect(() => {
+    if (!Number.isFinite(boutiqueId)) {
+      setBoutique(null);
+      setDresses([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setBoutique(null);
+    setDresses([]);
+
     let alive = true;
     (async () => {
       try {
-        if (!Number.isFinite(boutiqueId)) {
-          setBoutique(null);
-          setDresses([]);
-          return;
-        }
-        setLoading(true);
         const [b, ds] = await Promise.all([
           api.get(`/boutiques/${boutiqueId}`),
           api.get(`/dresses/?boutique_id=${boutiqueId}&limit=200`),
@@ -217,7 +242,8 @@ export default function BoutiqueDetailsScreen() {
   const dressCardWidth = useMemo(() => Math.max((width - 55) / 2, 145), [width]);
   const dressImageHeight = dressCardWidth;
 
-  if (loading) {
+  const isStale = Number.isFinite(boutiqueId) && boutique != null && boutique.id !== boutiqueId;
+  if (loading || isStale) {
     return (
       <View className="flex-1 bg-white items-center justify-center" style={{ paddingTop: insets.top }}>
         <ActivityIndicator color="#1A1A1A" />
@@ -248,6 +274,7 @@ export default function BoutiqueDetailsScreen() {
 
   return (
     <View className="flex-1 bg-white">
+      {heartOverlay}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 100 }}
@@ -270,6 +297,9 @@ export default function BoutiqueDetailsScreen() {
                 source={image.source}
                 style={{ width, height: heroImageHeight }}
                 contentFit="cover"
+                cachePolicy="memory-disk"
+                transition={180}
+                recyclingKey={image.key}
               />
             ))}
           </ScrollView>
@@ -397,20 +427,16 @@ export default function BoutiqueDetailsScreen() {
             ))}
           </ScrollView>
 
-          {loading ? (
-            <View className="py-16 items-center justify-center">
-              <ActivityIndicator color="#1A1A1A" />
-            </View>
-          ) : filteredDresses.length === 0 ? (
-            <View className="py-16 items-center justify-center">
+          {filteredDresses.length === 0 ? (
+            <FadeInView className="py-16 items-center justify-center">
               <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No dresses available</Text>
               <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
                 This boutique has no matching dresses in this category.
               </Text>
-            </View>
+            </FadeInView>
           ) : (
             <View className="flex-row flex-wrap justify-between">
-              {filteredDresses.map((dress) => {
+              {filteredDresses.map((dress, idx) => {
                 const priceLabel =
                   typeof dress.price === 'number' ? `${formatPriceWithSpaces(dress.price)} €` : `${dress.price} €`;
                 const imageSource = dress.image_url
@@ -418,7 +444,7 @@ export default function BoutiqueDetailsScreen() {
                   : require('@/assets/images/Dashboard image 3.png');
 
                 return (
-                  <View key={dress.id} style={{ width: dressCardWidth, minHeight: 231, marginBottom: 20 }}>
+                  <FadeInView key={dress.id} delay={Math.min(idx * 40, 240)} style={{ width: dressCardWidth, minHeight: 231, marginBottom: 20 }}>
                     <View className="relative mb-3">
                       <TouchableOpacity
                         activeOpacity={0.9}
@@ -433,7 +459,14 @@ export default function BoutiqueDetailsScreen() {
                           })
                         }
                       >
-                        <Image source={imageSource} style={{ width: '100%', height: dressImageHeight }} contentFit="cover" />
+                        <Image
+                          source={imageSource}
+                          style={{ width: '100%', height: dressImageHeight }}
+                          contentFit="cover"
+                          cachePolicy="memory-disk"
+                          transition={150}
+                          recyclingKey={String(dress.id)}
+                        />
                       </TouchableOpacity>
                     </View>
 
@@ -483,6 +516,7 @@ export default function BoutiqueDetailsScreen() {
                             id: String(dress.id),
                             name: dress.name,
                             price: priceLabel,
+                            priceValue: typeof dress.price === 'number' ? dress.price : undefined,
                             imageUrl: dress.image_url ?? null,
                             boutiqueId,
                             selected: true,
@@ -495,7 +529,7 @@ export default function BoutiqueDetailsScreen() {
                         <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
                       </TouchableOpacity>
                     </View>
-                  </View>
+                  </FadeInView>
                 );
               })}
             </View>

@@ -1,15 +1,39 @@
-import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useStripe } from '@stripe/stripe-react-native';
+import { api } from '@shared/api/api';
 import { useCartStore } from '@/store/useCartStore';
+import { useLastOrderStore } from '@/store/useLastOrderStore';
+import { priceStringToNumber } from '@/utils/money';
+
+
+type CreateOrderResponse = {
+  order: {
+    id: number;
+    total_cents: number;
+    subtotal_cents: number;
+    service_fee_cents: number;
+    boutique_id: number;
+    currency: string;
+  };
+  client_secret: string;
+  publishable_key: string;
+  stripe_account_id: string;
+};
+
 
 export default function CheckoutScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
   const cartItems = useCartStore((state) => state.items);
+  const clearCart = useCartStore((state) => state.clearCart);
+  const [paying, setPaying] = useState(false);
+
   const selectedItems = useMemo(
     () => cartItems.filter((item) => item.selected),
     [cartItems]
@@ -18,11 +42,15 @@ export default function CheckoutScreen() {
     () => selectedItems.reduce((total, item) => total + item.quantity, 0),
     [selectedItems]
   );
+  // Estimate from the numeric price stored on the cart item (falling back to a
+  // robust parse of the display string for legacy persisted items). The real
+  // charge is always the backend PaymentIntent amount; this is just the
+  // pre-payment estimate shown on the button.
   const subtotal = useMemo(
     () =>
       selectedItems.reduce((total, item) => {
-        const numericPrice = Number.parseFloat(item.price.replace(/[^\d.]/g, '')) || 0;
-        return total + numericPrice * item.quantity;
+        const unit = item.priceValue ?? priceStringToNumber(item.price);
+        return total + unit * item.quantity;
       }, 0),
     [selectedItems]
   );
@@ -30,10 +58,117 @@ export default function CheckoutScreen() {
   const total = subtotal + serviceFee;
   const isEmpty = selectedItems.length === 0;
 
+  // All selected items must come from the same boutique — Stripe Connect
+  // routes funds to ONE destination per PaymentIntent. If the cart mixes
+  // boutiques we surface a clear error rather than silently charging the
+  // first one.
+  const boutiqueIds = useMemo(
+    () => Array.from(new Set(selectedItems.map((i) => i.boutiqueId).filter((x): x is number => typeof x === 'number'))),
+    [selectedItems]
+  );
+  const mixedBoutiques = boutiqueIds.length > 1;
+  const boutiqueId = boutiqueIds[0] ?? null;
+
+  const handlePay = async () => {
+    if (paying || isEmpty) return;
+    if (!boutiqueId) {
+      Alert.alert(
+        'Cart issue',
+        'These items are missing a boutique. Please remove and re-add them.',
+      );
+      return;
+    }
+    if (mixedBoutiques) {
+      Alert.alert(
+        'One boutique per checkout',
+        'Your cart has dresses from multiple boutiques. Check out one boutique at a time.',
+      );
+      return;
+    }
+
+    setPaying(true);
+    try {
+      const dressItems = selectedItems
+        .map((it) => ({
+          dress_id: Number(it.id),
+          quantity: it.quantity,
+        }))
+        .filter((it) => Number.isFinite(it.dress_id));
+      if (dressItems.length === 0) {
+        throw new Error('No valid dresses in selection.');
+      }
+
+      // 1. Backend creates the Order + Stripe PaymentIntent
+      const data = (await api.post('/orders/', {
+        boutique_id: boutiqueId,
+        items: dressItems,
+      })) as CreateOrderResponse;
+
+      // 2. Init PaymentSheet with the client_secret
+      const initRes = await initPaymentSheet({
+        merchantDisplayName: 'Dress Live',
+        paymentIntentClientSecret: data.client_secret,
+        // Stripe Connect: the SDK needs to know which connected account
+        // this PaymentIntent lives on so Apple/Google Pay show the right
+        // merchant name.
+        stripeAccountId: data.stripe_account_id,
+        // Stripe shows Card + Apple Pay + Google Pay automatically when
+        // they're available on the device.
+        applePay: { merchantCountryCode: 'FR' },
+        googlePay: { merchantCountryCode: 'FR', testEnv: true },
+        allowsDelayedPaymentMethods: false,
+      });
+      if (initRes.error) {
+        throw new Error(initRes.error.message || 'Could not initialize payment.');
+      }
+
+      // 3. Show the sheet
+      const presentRes = await presentPaymentSheet();
+      if (presentRes.error) {
+        // User canceled is not an error worth alerting on
+        const code = presentRes.error.code;
+        if (code === 'Canceled') {
+          return;
+        }
+        throw new Error(presentRes.error.message || 'Payment failed.');
+      }
+
+      // 4. Success — webhook will mark the order paid server-side. Snapshot the
+      // order (backend-authoritative cents totals + items + real id) for the
+      // confirmation screen BEFORE clearing the cart, then clear and navigate.
+      useLastOrderStore.getState().setOrder({
+        orderId: data.order.id,
+        currency: data.order.currency,
+        subtotalCents: data.order.subtotal_cents,
+        serviceFeeCents: data.order.service_fee_cents,
+        totalCents: data.order.total_cents,
+        items: selectedItems.map((it) => ({
+          id: it.id,
+          name: it.name,
+          quantity: it.quantity,
+          price: it.price,
+          imageUrl: it.imageUrl ?? null,
+        })),
+      });
+      clearCart();
+      router.replace({
+        pathname: '/(tabs)/order-summary',
+        params: {
+          type: 'confirmed',
+          orderId: String(data.order.id),
+        },
+      } as any);
+    } catch (err: any) {
+      Alert.alert('Payment failed', err?.message || 'Something went wrong.');
+    } finally {
+      setPaying(false);
+    }
+  };
+
   return (
     <View className="flex-1 bg-white">
       {/* Header */}
-      <View 
+      <View
         className="px-6 flex-row items-center border-b border-[#F0F0F0] pb-4"
         style={{ paddingTop: insets.top + 10 }}
       >
@@ -81,7 +216,7 @@ export default function CheckoutScreen() {
               ))}
             </View>
 
-            <View className="mb-10 rounded-sm border border-[#F0F0F0] bg-[#F9F9F9] p-4">
+            <View className="mb-6 rounded-sm border border-[#F0F0F0] bg-[#F9F9F9] p-4">
               <View className="flex-row justify-between mb-2">
                 <Text className="text-black/50 text-[12px]">Subtotal</Text>
                 <Text className="text-black text-[12px]">{subtotal.toFixed(0)} EUR</Text>
@@ -96,28 +231,34 @@ export default function CheckoutScreen() {
               </View>
             </View>
 
-            {/* Action Button */}
-            <TouchableOpacity 
+            {mixedBoutiques ? (
+              <View className="mb-6 p-4 bg-[#FFF4EC] border border-[#FFDAB8]">
+                <Text className="text-[#C9491A] text-[11px] font-bold uppercase tracking-[0.5px] mb-1">
+                  One boutique per checkout
+                </Text>
+                <Text className="text-[#7A3E1C] text-[11px] leading-4">
+                  Your selection includes dresses from multiple boutiques. Please check out one boutique at a time.
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Pay Button — opens Stripe PaymentSheet (Card / Apple Pay / Google Pay) */}
+            <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() => router.push('/(tabs)/order-summary')}
-              className="w-full bg-black py-4 items-center justify-center mb-10"
+              onPress={handlePay}
+              disabled={paying || mixedBoutiques}
+              className={`w-full py-4 items-center justify-center mb-10 ${paying || mixedBoutiques ? 'bg-black/40' : 'bg-black'}`}
             >
-              <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">
-                Review Selection - {total.toFixed(0)} EUR
-              </Text>
+              {paying ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text className="text-white text-[12px] font-bold tracking-[2px] uppercase">
+                  Pay {total.toFixed(0)} EUR
+                </Text>
+              )}
             </TouchableOpacity>
           </>
         )}
-
-
-        {/* Payment Method */}
-        <Text className="text-black text-[12px] font-bold uppercase mb-4 tracking-[0.5px]">Payment Method</Text>
-        <View className="bg-[#F9F9F9] p-4 border border-[#F0F0F0] mb-10">
-          <Text className="text-black text-sm mb-2">Payment will be enabled in a later step.</Text>
-          <Text className="text-black/45 text-[11px] leading-5">
-            For now, the cart flow lets buyers review their selected dresses and continue to measurement scheduling without a live payment method.
-          </Text>
-        </View>
 
         {/* No Returns Policy */}
         <View className="bg-[#FFF8F2] p-4 flex-row items-start border border-[#FFF0E0] mb-20">
@@ -133,7 +274,7 @@ export default function CheckoutScreen() {
         {/* Secure Message */}
         <View className="items-center flex-row justify-center pb-20">
           <Feather name="lock" size={14} color="black" style={{ opacity: 0.3, marginRight: 8 }} />
-          <Text className="text-black/30 text-[10px]">Checkout review is saved locally until payment is added</Text>
+          <Text className="text-black/30 text-[10px]">Payments are processed securely by Stripe</Text>
         </View>
       </ScrollView>
     </View>

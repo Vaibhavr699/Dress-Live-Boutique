@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Linking, RefreshControl } from 'react-native';
+import { FadeInView } from '@/components/ui/fade-in-view';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -22,7 +23,7 @@ const MARKER_ICON = require('@/assets/svg/marker.svg');
 type Booking = {
   id: number;
   appointment_type: 'video' | 'in_store';
-  status: 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed';
+  status: 'requested' | 'accepted' | 'rejected' | 'rescheduled' | 'completed' | 'cancelled';
   scheduled_for: string;
   language: string;
   location?: string | null;
@@ -48,18 +49,25 @@ export default function BookingScreen() {
       return;
     }
     const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
-    const canOpen = await Linking.canOpenURL(url);
-    if (!canOpen) {
-      Alert.alert('Google Maps', 'Could not open Google Maps.');
-      return;
+    // Skip canOpenURL: in production builds Android's package-visibility rules
+    // (API 30+) and iOS's LSApplicationQueriesSchemes restrictions can make
+    // canOpenURL return false even for valid https URLs. openURL itself will
+    // hand off to the system browser, which always exists.
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Google Maps', 'Could not open Google Maps. Please copy the address manually.');
     }
-    await Linking.openURL(url);
   }, []);
 
   useEffect(() => {
     const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
     return unsub;
   }, []);
+
+  // Stamp the last successful fetch so the focus-effect can skip refetches
+  // when the buyer bounces between tabs quickly.
+  const lastBookingsFetchRef = useRef<number>(0);
 
   const loadBookings = useCallback(async () => {
     if (!useAuthStore.getState().token) {
@@ -73,6 +81,7 @@ export default function BookingScreen() {
       const next = Array.isArray(data) ? (data as Booking[]) : [];
       setBookings(next);
       setBookingHistoryFromApi(next as any);
+      lastBookingsFetchRef.current = Date.now();
       next
         .filter((booking) => ['requested', 'accepted', 'rescheduled'].includes(booking.status))
         .forEach((booking) => {
@@ -93,18 +102,35 @@ export default function BookingScreen() {
     }
   }, [setBookingHistoryFromApi, upsertNotification]);
 
+  // Skip the booking refetch if we loaded within the last 30s. Booking
+  // status can change (partner accepts/rejects) so the gate is shorter
+  // than the catalog one. Pull-to-refresh below bypasses the gate.
+  const BOOKINGS_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
       if (!hydrated) return;
+      const now = Date.now();
+      if (now - lastBookingsFetchRef.current < BOOKINGS_STALE_MS) return;
       setLoading(true);
       loadBookings();
     }, [loadBookings, token, hydrated])
   );
 
+  // Manual pull-to-refresh.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadBookings();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadBookings]);
+
   const cancelBooking = async (id: number) => {
     setUpdatingId(id);
     try {
-      const updated = await api.put(`/bookings/${id}`, { status: 'rejected' });
+      const updated = await api.put(`/bookings/${id}`, { status: 'cancelled' });
       setBookings((prev) => prev.map((booking) => (booking.id === id ? updated : booking)));
       const notification = buildBookingNotificationDetails(updated as Booking, 'booking_cancelled');
       addNotification(notification);
@@ -144,7 +170,7 @@ export default function BookingScreen() {
           <ActivityIndicator color="#1A1A1A" />
         </View>
       ) : !isLoggedIn ? (
-        <View className="flex-1 items-center justify-center px-10">
+        <FadeInView className="flex-1 items-center justify-center px-10">
           <View className="mb-8 opacity-20">
             <Image source={NO_BOOKING_ICON} style={{ width: 64, height: 64 }} />
           </View>
@@ -178,9 +204,9 @@ export default function BookingScreen() {
           <TouchableOpacity onPress={() => router.push('/login')} className="mt-10 border-b border-black pb-1">
             <Text className="text-black text-xs font-bold uppercase tracking-[1px]">Sign in</Text>
           </TouchableOpacity>
-        </View>
+        </FadeInView>
       ) : isEmpty ? (
-        <View className="flex-1 items-center px-10" style={{ paddingTop: 76 }}>
+        <FadeInView className="flex-1 items-center px-10" style={{ paddingTop: 76 }}>
           <View className="mb-6 items-center justify-center">
             <Image source={NO_BOOKING_ICON} style={{ width: 34, height: 34 }} contentFit="contain" />
           </View>
@@ -209,19 +235,28 @@ export default function BookingScreen() {
             You haven&apos;t booked a video call or store visit yet.{'\n'}
             When you do, they will be shown here.
           </Text>
-        </View>
+        </FadeInView>
       ) : (
-        <ScrollView 
-          showsVerticalScrollIndicator={false} 
+        <ScrollView
+          showsVerticalScrollIndicator={false}
           className="flex-1"
           contentContainerStyle={{ paddingTop: 24, paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#1A1A1A"
+              colors={['#1A1A1A']}
+            />
+          }
         >
           {bookings.map((booking) => {
             const isActionable = booking.status === 'accepted' || booking.status === 'rescheduled';
-            const isTerminal = booking.status === 'rejected' || booking.status === 'completed';
+            const isTerminal = booking.status === 'rejected' || booking.status === 'completed' || booking.status === 'cancelled';
             const statusLabel =
               booking.status === 'requested' ? 'Awaiting Confirmation' :
               booking.status === 'rejected'  ? 'Booking Declined' :
+              booking.status === 'cancelled' ? 'Booking Cancelled' :
               booking.status === 'completed' ? 'Call Completed' : null;
             const actionLabel =
               booking.appointment_type === 'video' ? 'Start Video Call' : 'See Google Map';

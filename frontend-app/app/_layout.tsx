@@ -1,27 +1,39 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { StripeProvider } from '@stripe/stripe-react-native';
 import 'react-native-reanimated';
+import 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ErrorBoundary } from '@/components/error-boundary';
 import "../global.css";
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFonts, PlayfairDisplay_700Bold, PlayfairDisplay_600SemiBold, PlayfairDisplay_400Regular } from '@expo-google-fonts/playfair-display';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Text, View } from 'react-native';
+import { LogBox, Platform, Text, View } from 'react-native';
 import { IncomingVideoCallBar } from '@shared/components/IncomingVideoCallBar';
 import { useIncomingVideoRingPoller } from '@shared/hooks/useIncomingVideoRingPoller';
 import '@shared/polyfills/domExceptionNative';
-import { isLiveKitNativeSupported } from '@shared/livekitAvailability';
+import { api } from '@shared/api/api';
+import { setupNotifications } from '@shared/notificationsSetup';
 import { useAuthStore } from '@shared/store/useAuthStore';
 import { useCartStore } from '@/store/useCartStore';
 import { useShortlistStore } from '@/store/useShortlistStore';
 import { useBookingHistoryStore } from '@/store/useBookingHistoryStore';
 import { useNotificationStore } from '@/store/useNotificationStore';
+import { useLastOrderStore } from '@/store/useLastOrderStore';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 
 SplashScreen.preventAutoHideAsync();
+
+if (__DEV__) {
+  // Benign dev-only noise from expo-keep-awake when Metro toggles screen-wake.
+  // Does not affect production builds.
+  LogBox.ignoreLogs([/Unable to activate keep awake/, /ERR_KEEP_AWAKE/]);
+}
 
 function BootScreen() {
   return (
@@ -88,26 +100,6 @@ export default function RootLayout() {
   }, [fontsReady]);
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
-    if (!isLiveKitNativeSupported()) return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const lk = require('@livekit/react-native');
-      if (lk && typeof lk.registerGlobals === 'function') {
-        lk.registerGlobals();
-      }
-      if (Platform.OS === 'android' && lk?.AudioSession?.configureAudio && lk?.AndroidAudioTypePresets?.communication) {
-        lk.AudioSession.configureAudio({
-          audioTypeOptions: lk.AndroidAudioTypePresets.communication,
-          preferredOutputList: ['speaker', 'earpiece', 'bluetooth', 'headset'],
-        });
-      }
-    } catch {
-      // no-op
-    }
-  }, []);
-
-  useEffect(() => {
     // Check if hydration is done from the store itself
     const hydrated = useAuthStore.persist.hasHydrated();
     if (hydrated) {
@@ -131,6 +123,7 @@ export default function RootLayout() {
         useShortlistStore.getState().clear();
         useBookingHistoryStore.getState().clear();
         useNotificationStore.getState().clear();
+        useLastOrderStore.getState().clear();
       } catch (error) {
         console.warn('Failed to clear guest state on logout:', error);
       }
@@ -143,7 +136,7 @@ export default function RootLayout() {
       typeof segments[0] === 'string' &&
       (
         segments[0].startsWith('profile-') ||
-        ['booking-history', 'notifications', 'video-call-summary'].includes(segments[0])
+        ['booking-history', 'notifications', 'video-call-summary', 'post-call', 'decart-spike'].includes(segments[0])
       );
     const hasRoleMismatch = isAuthenticated && !!user && user.role !== 'buyer';
 
@@ -165,7 +158,7 @@ export default function RootLayout() {
         typeof segments[0] === 'string' &&
         (
           segments[0].startsWith('profile-') ||
-          ['booking-history', 'notifications', 'video-call-summary'].includes(segments[0])
+          ['booking-history', 'notifications', 'video-call-summary', 'post-call', 'decart-spike'].includes(segments[0])
         )
       );
 
@@ -200,9 +193,22 @@ export default function RootLayout() {
             if (notifPerm.status !== 'granted') {
               await Notifications.requestPermissionsAsync();
             }
+            // Register Android channels + iOS categories with inline buttons.
+            await setupNotifications({ role: 'buyer' });
             try {
-              const token = await Notifications.getExpoPushTokenAsync();
-              console.log('Expo push token:', token.data);
+              const tokenRes = await Notifications.getExpoPushTokenAsync();
+              const expoToken = tokenRes?.data;
+              if (expoToken) {
+                // Register with backend so server-side dispatch can reach this device.
+                try {
+                  await api.post('/notifications/push-tokens', {
+                    expo_token: expoToken,
+                    platform: Platform.OS,
+                  });
+                } catch (err) {
+                  console.warn('Failed to register push token:', err);
+                }
+              }
             } catch {
               // ignore token errors (works only on physical device + correct project setup)
             }
@@ -238,9 +244,37 @@ export default function RootLayout() {
       const sub = Notifications.addNotificationResponseReceivedListener((response) => {
         const data = response.notification.request.content.data as {
           type?: string | null;
+          action_type?: string | null;
+          kind?: string | null;
           bookingId?: number | string | null;
+          booking_id?: number | string | null;
+          post_call?: boolean | null;
         };
-        if (data?.type === 'booking') {
+        const action = data?.action_type ?? data?.type;
+        // Tap on an incoming video-call push → jump straight into the call room
+        // for that booking. The IncomingVideoCallBar polling path is still the
+        // fallback when the app was foreground and the user dismissed the push.
+        if (action === 'video_call') {
+          const rawId = data?.bookingId ?? data?.booking_id ?? null;
+          const id = typeof rawId === 'number' ? rawId : Number(rawId);
+          if (Number.isFinite(id)) {
+            router.push({ pathname: '/(tabs)/video-call', params: { bookingId: String(id) } });
+            return;
+          }
+        }
+        if (action === 'booking') {
+          // `booking_completed` push from the LiveKit `room_finished` webhook
+          // carries `post_call: true` — deep-link to the dress-picker rather
+          // than the generic bookings tab.
+          const isPostCall = data?.post_call === true || data?.kind === 'booking_completed';
+          if (isPostCall) {
+            const rawId = data?.bookingId ?? data?.booking_id ?? null;
+            const id = typeof rawId === 'number' ? rawId : Number(rawId);
+            if (Number.isFinite(id)) {
+              router.push({ pathname: '/post-call', params: { bookingId: String(id) } } as any);
+              return;
+            }
+          }
           router.push('/(tabs)/booking');
         }
       });
@@ -251,48 +285,82 @@ export default function RootLayout() {
   }, [router]);
 
   const onBuyerVideoCallRoute = segments[0] === '(tabs)' && segments[1] === 'video-call';
-  const hasActiveVideoBooking = useBookingHistoryStore(
-    (s) => s.items.some(
-      (b) => b.appointment_type === 'video' && ['requested', 'accepted', 'rescheduled'].includes(b.status)
-    )
-  );
+  // Mirror the partner app: poll whenever an authenticated buyer is logged in and
+  // not already on the call screen. Do NOT gate on a local "has active video
+  // booking" flag — that reads from the persisted booking-history store, which is
+  // only populated when the bride opens the bookings tab. A freshly-accepted
+  // booking (or a fresh login / cleared storage) leaves it empty, which silently
+  // suppressed the incoming-ring poller so advisor calls never reached the bride.
+  // The /incoming-ring endpoint is cheap and returns null when nothing is ringing.
   useIncomingVideoRingPoller(
-    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute && hasActiveVideoBooking
+    (loaded || !!error) && isAuthenticated && user?.role === 'buyer' && !onBuyerVideoCallRoute
   );
 
   if (!appReady) {
     return <BootScreen />;
   }
 
+  // Publishable key is safe to ship in the client; the SDK refuses to do
+  // anything sensitive without a server-minted PaymentIntent client_secret.
+  // We hardcode an env-driven fallback so dev builds without the env var
+  // still mount the provider (Stripe calls fail with a clear error then).
+  const stripePublishableKey =
+    (process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY as string | undefined) || '';
+
   return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+    <ErrorBoundary>
+    <StripeProvider
+      publishableKey={stripePublishableKey}
+      // Apple Pay merchant id — needs a matching merchant ID in the Apple
+      // Developer portal before iOS Apple Pay actually works. Without it,
+      // Apple Pay simply doesn't appear in PaymentSheet. Card + Google Pay
+      // keep working.
+      merchantIdentifier="merchant.com.atul.customer.app"
+    >
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <View style={{ flex: 1 }}>
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="landing" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="login" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="signup" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="forgot-password" options={{ headerShown: false, animation: 'fade' }} />
-        <Stack.Screen name="otp-verify" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="reset-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-edit-address" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-my-measurements" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-security-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-verify-password" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-delete-account" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-confirm-delete" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-payment-methods" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-payment-details" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="booking-history" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="notifications" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="video-call-summary" options={{ headerShown: false, animation: 'slide_from_right' }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: 'slide_from_right',
+          animationDuration: 260,
+          gestureEnabled: false,
+          fullScreenGestureEnabled: false,
+          contentStyle: { backgroundColor: '#FFFFFF' },
+        }}
+      >
+        <Stack.Screen name="index" options={{ animation: 'fade' }} />
+        <Stack.Screen name="landing" options={{ animation: 'fade' }} />
+        <Stack.Screen name="(tabs)" options={{ animation: 'fade', animationDuration: 220 }} />
+        <Stack.Screen name="login" options={{ animation: 'fade' }} />
+        <Stack.Screen name="signup" options={{ animation: 'fade' }} />
+        <Stack.Screen name="forgot-password" options={{ animation: 'fade' }} />
+        <Stack.Screen name="otp-verify" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="reset-password" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-edit-address" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-my-measurements" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-security-password" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-verify-password" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-delete-account" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="profile-confirm-delete" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="booking-history" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="notifications" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="video-call-summary" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="post-call" options={{ gestureEnabled: true }} />
+        <Stack.Screen name="decart-spike" options={{ gestureEnabled: true, headerShown: false }} />
+        <Stack.Screen
+          name="modal"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom', title: 'Modal', headerShown: true }}
+        />
       </Stack>
       <IncomingVideoCallBar app="buyer" />
       <StatusBar style="auto" />
       </View>
     </ThemeProvider>
+    </StripeProvider>
+    </ErrorBoundary>
+    </GestureHandlerRootView>
   );
 }
 

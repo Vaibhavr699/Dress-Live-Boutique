@@ -1,5 +1,13 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Alert, AppState, RefreshControl } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+  withDelay,
+} from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -293,13 +301,154 @@ function bookingStatusLabel(status: BookingStatus) {
   }
 }
 
+
+// Three-dot ping animation used while the dashboard data is loading. Each
+// dot pulses scale + opacity on a staggered phase, looping forever — much
+// more "alive" than a single spinner against the blank screen the user
+// otherwise saw during the post-login fetch.
+function PulsingDot({ delay }: { delay: number }) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = withDelay(
+      delay,
+      withRepeat(
+        withSequence(withTiming(1, { duration: 480 }), withTiming(0, { duration: 480 })),
+        -1,
+        false,
+      ),
+    );
+  }, [delay, progress]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.35 + progress.value * 0.65,
+    transform: [{ scale: 0.8 + progress.value * 0.4 }],
+  }));
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: '#111111',
+          marginHorizontal: 5,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+function DashboardLoader({ topInset }: { topInset: number }) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 32,
+        paddingTop: topInset,
+      }}
+    >
+      <Text
+        style={{
+          color: '#111111',
+          fontSize: 18,
+          fontWeight: '700',
+          letterSpacing: 4,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+        }}
+      >
+        Shop Dashboard
+      </Text>
+      <View
+        style={{
+          width: 84,
+          height: 2,
+          backgroundColor: '#111111',
+          opacity: 0.14,
+          marginTop: 20,
+          marginBottom: 28,
+        }}
+      />
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <PulsingDot delay={0} />
+        <PulsingDot delay={160} />
+        <PulsingDot delay={320} />
+      </View>
+      <Text
+        style={{
+          color: '#666666',
+          fontSize: 11,
+          letterSpacing: 1.8,
+          textTransform: 'uppercase',
+          textAlign: 'center',
+          marginTop: 22,
+        }}
+      >
+        Loading your shop
+      </Text>
+    </View>
+  );
+}
+
 export default function BoutiqueDashboard() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const boutiqueId = user?.boutique_id ?? null;
-  
+  // Advisors share the boutique dashboard but can't manage billing or publish
+  // dresses, so partner-only CTAs (subscription, add dress) are hidden for them.
+  const isAdvisor = user?.role === 'advisor';
+  // For advisors, the boutique-side team role (Stylist/Consultant/Manager/Owner)
+  // gates extra permissions. Only the owner (partner) and Manager/Owner advisors
+  // may change shop visibility — everyone else doesn't even see that control.
+  const [advisorTeamRole, setAdvisorTeamRole] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isAdvisor) {
+      setAdvisorTeamRole(null);
+      return;
+    }
+    let active = true;
+    api
+      .get('/team/me')
+      .then((m: any) => {
+        if (active) setAdvisorTeamRole((m?.role as string) ?? null);
+      })
+      .catch(() => {
+        if (active) setAdvisorTeamRole(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAdvisor]);
+  const canManageShopStatus =
+    !isAdvisor || advisorTeamRole === 'Manager' || advisorTeamRole === 'Owner';
+
+  // Guard against double-taps stacking multiple "Add Dress" screens.
+  const addDressLockRef = useRef(false);
+  // add-dress is a `modal`: presenting it briefly refocuses the dashboard
+  // underneath, which would re-arm the guard too early and let a second rapid
+  // tap stack a duplicate screen. Hold the lock through this grace window.
+  const addDressLockedAtRef = useRef(0);
+  const ADD_DRESS_LOCK_GRACE_MS = 700;
+  const openAddDress = useCallback(() => {
+    if (addDressLockRef.current) return;
+    addDressLockRef.current = true;
+    addDressLockedAtRef.current = Date.now();
+    router.push('/add-dress');
+    // Normally re-armed when the dashboard regains focus; this long timeout is
+    // only a safety net so the button can't get stuck if navigation never runs.
+    setTimeout(() => {
+      addDressLockRef.current = false;
+    }, 5000);
+  }, [router]);
+
   const [loading, setLoading] = useState(true);
+  const [boutiqueLoading, setBoutiqueLoading] = useState(true);
   const [dresses, setDresses] = useState<any[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [isStoreVisible, setIsStoreVisible] = useState(true);
@@ -311,10 +460,39 @@ export default function BoutiqueDashboard() {
   } | null>(null);
   const [timeGreeting, setTimeGreeting] = useState(getTimeGreeting);
 
+  // Refresh the time-of-day greeting once a minute, but only while the app
+  // is in the foreground. Without the AppState guard, the interval kept
+  // ticking (and re-rendering the entire dashboard subtree) while the
+  // partner had the app backgrounded — a small but constant battery /
+  // perf cost. Also recompute on resume so a partner who left the app
+  // open overnight sees "Good morning" right away instead of waiting up
+  // to a minute for the next tick.
   useEffect(() => {
     setTimeGreeting(getTimeGreeting());
-    const id = setInterval(() => setTimeGreeting(getTimeGreeting()), 60_000);
-    return () => clearInterval(id);
+    let id: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (id != null) return;
+      id = setInterval(() => setTimeGreeting(getTimeGreeting()), 60_000);
+    };
+    const stop = () => {
+      if (id != null) {
+        clearInterval(id);
+        id = null;
+      }
+    };
+    if (AppState.currentState === 'active') start();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        setTimeGreeting(getTimeGreeting());
+        start();
+      } else {
+        stop();
+      }
+    });
+    return () => {
+      stop();
+      sub.remove();
+    };
   }, []);
 
   const avatarUri = useMemo(() => {
@@ -328,11 +506,20 @@ export default function BoutiqueDashboard() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Tracks the last successful dashboard refresh so the focus-effect can
+  // skip refetches that arrive within the staleness window (see useFocusEffect
+  // below). Mutation paths (delete dress, accept booking, etc.) call
+  // fetchDashboardData directly and the stamp below keeps the gate honest.
+  const lastDashboardFetchRef = useRef<number>(0);
+
   const fetchDashboardData = useCallback(async () => {
     if (!boutiqueId) {
+      // Don't dismiss the loader yet — the user store is rehydrating
+      // from SecureStore and boutiqueId will arrive shortly. The dedicated
+      // useEffect below re-runs this fetch the moment boutiqueId lands,
+      // so the loader stays up exactly until real data is in hand.
       setDresses([]);
       setBookings([]);
-      setLoading(false);
       return;
     }
 
@@ -343,6 +530,7 @@ export default function BoutiqueDashboard() {
       ]);
       setDresses(Array.isArray(dressData) ? dressData : []);
       setBookings(Array.isArray(bookingData) ? (bookingData as Booking[]) : []);
+      lastDashboardFetchRef.current = Date.now();
     } catch (error) {
       console.error('Failed to fetch boutique dashboard data:', error);
     } finally {
@@ -352,6 +540,8 @@ export default function BoutiqueDashboard() {
 
   const fetchBoutiqueVisibility = useCallback(async () => {
     if (!boutiqueId) {
+      // Same reasoning as fetchDashboardData — wait for the user store to
+      // rehydrate rather than rendering an empty dashboard.
       setIsStoreVisible(false);
       setBoutique(null);
       return;
@@ -363,7 +553,36 @@ export default function BoutiqueDashboard() {
       setBoutique(boutique);
     } catch (error) {
       console.error('Failed to fetch boutique visibility:', error);
+    } finally {
+      setBoutiqueLoading(false);
     }
+  }, [boutiqueId]);
+
+  // Re-run the dashboard fetches the moment the auth store rehydrates and
+  // boutiqueId lands. Without this, the post-login race (Dashboard mounts
+  // first, useFocusEffect fires, boutiqueId is still null, early-returns
+  // never re-trigger) would leave the user staring at a blank dashboard
+  // until they tab away and come back. The loader stays up until both
+  // fetches complete because we no longer setLoading(false) on the
+  // no-boutiqueId branch above.
+  useEffect(() => {
+    if (!boutiqueId) return;
+    void fetchDashboardData();
+    void fetchBoutiqueVisibility();
+  }, [boutiqueId, fetchDashboardData, fetchBoutiqueVisibility]);
+
+  // Safety valve: if the user account genuinely has no boutique attached
+  // (i.e. boutiqueId stays null after the store has fully rehydrated), we
+  // would otherwise show a loader forever. After 3 s of no boutiqueId,
+  // give up and surface the empty state so the screen is at least
+  // navigable.
+  useEffect(() => {
+    if (boutiqueId) return;
+    const t = setTimeout(() => {
+      setLoading(false);
+      setBoutiqueLoading(false);
+    }, 3000);
+    return () => clearTimeout(t);
   }, [boutiqueId]);
 
   const refreshCurrentUser = useCallback(async () => {
@@ -402,13 +621,66 @@ export default function BoutiqueDashboard() {
     [boutiqueId, isStoreVisible]
   );
 
+  // Staleness gate: when the partner switches tabs (Bookings → Dashboard
+  // and back) the dashboard previously fired 3 API calls on every focus,
+  // even if they came back 2 seconds later. Skip the refetch if we
+  // refreshed within the last 30s. Mutation paths (handleDeleteDress, etc.)
+  // call fetchDashboardData directly and that path stamps the ref too, so
+  // a focus event right after a mutation correctly skips its own refetch.
+  const DASHBOARD_STALE_MS = 30_000;
   useFocusEffect(
     useCallback(() => {
+      // Re-arm the Add Dress nav guard whenever the dashboard regains focus —
+      // but skip the re-arm if we only just took the lock, since that focus
+      // event is the add-dress modal presenting over us, not a real return.
+      if (Date.now() - addDressLockedAtRef.current >= ADD_DRESS_LOCK_GRACE_MS) {
+        addDressLockRef.current = false;
+      }
+      const now = Date.now();
+      if (now - lastDashboardFetchRef.current < DASHBOARD_STALE_MS) return;
       void refreshCurrentUser();
       fetchDashboardData();
       fetchBoutiqueVisibility();
     }, [refreshCurrentUser, fetchDashboardData, fetchBoutiqueVisibility])
   );
+
+  // Subscription status banner. Poll on focus (cheap) so a partner whose
+  // card got declined mid-month sees a Reactivate prompt right away.
+  // We don't gate the dashboard itself — only publish actions on the
+  // backend — so this banner is the partner's signal that "you're
+  // still logged in but can't list dresses until you fix billing".
+  const [subStatus, setSubStatus] = useState<'none' | 'active' | 'past_due' | 'canceled' | 'incomplete' | null>(null);
+  const refreshSubStatus = useCallback(async () => {
+    try {
+      const res = (await api.get('/partners/stripe/subscription/status')) as { status?: string };
+      const next = (res?.status ?? 'none') as 'none' | 'active' | 'past_due' | 'canceled' | 'incomplete';
+      setSubStatus(next);
+    } catch {
+      // Best-effort.
+    }
+  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      void refreshSubStatus();
+    }, [refreshSubStatus])
+  );
+
+  // Manual pull-to-refresh — bypasses the 30s staleness gate so the
+  // partner can force-pull fresh data on demand (e.g. after a buyer paid
+  // on another device).
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refreshCurrentUser(),
+        fetchDashboardData(),
+        fetchBoutiqueVisibility(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshCurrentUser, fetchDashboardData, fetchBoutiqueVisibility]);
 
   const selectedDressForDelete = dresses[0] ?? null;
 
@@ -417,9 +689,11 @@ export default function BoutiqueDashboard() {
     setIsDeleting(true);
     try {
       await api.delete(`/dresses/${selectedDressForDelete.id}`);
-      setDeleteModalOpen(false);
-      setLoading(true);
+      // Refetch while the modal still shows "DELETING…" so we don't flash the
+      // full-screen initial-load loader (setLoading(true) would trip
+      // isInitialLoading), and the catalog card is fresh before the modal closes.
       await fetchDashboardData();
+      setDeleteModalOpen(false);
     } catch (error: any) {
       Alert.alert('Delete Failed', error?.message || 'Could not delete this dress listing.');
     } finally {
@@ -457,11 +731,29 @@ export default function BoutiqueDashboard() {
       .slice(0, 4);
   }, [sortedBookings]);
 
+  // Keep the full-screen loader up until BOTH the dress/bookings fetch AND the
+  // boutique fetch have settled. Without `boutiqueLoading` in the gate, the
+  // header/greeting card briefly renders with empty boutique fields whenever
+  // the dashboard-data fetch wins the race.
+  const isInitialLoading = loading || boutiqueLoading;
+
+  if (isInitialLoading) {
+    return <DashboardLoader topInset={insets.top} />;
+  }
+
   return (
     <View className="flex-1 bg-white">
-      <ScrollView 
+      <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ flexGrow: 1, paddingBottom: 100 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#1A1A1A"
+            colors={['#1A1A1A']}
+          />
+        }
       >
         {/* Header */}
         <View style={{ paddingTop: insets.top + 14, paddingHorizontal: 20, paddingBottom: 16 }} className="border-b border-[#F0F0F0]">
@@ -471,26 +763,44 @@ export default function BoutiqueDashboard() {
             >
             Shop Dashboard
           </Text>
-            {/* <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={() => router.push('/notifications')}
-              className="absolute right-0 top-0 w-10 h-10 items-center justify-center"
-            >
-              <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
-              {unreadCount > 0 ? (
-                <View className="absolute top-1 right-1 min-w-[18px] h-[18px] rounded-full bg-black items-center justify-center px-1">
-                  <Text className="text-white text-[9px] font-bold">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-            </TouchableOpacity> */}
+            {/* Notification bell intentionally hidden — push notifications are the
+                single source of truth; no in-app inbox surface for partners right now. */}
           </View>
         </View>
 
+        {/* Subscription nudge — only shown when billing needs the partner's
+            attention. Active and 'none' (never subscribed, can't really
+            happen post-signup but defensive) hide the banner. */}
+        {!isAdvisor && (subStatus === 'past_due' || subStatus === 'canceled' || subStatus === 'incomplete') ? (
+          <View style={{ paddingHorizontal: 20, paddingTop: 14 }}>
+            <View className="bg-[#FFF4EC] border border-[#FFD3B7] px-4 py-3 flex-row items-start">
+              <Ionicons name="alert-circle-outline" size={18} color="#C9491A" style={{ marginRight: 10, marginTop: 1 }} />
+              <View className="flex-1">
+                <Text className="text-[#C9491A] text-[12px] font-bold uppercase tracking-[0.5px] mb-1">
+                  {subStatus === 'past_due' ? 'Payment failed' : 'Subscription needed'}
+                </Text>
+                <Text className="text-[#7A3E1C] text-[11px] leading-4 mb-3">
+                  {subStatus === 'past_due'
+                    ? 'Your last payment failed. Update your card to keep listings live.'
+                    : 'Activate your plan to publish dresses and accept bookings.'}
+                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => router.push('/subscribe' as any)}
+                  className="bg-[#C9491A] px-3 py-2 self-start"
+                >
+                  <Text className="text-white text-[10px] uppercase tracking-[1px]">
+                    {subStatus === 'past_due' ? 'Update payment' : 'Activate plan'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
         {/* Greeting + Shop Status Card (Figma-style) */}
         <View style={{ paddingHorizontal: 20, paddingTop: 24, marginBottom: 10 }}>
-          <View className="border border-black" style={{ height: 186 }}>
+          <View className="border border-black" style={{ height: canManageShopStatus ? 186 : 58 }}>
             <View className="flex-row items-center justify-between" style={{ height: 58, paddingHorizontal: 14 }}>
               <View className="flex-row items-center">
                 <View className="w-10 h-10 rounded-sm bg-gray-100 overflow-hidden mr-3">
@@ -513,6 +823,8 @@ export default function BoutiqueDashboard() {
               </View>
             </View>
 
+            {canManageShopStatus ? (
+            <>
             <View className="h-px bg-black/10" />
 
             <View style={{ paddingHorizontal: 14, paddingTop: 14 }}>
@@ -545,7 +857,7 @@ export default function BoutiqueDashboard() {
                       backgroundColor: isStoreVisible ? '#86EFAC' : '#D9D9D9',
                       justifyContent: 'center',
                       paddingHorizontal: 2,
-                      opacity: isUpdatingVisibility ? 0.6 : 1,
+                      opacity: isUpdatingVisibility ? 0.5 : 1,
                     }}
                   >
                     <View
@@ -563,12 +875,14 @@ export default function BoutiqueDashboard() {
                 </View>
               </View>
             </View>
+            </>
+            ) : null}
           </View>
         </View>
 
         {loading ? (
           <View className="flex-1 items-center justify-center py-20">
-            <ActivityIndicator color="black" />
+            <ActivityIndicator color="#1A1A1A" />
           </View>
         ) : !boutiqueId ? (
           <View className="flex-1 items-center justify-center py-20 px-10">
@@ -583,19 +897,23 @@ export default function BoutiqueDashboard() {
               <SvgXml xml={DRESS_SVG} width={48} height={51} />
             </View>
             <Text className="mb-2" style={EMPTY_CATALOG_TITLE_STYLE}>
-              Add Your First Catalog Dress
+              {isAdvisor ? 'No Catalog Dresses Yet' : 'Add Your First Catalog Dress'}
             </Text>
             <Text className="mb-8" style={EMPTY_CATALOG_SUBTITLE_STYLE}>
-              Customers can see your catalog dresses and{'\n'}shop address.
+              {isAdvisor
+                ? 'This boutique has not added any dresses yet.'
+                : `Customers can see your catalog dresses and\nshop address.`}
             </Text>
-            <TouchableOpacity 
-              onPress={() => router.push('/add-dress')}
-              className="border border-black items-center justify-center"
-              style={{ width: 133, height: 48, paddingHorizontal: 24, paddingVertical: 4 }}
-              activeOpacity={0.7}
-            >
-              <Text style={ADD_DRESS_BUTTON_TEXT_STYLE}>Add Dress</Text>
-            </TouchableOpacity>
+            {!isAdvisor ? (
+              <TouchableOpacity
+                onPress={openAddDress}
+                className="border border-black items-center justify-center"
+                style={{ width: 133, height: 48, paddingHorizontal: 24, paddingVertical: 4 }}
+                activeOpacity={0.7}
+              >
+                <Text style={ADD_DRESS_BUTTON_TEXT_STYLE}>Add Dress</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         ) : (
           <>
@@ -617,7 +935,7 @@ export default function BoutiqueDashboard() {
                   }
                   style={{ width: '100%', height: 148 }}
                   contentFit="cover"
-                  cachePolicy="none"
+                  cachePolicy="memory-disk"
                 />
                 <View className="px-4 flex-row items-center justify-between" style={{ height: 48 }}>
                   <View className="flex-1 pr-4">
@@ -628,19 +946,21 @@ export default function BoutiqueDashboard() {
                       {formatCityCountry(boutique?.location)}
                     </Text>
                   </View>
-                  <View className="flex-row items-center">
-                    <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="mr-3" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                      <Image source={PENCIL_ICON} style={{ width: 16, height: 16 }} contentFit="contain" />
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => setDeleteModalOpen(true)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      disabled={!selectedDressForDelete || isDeleting}
-                      style={{ opacity: !selectedDressForDelete || isDeleting ? 0.4 : 1 }}
-                    >
-                      <Image source={TRASH_ICON} style={{ width: 16, height: 16 }} contentFit="contain" />
-                    </TouchableOpacity>
-                  </View>
+                  {!isAdvisor ? (
+                    <View className="flex-row items-center">
+                      <TouchableOpacity onPress={() => router.push('/business-profile-edit')} className="mr-3" hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <Image source={PENCIL_ICON} style={{ width: 16, height: 16 }} contentFit="contain" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setDeleteModalOpen(true)}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        disabled={!selectedDressForDelete || isDeleting}
+                        style={{ opacity: !selectedDressForDelete || isDeleting ? 0.4 : 1 }}
+                      >
+                        <Image source={TRASH_ICON} style={{ width: 16, height: 16 }} contentFit="contain" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             </View>
@@ -656,7 +976,7 @@ export default function BoutiqueDashboard() {
                         <Text style={VIEW_ALL_TEXT_STYLE} numberOfLines={1}>View All</Text>
                     </TouchableOpacity>
                 </View>
-                <View style={{ gap: 14, minHeight: recentOrders.length > 0 ? 476 : undefined }}>
+                <View style={{ gap: 14 }}>
                     {recentOrders.length === 0 ? (
                         <View className="border border-[#EAEAEA] px-4 py-5">
                           <Text className="text-[11px] text-black/45">No recent booking activity yet.</Text>
@@ -669,7 +989,7 @@ export default function BoutiqueDashboard() {
                         >
                             <View className="flex-row items-center flex-1">
                                 <View className="overflow-hidden mr-4" style={{ width: 70, height: 70 }}>
-                                    <Image 
+                                    <Image
                                         source={
                                           order.dresses?.[0]?.image_url
                                             ? { uri: order.dresses[0].image_url }
@@ -677,6 +997,7 @@ export default function BoutiqueDashboard() {
                                         }
                                         style={{ width: '100%', height: '100%' }}
                                         contentFit="cover"
+                                        cachePolicy="memory-disk"
                                     />
                                 </View>
                                 <View className="flex-1">
@@ -769,9 +1090,18 @@ export default function BoutiqueDashboard() {
                         <View key={fitting.id} className="flex-row items-center justify-between" style={{ height: 64 }}>
                             <View className="flex-row items-center flex-1">
                                 <View className="bg-[#F7F7F7] mr-4 overflow-hidden" style={{ width: 48, height: 48 }}>
-                                  {fitting.customer?.profile_image_url ? (
-                                    <Image source={{ uri: fitting.customer.profile_image_url }} style={{ width: '100%', height: '100%' }} />
-                                  ) : null}
+                                  <Image
+                                    source={
+                                      fitting.customer?.profile_image_url
+                                        ? { uri: fitting.customer.profile_image_url }
+                                        : fitting.dresses?.[0]?.image_url
+                                          ? { uri: fitting.dresses[0].image_url }
+                                          : require('../../assets/images/avatar.png')
+                                    }
+                                    style={{ width: '100%', height: '100%' }}
+                                    contentFit="cover"
+                                    cachePolicy="memory-disk"
+                                  />
                                 </View>
                                 <View className="flex-1">
                                     <Text style={[RECENT_ORDER_TITLE_STYLE, { marginBottom: 8 }]} numberOfLines={1}>{customerName(fitting)}</Text>

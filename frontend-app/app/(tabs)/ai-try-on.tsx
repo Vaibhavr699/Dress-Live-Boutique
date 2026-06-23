@@ -1,21 +1,65 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, ScrollView, useWindowDimensions, Linking } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as MediaLibrary from 'expo-media-library';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
+
+const MAX_UPLOAD_DIMENSION = 1280;
+const UPLOAD_COMPRESSION = 0.7;
+
+async function downscaleForUpload(uri: string): Promise<{ uri: string; base64: string }> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: MAX_UPLOAD_DIMENSION } }],
+    {
+      compress: UPLOAD_COMPRESSION,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true,
+    }
+  );
+  return { uri: result.uri, base64: result.base64 ?? '' };
+}
 
 type Dress = {
   id: number;
   name?: string | null;
   image_url?: string | null;
   ai_model_url?: string | null;
+  standardized_image_url?: string | null;
   is_ai_enabled?: boolean | null;
   boutique_id?: number | null;
 };
+
+type AIJob = {
+  id: number;
+  status: 'pending' | 'submitted' | 'completed' | 'failed' | 'canceled';
+  result?: { final_image_url?: string; images?: { url: string }[]; output?: string } | null;
+  error?: string | null;
+};
+
+// The POLISHED final image only (face-enhanced + centered + backdrop + upscaled).
+// We deliberately do NOT fall back to the raw `output`/`images` here — those are
+// the un-enhanced FASHN/intermediate frames, and showing them first then swapping
+// to the final causes a quality "pop". The poll waits until final_image_url is set.
+function finalImageUrl(job: AIJob | null): string | null {
+  if (!job?.result) return null;
+  // gpt-image-2 try-on writes result.images[0].url. The legacy editorial chain
+  // wrote result.final_image_url. Accept either (plus result.output) so the poll
+  // resolves whichever provider produced the image.
+  if (typeof job.result.final_image_url === 'string') return job.result.final_image_url;
+  const fromImages = job.result.images?.[0]?.url;
+  if (typeof fromImages === 'string') return fromImages;
+  if (typeof job.result.output === 'string') return job.result.output;
+  return null;
+}
 
 function toJpegDataUrl(base64: string) {
   return `data:image/jpeg;base64,${base64}`;
@@ -47,6 +91,7 @@ export default function AITryOnScreen() {
   const [dress, setDress] = useState<Dress | null>(null);
   const [dressLoading, setDressLoading] = useState(false);
   const [selectedDressImageIndex, setSelectedDressImageIndex] = useState(0);
+  const [latestGalleryUri, setLatestGalleryUri] = useState<string | null>(null);
 
   const normalizedDressId = useMemo(() => {
     const raw = typeof params.dressId === 'string' ? Number(params.dressId) : NaN;
@@ -69,7 +114,7 @@ export default function AITryOnScreen() {
     {
       id: 3,
       type: 'camera',
-      instructions: 'TAKE A SELFIE! YOU’LL NEED GOOD LIHTING',
+      instructions: 'TAKE A SELFIE! YOU’LL NEED GOOD LIGHTING',
     },
     {
       id: 4,
@@ -79,12 +124,12 @@ export default function AITryOnScreen() {
     {
       id: 5,
       type: 'camera',
-      instructions: 'NOW TAKE A FULL-BODY PHOTO',
+      instructions: 'NOW TAKE OR PICK A PHOTO OF YOURSELF',
     },
     {
       id: 6,
       type: 'countdown',
-      instructions: 'HOLD STILL WHILE WE CAPTURE YOUR FULL-BODY PHOTO.',
+      instructions: 'HOLD STILL WHILE WE CAPTURE YOUR PHOTO.',
     },
     {
       id: 7,
@@ -99,6 +144,43 @@ export default function AITryOnScreen() {
   ];
 
   const currentStep = steps[step - 1];
+
+  // This screen lives inside the Tabs navigator, so it never unmounts between
+  // visits — its state (step, captured photos, rendered preview) would persist
+  // and re-show a stale result on the next open, with a "Done" that appears to
+  // do nothing. Reset to a clean capture flow every time the screen is focused
+  // so each AI Try-On session starts fresh.
+  const resetFlow = useCallback(() => {
+    setStep(1);
+    setCountdown(5);
+    setCameraFacing('front');
+    setSelfieUri(null);
+    setSelfieDataUrl(null);
+    setFullBodyUri(null);
+    setRenderedUri(null);
+    setValidationError(null);
+    setValidating(false);
+    setRendering(false);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Reset when the screen is left (blur/unmount), not on entry, so the next
+      // visit starts from a clean capture flow with no stale-result flash. The
+      // screen never blurs mid-flow (steps 1–8 don't navigate), and app
+      // backgrounding doesn't trigger this — only real navigation away does.
+      return () => {
+        resetFlow();
+      };
+    }, [resetFlow])
+  );
+
+  // Always leave the screen even if there's no back history to pop (e.g. opened
+  // via a deep link), so "Done"/close can never become a no-op.
+  const exitTryOn = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)');
+  }, [router]);
 
   const selectedDressImages = useMemo(() => {
     if (!dress) return [];
@@ -163,88 +245,157 @@ export default function AITryOnScreen() {
     if (currentStep.id === 5 || currentStep.id === 6) setCameraFacing('back');
   }, [currentStep.id]);
 
-  const createTryOnPreview = useCallback(async (fullBodyImageDataUrl: string) => {
+  // On mount: request camera + photo-library permissions upfront and fetch
+  // the user's most recent gallery photo so the thumbnail next to the
+  // capture button previews a real image instead of a generic placeholder.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (!permission?.granted) {
+          await requestPermission();
+        }
+      } catch {
+        // best-effort
+      }
+      try {
+        const lib = await MediaLibrary.requestPermissionsAsync();
+        if (cancelled || !lib.granted) return;
+        const page = await MediaLibrary.getAssetsAsync({
+          first: 1,
+          sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+          mediaType: [MediaLibrary.MediaType.photo],
+        });
+        if (cancelled) return;
+        const asset = page.assets?.[0];
+        if (asset?.uri) {
+          setLatestGalleryUri(asset.uri);
+        }
+      } catch {
+        // ignore — fallback placeholder will show
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Poll an async editorial try-on job until it finishes, then surface the
+  // final image. Returns true if a finished image was set.
+  const pollEditorialJob = useCallback(async (jobId: number): Promise<boolean> => {
+    // No client-side time cap: gpt-image-2 high quality can run several minutes.
+    // Poll until the job yields a final image or reaches a terminal state.
+    while (true) {
+      const job = (await api.get(`/ai/jobs/${jobId}`)) as AIJob;
+      // Only resolve on the POLISHED final image. A completed job without a
+      // final_image_url means the finishing chain is still wrapping up — keep
+      // waiting rather than flashing the raw try-on frame.
+      const url = finalImageUrl(job);
+      if (url) {
+        setRenderedUri(url);
+        return true;
+      }
+      if (job.status === 'failed' || job.status === 'canceled') {
+        throw new Error('The AI try-on could not be generated. Please try again.');
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }, []);
+
+  const createTryOnPreview = useCallback(async (
+    fullBodyImageDataUrl: string,
+    fullBodyUriForUpload?: string,
+  ) => {
     if (!normalizedDressId) {
       throw new Error('Open AI Try On from a specific dress to generate a preview.');
     }
 
-    const res = (await api.post('/ai/preview-tryon-base64', {
-      dress_id: normalizedDressId,
-      full_body_image_data_url: fullBodyImageDataUrl,
-      ...(selfieDataUrl ? { selfie_image_data_url: selfieDataUrl } : {}),
-    })) as {
+    // Premium editorial path: when the dress has an approved standardized
+    // garment image, run the async pipeline (FASHN tryon-max → masked editorial
+    // → upscale → QA) and poll for the finished image. Falls back to the quick
+    // sync preview for dresses that haven't been standardized yet.
+    const hasStandardized = !!(dress?.standardized_image_url);
+    if (hasStandardized && fullBodyUriForUpload) {
+      const form = new FormData();
+      form.append('dress_id', String(normalizedDressId));
+      form.append('full_body_file', {
+        uri: fullBodyUriForUpload,
+        name: `tryon-${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      } as any);
+      const job = (await api.postMultipart('/ai/tryon', form)) as AIJob;
+      const ok = await pollEditorialJob(job.id);
+      if (!ok) {
+        throw new Error('The AI try-on finished but returned no image.');
+      }
+      return;
+    }
+
+    const res = (await api.post(
+      '/ai/preview-tryon-base64',
+      {
+        dress_id: normalizedDressId,
+        full_body_image_data_url: fullBodyImageDataUrl,
+        ...(selfieDataUrl ? { selfie_image_data_url: selfieDataUrl } : {}),
+      },
+      { timeoutMs: 120_000 }
+    )) as {
       image_data_url?: string | null;
     };
     if (!res?.image_data_url) {
       throw new Error('The AI preview was created, but no image was returned.');
     }
     setRenderedUri(res.image_data_url);
-  }, [normalizedDressId, selfieDataUrl]);
+  }, [normalizedDressId, selfieDataUrl, dress?.standardized_image_url, pollEditorialJob]);
 
   const processFullBodyCandidate = useCallback(async (candidate: SavedPhoto) => {
     setFullBodyUri(candidate.uri);
-    setValidating(true);
-    setRendering(false);
+    setValidating(false);
     setRenderedUri(null);
     setValidationError(null);
+    setRendering(true);
+    setStep(7);
 
     try {
-      const res = (await api.post('/ai/validate-full-body-base64', {
-        image_data_url: candidate.dataUrl,
-      })) as { ok?: boolean; reason?: string };
-
-      if (!res?.ok) {
-        setValidationError(res?.reason || 'Please retake the photo with your full body in view.');
-        setStep(5);
-        return;
-      }
-
-      setValidating(false);
-      setRendering(true);
-      setStep(7);
-
-      try {
-        await createTryOnPreview(candidate.dataUrl);
-        setStep(8);
-      } catch (renderError: any) {
-        setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
-        setStep(5);
-      } finally {
-        setRendering(false);
-      }
-    } catch (error: any) {
-      setValidationError(error?.message || 'Could not validate the photo. Please try again.');
+      await createTryOnPreview(candidate.dataUrl, candidate.uri);
+      setStep(8);
+    } catch (renderError: any) {
+      setValidationError(renderError?.message || 'Could not create your AI preview. Please try again.');
       setStep(5);
     } finally {
-      setValidating(false);
+      setRendering(false);
     }
   }, [createTryOnPreview]);
 
   const pickImageFromGallery = useCallback(async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Photos permission', 'Please allow photo library access to continue.');
-      return null;
-    }
+    if (!(await ensureMediaPermission('library'))) return null;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
-      quality: 0.85,
-      base64: true,
+      quality: 1,
+      base64: false,
     });
 
     if (result.canceled) return null;
     const asset = result.assets?.[0];
-    if (!asset?.uri || !asset.base64) {
+    if (!asset?.uri) {
       Alert.alert('AI Try On', 'Could not read the selected image. Please try again.');
       return null;
     }
 
-    return {
-      uri: asset.uri,
-      dataUrl: toJpegDataUrl(asset.base64),
-    } satisfies SavedPhoto;
+    try {
+      const downscaled = await downscaleForUpload(asset.uri);
+      if (!downscaled.base64) throw new Error('downscale failed');
+      return {
+        uri: downscaled.uri,
+        dataUrl: toJpegDataUrl(downscaled.base64),
+      } satisfies SavedPhoto;
+    } catch {
+      Alert.alert('AI Try On', 'Could not prepare the photo. Please try a different image.');
+      return null;
+    }
   }, []);
 
   useEffect(() => {
@@ -261,17 +412,18 @@ export default function AITryOnScreen() {
         clearInterval(id);
         try {
           const pic = await cameraRef.current?.takePictureAsync({
-            quality: 0.8,
+            quality: 1,
             mirror: false,
-            base64: true,
+            base64: false,
           });
           if (!cancelled && pic?.uri) {
-            if (!pic.base64) {
+            const downscaled = await downscaleForUpload(pic.uri);
+            if (!downscaled.base64) {
               throw new Error('Could not read the photo. Please try again.');
             }
             await processFullBodyCandidate({
-              uri: pic.uri,
-              dataUrl: toJpegDataUrl(pic.base64),
+              uri: downscaled.uri,
+              dataUrl: toJpegDataUrl(downscaled.base64),
             });
           }
         } catch {
@@ -291,27 +443,51 @@ export default function AITryOnScreen() {
     return !!res?.granted;
   };
 
+  // Recovery path for the denied-camera notice: re-prompt while the OS still
+  // allows it, otherwise deep-link to the app's Settings page (iOS/Android)
+  // where the user can flip the toggle back on.
+  const handleEnableCamera = useCallback(async () => {
+    if (permission && !permission.granted && permission.canAskAgain === false) {
+      void Linking.openSettings();
+      return;
+    }
+    await requestPermission();
+  }, [permission, requestPermission]);
+
   const handleCapture = async () => {
     const ok = await ensureCameraPermission();
     if (!ok) {
-      Alert.alert('Camera permission', 'Please allow camera access to continue.');
+      // Permanently denied → the OS won't show a prompt again, so point them
+      // to Settings. Otherwise the re-prompt above already ran.
+      if (permission && permission.canAskAgain === false) {
+        Alert.alert(
+          'Camera access is off',
+          'Turn on Camera for Dress Live in Settings, or pick a photo from your gallery instead.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+          ],
+        );
+      } else {
+        Alert.alert('Camera permission', 'Please allow camera access to take your photo, or pick one from your gallery.');
+      }
       return;
     }
     try {
       if (currentStep.id === 3) {
         const pic = await cameraRef.current?.takePictureAsync({
-          quality: 0.85,
+          quality: 1,
           mirror: false,
-          base64: true,
+          base64: false,
         });
         if (!pic?.uri) return;
-        if (!pic.base64) {
+        const downscaled = await downscaleForUpload(pic.uri);
+        if (!downscaled.base64) {
           Alert.alert('AI Try On', 'Could not capture the selfie. Please try again.');
           return;
         }
-        const candidate = { uri: pic.uri, dataUrl: toJpegDataUrl(pic.base64) };
-        setSelfieUri(pic.uri);
-        setSelfieDataUrl(candidate.dataUrl);
+        setSelfieUri(downscaled.uri);
+        setSelfieDataUrl(toJpegDataUrl(downscaled.base64));
         setStep(4);
         return;
       }
@@ -354,12 +530,12 @@ export default function AITryOnScreen() {
       } else if (step === 7) {
         return;
       } else if (step === 8) {
-        router.back();
+        exitTryOn();
       } else {
         setStep(step + 1);
       }
     } else {
-      router.back();
+      exitTryOn();
     }
   };
 
@@ -462,14 +638,38 @@ export default function AITryOnScreen() {
                 borderColor: '#000',
               }}
             >
-              <CameraView
-                ref={(r) => {
-                  cameraRef.current = r;
-                }}
-                facing={cameraFacing}
-                mirror={cameraFacing === 'front'}
-                style={{ width: '100%', height: '100%' }}
-              />
+              {permission?.granted ? (
+                <CameraView
+                  ref={(r) => {
+                    cameraRef.current = r;
+                  }}
+                  facing={cameraFacing}
+                  mirror={cameraFacing === 'front'}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              ) : (
+                // Camera denied: instead of a silent black box, explain why the
+                // preview is missing and offer a recovery path (re-prompt / open
+                // Settings, or use the gallery button below).
+                <View className="absolute inset-0 bg-[#F5F5F5] items-center justify-center" style={{ paddingHorizontal: 24 }}>
+                  <Ionicons name="videocam-off-outline" size={34} color="#1A1A1A" />
+                  <Text className="text-black text-[12px] font-bold uppercase tracking-[1px] mt-3 text-center">
+                    Camera access is off
+                  </Text>
+                  <Text className="text-black/55 text-[12px] mt-2 text-center leading-5">
+                    We need your camera to take this photo. Turn it on to continue, or use the gallery button below to pick an existing photo.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleEnableCamera}
+                    activeOpacity={0.85}
+                    className="mt-4 bg-black px-5 py-3"
+                  >
+                    <Text className="text-white text-[11px] font-bold uppercase tracking-[1.5px]">
+                      {permission && permission.canAskAgain === false ? 'Open Settings' : 'Allow Camera'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               {currentStep.type === 'countdown' && (
                 <View className="absolute items-center justify-center">
                   <Text className="text-white text-[120px] font-bold opacity-80">{countdown}</Text>
@@ -508,16 +708,20 @@ export default function AITryOnScreen() {
               <View className="mb-10" style={{ paddingHorizontal: 20 }}>
                 <View className="flex-row justify-between items-center">
                   <TouchableOpacity
-                    className="overflow-hidden border border-black"
+                    onPress={handlePickFromGallery}
+                    activeOpacity={0.7}
+                    className="overflow-hidden border border-black items-center justify-center"
                     style={{ width: 50, height: 50 }}
                   >
-                    <Image
-                      source={
-                        activePreviewUri ? { uri: activePreviewUri } : require('@/assets/images/Dashboard image 1.png')
-                      }
-                      style={{ width: '100%', height: '100%' }}
-                      contentFit="cover"
-                    />
+                    {latestGalleryUri || activePreviewUri ? (
+                      <Image
+                        source={{ uri: (latestGalleryUri || activePreviewUri) as string }}
+                        style={{ width: '100%', height: '100%' }}
+                        contentFit="cover"
+                      />
+                    ) : (
+                      <Ionicons name="images-outline" size={22} color="#000" />
+                    )}
                   </TouchableOpacity>
                   <TouchableOpacity 
                      onPress={handleCapture}
@@ -533,17 +737,6 @@ export default function AITryOnScreen() {
                   >
                     <Ionicons name="camera-reverse-outline" size={26} color="black" />
                   </TouchableOpacity>
-                </View>
-
-                <View className="mt-6">
-                  <TouchableOpacity
-                    onPress={handlePickFromGallery}
-                    activeOpacity={0.85}
-                    className="border border-black py-3 items-center mb-3"
-                  >
-                    <Text className="text-black text-[10px] font-bold uppercase tracking-[1px]">Choose from gallery</Text>
-                  </TouchableOpacity>
-
                 </View>
               </View>
             )}
@@ -606,7 +799,9 @@ export default function AITryOnScreen() {
               </Text>
               {currentStep.type === 'analysis' ? (
                 <Text className="text-black/45 text-[11px] leading-5 mt-3 text-center px-6">
-                  This first version uses your selected dress image to create a quick preview before booking.
+                  {dress?.standardized_image_url
+                    ? 'Creating an editorial studio image of you in this dress. This can take up to a minute.'
+                    : 'This first version uses your selected dress image to create a quick preview before booking.'}
                 </Text>
               ) : null}
             </View>
@@ -662,7 +857,7 @@ export default function AITryOnScreen() {
         <View style={{ width: 32 }} />
         <View style={{ width: 32 }} />
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={exitTryOn}
           activeOpacity={0.85}
           className="w-8 h-8 rounded-full items-center justify-center bg-black/10"
         >
@@ -681,14 +876,18 @@ export default function AITryOnScreen() {
           className="absolute bottom-0 left-0 right-0 bg-white px-8 pt-4 pb-12"
           style={{ paddingBottom: insets.bottom + 20 }}
         >
-          {currentStep.type === 'result' && dress?.boutique_id ? (
+          {currentStep.type === 'result' && normalizedDressId ? (
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={() =>
-                router.replace({
-                  pathname: '/(tabs)/boutique-details',
-                  params: { boutiqueId: String(dress.boutique_id) },
-                } as any)
+                router.push({
+                  pathname: '/(tabs)/booking-calendar',
+                  params: {
+                    dressId: String(normalizedDressId),
+                    appointmentType: 'video',
+                    source: 'product',
+                  },
+                })
               }
               className="w-full bg-black py-5 items-center justify-center mb-3"
             >
@@ -729,7 +928,7 @@ export default function AITryOnScreen() {
               }}
               className="mt-4 items-center"
             >
-              <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">Retake full-body photo</Text>
+              <Text className="text-black/40 text-[10px] font-bold uppercase tracking-[1.5px]">Retake photo</Text>
             </TouchableOpacity>
           ) : null}
         </View>

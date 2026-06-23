@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { useAuthStore } from '../store/useAuthStore';
+import { shouldClearSessionOn401 } from './authFailure';
 
 const API_PATH = '/api/v1';
 const API_PORT = '8000';
@@ -57,6 +58,82 @@ function getBaseUrl() {
 
 const BASE_URL = getBaseUrl();
 const IS_WEB_RUNTIME = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const RETRY_METHODS = new Set(['GET']);
+const RETRY_STATUSES = new Set([502, 503, 504]);
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 400;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError';
+}
+
+function isNetworkError(error: unknown): boolean {
+  const message = (error as { message?: string } | undefined)?.message ?? '';
+  return /Network request failed|Failed to fetch|TypeError: Network/i.test(message);
+}
+
+type FetchWithOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  retry?: boolean;
+};
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  options: FetchWithOptions = {}
+): Promise<Response> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: externalSignal } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort);
+  }
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+async function fetchWithRetry(
+  input: string,
+  init: RequestInit,
+  options: FetchWithOptions = {}
+): Promise<Response> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const retryEnabled = options.retry ?? RETRY_METHODS.has(method);
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetchWithTimeout(input, init, options);
+      if (retryEnabled && RETRY_STATUSES.has(response.status) && attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+      if (isAbortError(error) && options.signal?.aborted) throw error;
+      if (!retryEnabled || attempt >= MAX_RETRIES) throw error;
+      if (!isNetworkError(error) && !isAbortError(error)) throw error;
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+  throw lastError;
+}
 
 type ApiErrorMeta = Error & {
   status?: number;
@@ -143,9 +220,15 @@ function getFriendlyErrorMessage(params: {
   if (status === 401) return 'Your session has expired. Please log in again.';
   if (status === 403) return 'You do not have permission to do this.';
   if (status === 404) return "We couldn't find what you were looking for.";
-  if (status === 409) return 'This information is already in use.';
+  // 409 detail is almost always meaningful (e.g. "boutique hasn't finished
+  // setting up payments yet" from the orders endpoint). Surface it
+  // verbatim when present rather than overwriting with a generic
+  // "already in use" string that misleads the user.
+  if (status === 409) return detail || 'This action conflicts with the current state.';
+  // 402 = backend's subscription gate. Detail is the right text.
+  if (status === 402) return detail || 'A payment is required to continue.';
   if (status === 422) return 'Please check your details and try again.';
-  if (status === 400) return 'Please review your details and try again.';
+  if (status === 400) return detail || 'Please review your details and try again.';
   if (typeof status === 'number' && status >= 500) {
     return 'Something went wrong. Please try again.';
   }
@@ -154,6 +237,13 @@ function getFriendlyErrorMessage(params: {
 }
 
 function createHttpError(status: number, payload: unknown, endpoint: string, fallbackMessage: string) {
+  // A 401 on an authenticated (non-login) request means the persisted token is
+  // stale — clear the session so the user falls back to the guest/login flow
+  // instead of being stranded in a view where every call fails. Fire-and-forget;
+  // logout() is idempotent and the null-token guard debounces parallel 401s.
+  if (shouldClearSessionOn401(status, endpoint, !!useAuthStore.getState().token)) {
+    void useAuthStore.getState().logout();
+  }
   const detail = extractServerDetail(payload);
   return attachApiMeta(new Error(getFriendlyErrorMessage({ status, detail, endpoint, fallbackMessage })), {
     status,
@@ -169,6 +259,13 @@ function createApiError(error: any) {
   }
 
   const message = typeof error?.message === 'string' ? error.message : '';
+  const name = typeof error?.name === 'string' ? error.name : '';
+
+  if (name === 'AbortError' || /aborted/i.test(message)) {
+    return attachApiMeta(new Error('The request took too long. Please check your connection and try again.'), {
+      debugMessage: message || 'Aborted',
+    });
+  }
 
   if (message.includes('Network request failed') || message.includes('Failed to fetch')) {
     return attachApiMeta(new Error("We couldn't connect right now. Please try again."), {
@@ -182,13 +279,16 @@ function createApiError(error: any) {
 }
 
 function logApiError(method: string, endpoint: string, apiError: ApiErrorMeta, rawError: unknown) {
-  console.error(`API ${method} Error [${endpoint}] (${BASE_URL}):`, {
-    publicMessage: apiError.message,
-    status: apiError.status ?? null,
-    detail: apiError.detail ?? null,
-    debugMessage: apiError.debugMessage ?? null,
-    rawError,
-  });
+  const status = apiError.status;
+  const isHandledClientError = typeof status === 'number' && status >= 400 && status < 500;
+  const detail = apiError.detail || apiError.debugMessage || apiError.message;
+  const summary = `[API ${method}] ${endpoint} → ${status ?? 'no-response'}: ${detail}`;
+
+  if (isHandledClientError) {
+    console.warn(summary);
+  } else {
+    console.error(summary, rawError);
+  }
 }
 
 async function postMultipartNative(endpoint: string, formData: FormData, options: any = {}) {
@@ -245,14 +345,18 @@ export const api = {
 
   async post(endpoint: string, body: any, options: any = {}) {
     try {
-      const response = await fetch(`${BASE_URL}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          ...this.getHeaders(),
-          ...options.headers,
+      const response = await fetchWithRetry(
+        `${BASE_URL}${endpoint}`,
+        {
+          method: 'POST',
+          headers: {
+            ...this.getHeaders(),
+            ...options.headers,
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-      });
+        { signal: options.signal, timeoutMs: options.timeoutMs, retry: options.retry }
+      );
 
       const data = await parseResponseBody(response);
 
@@ -270,14 +374,18 @@ export const api = {
 
   async put(endpoint: string, body: any, options: any = {}) {
     try {
-      const response = await fetch(`${BASE_URL}${endpoint}`, {
-        method: 'PUT',
-        headers: {
-          ...this.getHeaders(),
-          ...options.headers,
+      const response = await fetchWithRetry(
+        `${BASE_URL}${endpoint}`,
+        {
+          method: 'PUT',
+          headers: {
+            ...this.getHeaders(),
+            ...options.headers,
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-      });
+        { signal: options.signal, timeoutMs: options.timeoutMs, retry: options.retry }
+      );
 
       const data = await parseResponseBody(response);
 
@@ -296,15 +404,19 @@ export const api = {
   async postForm(endpoint: string, formData: URLSearchParams, options: any = {}) {
     try {
       const authHeader = this.getHeaders()['Authorization'];
-      const response = await fetch(`${BASE_URL}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          ...(authHeader ? { 'Authorization': authHeader } : {}),
-          ...options.headers,
+      const response = await fetchWithRetry(
+        `${BASE_URL}${endpoint}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            ...(authHeader ? { 'Authorization': authHeader } : {}),
+            ...options.headers,
+          },
+          body: formData.toString(),
         },
-        body: formData.toString(),
-      });
+        { signal: options.signal, timeoutMs: options.timeoutMs, retry: options.retry }
+      );
 
       const data = await parseResponseBody(response);
 
@@ -327,14 +439,18 @@ export const api = {
       }
 
       const authHeader = this.getHeaders()['Authorization'];
-      const response = await fetch(`${BASE_URL}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          ...(authHeader ? { 'Authorization': authHeader } : {}),
-          ...options.headers,
+      const response = await fetchWithTimeout(
+        `${BASE_URL}${endpoint}`,
+        {
+          method: 'POST',
+          headers: {
+            ...(authHeader ? { 'Authorization': authHeader } : {}),
+            ...options.headers,
+          },
+          body: formData,
         },
-        body: formData,
-      });
+        { signal: options.signal, timeoutMs: options.timeoutMs ?? 60_000 }
+      );
 
       const data = await parseResponseBody(response);
 
@@ -352,13 +468,17 @@ export const api = {
 
   async get(endpoint: string, options: any = {}) {
     try {
-      const response = await fetch(`${BASE_URL}${endpoint}`, {
-        method: 'GET',
-        headers: {
-          ...this.getHeaders(),
-          ...options.headers,
+      const response = await fetchWithRetry(
+        `${BASE_URL}${endpoint}`,
+        {
+          method: 'GET',
+          headers: {
+            ...this.getHeaders(),
+            ...options.headers,
+          },
         },
-      });
+        { signal: options.signal, timeoutMs: options.timeoutMs, retry: options.retry }
+      );
 
       const data = await parseResponseBody(response);
 
@@ -376,14 +496,18 @@ export const api = {
 
   async delete(endpoint: string, options: any = {}) {
     try {
-      const response = await fetch(`${BASE_URL}${endpoint}`, {
-        method: 'DELETE',
-        headers: {
-          ...this.getHeaders(),
-          ...options.headers,
+      const response = await fetchWithRetry(
+        `${BASE_URL}${endpoint}`,
+        {
+          method: 'DELETE',
+          headers: {
+            ...this.getHeaders(),
+            ...options.headers,
+          },
+          ...(options.body ? { body: options.body } : {}),
         },
-        ...(options.body ? { body: options.body } : {}),
-      });
+        { signal: options.signal, timeoutMs: options.timeoutMs, retry: options.retry }
+      );
 
       const data = await parseResponseBody(response);
 

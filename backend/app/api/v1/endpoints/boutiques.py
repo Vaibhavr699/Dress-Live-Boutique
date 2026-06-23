@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
 from app.crud.crud_boutique import crud_boutique
+from app.crud.crud_team_member import crud_team_member
 from app.models.user import User
 from app.schemas.boutique import Boutique, BoutiqueCreate, BoutiqueUpdate
 
@@ -94,20 +95,53 @@ def read_boutique(
         raise HTTPException(status_code=404, detail="Boutique not found")
     return boutique
 
+# Advisor team roles allowed to change shop settings (matches the app's
+# TEAM_ROLE_OPTIONS). Kept narrow on purpose — stylists/consultants can't.
+_SHOP_MANAGER_TEAM_ROLES = {"Manager", "Owner"}
+
+
 @router.put("/{id}", response_model=Boutique)
 def update_boutique(
     *,
     db: Session = Depends(deps.get_db),
     id: int,
     boutique_in: BoutiqueUpdate,
+    current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     """
     Update a boutique.
+
+    Authorization (this endpoint was previously unauthenticated):
+    - Must be linked to this boutique.
+    - The owner (partner) may edit everything.
+    - An advisor whose team role is Manager/Owner may change customer
+      visibility only — no profile/branding fields.
+    - Everyone else is rejected.
     """
     boutique = crud_boutique.get(db, id=id)
     if not boutique:
         raise HTTPException(status_code=404, detail="Boutique not found")
-    boutique = crud_boutique.update(db, db_obj=boutique, obj_in=boutique_in)
+
+    if not current_user.boutique_id or current_user.boutique_id != id:
+        raise HTTPException(status_code=403, detail="Not allowed to update this boutique.")
+
+    if current_user.role == "partner":
+        update_in = boutique_in
+    elif current_user.role == "advisor":
+        member = crud_team_member.get_by_user_id(db, user_id=current_user.id)
+        team_role = (member.role if member else "") or ""
+        if team_role not in _SHOP_MANAGER_TEAM_ROLES:
+            raise HTTPException(status_code=403, detail="Only the owner or a manager can change shop settings.")
+        # Managers are limited to the visibility toggle — reject any other field.
+        sent = boutique_in.model_dump(exclude_unset=True)
+        disallowed = [k for k in sent if k != "is_visible_to_customers"]
+        if disallowed:
+            raise HTTPException(status_code=403, detail="Managers can only change shop visibility.")
+        update_in = boutique_in
+    else:
+        raise HTTPException(status_code=403, detail="Not allowed to update this boutique.")
+
+    boutique = crud_boutique.update(db, db_obj=boutique, obj_in=update_in)
     return boutique
 
 

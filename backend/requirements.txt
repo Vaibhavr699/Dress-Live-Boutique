@@ -13,6 +13,7 @@ pytest
 httpx
 email-validator
 livekit-api
-mediapipe
+stripe>=10.0.0,<13.0.0
+mediapipe>=0.10.21,<0.11
 opencv-python-headless
 numpy

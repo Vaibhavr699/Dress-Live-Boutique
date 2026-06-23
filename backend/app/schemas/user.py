@@ -22,14 +22,29 @@ class UserBase(BaseModel):
     region: Optional[str] = None
     postal_code: Optional[str] = None
     country_code: Optional[str] = None
-    role: Literal["buyer", "partner"] = "buyer"
+    # "advisor" accounts are created only via the team-invite accept flow
+    # (linked to a boutique). They're valid on read/DB; UserCreate below
+    # restricts the public signup input back to buyer/partner so nobody can
+    # self-register as an advisor.
+    role: Literal["buyer", "partner", "advisor"] = "buyer"
     boutique_id: Optional[int] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    bust_cm: Optional[float] = None
+    waist_cm: Optional[float] = None
+    hips_cm: Optional[float] = None
+    shoulder_cm: Optional[float] = None
+    arm_length_cm: Optional[float] = None
+    measurements_source: Optional[str] = None
 
 
 # Properties to receive via API on creation
 class UserCreate(UserBase):
     email: EmailStr
     password: str
+    # Public signup may only create buyers or partners. Advisor accounts come
+    # exclusively from the invite accept flow, never from this endpoint.
+    role: Literal["buyer", "partner"] = "buyer"
     boutique_info: Optional[BoutiqueSignupInfo] = None
 
 

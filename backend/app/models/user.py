@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Column, Float, Integer, String, Boolean
 from app.db.base_class import Base
 
 class User(Base):
@@ -20,3 +20,12 @@ class User(Base):
     is_superuser = Column(Boolean(), default=False)
     role = Column(String, nullable=False, default="buyer")
     boutique_id = Column(Integer, nullable=True)
+    # Body measurements (cm / kg)
+    height_cm = Column(Float, nullable=True)
+    weight_kg = Column(Float, nullable=True)
+    bust_cm = Column(Float, nullable=True)
+    waist_cm = Column(Float, nullable=True)
+    hips_cm = Column(Float, nullable=True)
+    shoulder_cm = Column(Float, nullable=True)
+    arm_length_cm = Column(Float, nullable=True)
+    measurements_source = Column(String, nullable=True)  # "bodygram" | "manual"

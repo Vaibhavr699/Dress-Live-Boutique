@@ -100,11 +100,12 @@ export async function apiRequest<T>(
         fallbackMessage: "Something went wrong. Please try again.",
       });
 
-      console.error(`API Error [${endpoint}]`, {
-        status: response.status,
-        detail,
-        payload,
-      });
+      const summary = `[API] ${endpoint} → ${response.status}: ${detail || friendlyMessage}`;
+      if (response.status >= 400 && response.status < 500) {
+        console.warn(summary);
+      } else {
+        console.error(summary, payload);
+      }
 
       throw new Error(friendlyMessage);
     }

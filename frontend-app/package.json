@@ -13,6 +13,7 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@decartai/sdk": "^0.0.67",
     "@expo-google-fonts/playfair-display": "^0.4.2",
     "@expo/vector-icons": "^15.0.3",
     "@livekit/react-native": "^2.10.0",
@@ -20,6 +21,8 @@
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
+    "@shopify/flash-list": "2.0.2",
+    "@stripe/stripe-react-native": "0.50.3",
     "expo": "~54.0.34",
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
@@ -27,10 +30,12 @@
     "expo-font": "~14.0.11",
     "expo-haptics": "~15.0.8",
     "expo-image": "~3.0.11",
+    "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.11",
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-location": "~19.0.8",
+    "expo-media-library": "~18.2.1",
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
@@ -48,6 +53,7 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
+    "react-native-view-shot": "4.0.3",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.5.1",
     "zustand": "^5.0.12"

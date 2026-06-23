@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional
 from datetime import datetime, timedelta
 import hashlib
@@ -15,11 +16,15 @@ from pydantic import BaseModel
 from app.api import deps
 from app.core.config import settings
 from app.core.email import send_email
+from app.core.email_templates import render_branded_email
 from app.crud.crud_boutique import crud_boutique
 from app.crud.crud_user import crud_user
 from app.models.user import User
 from app.schemas.boutique import BoutiqueCreate
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
+from app.services import bodygram as bodygram_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -41,6 +46,25 @@ class PasswordOtpVerifyPayload(BaseModel):
 class DeleteAccountPayload(BaseModel):
     password: str
     email: Optional[str] = None
+
+
+class MeasurementScanPayload(BaseModel):
+    height_cm: float
+    weight_kg: float
+    front_image_data_url: str
+    age: int
+    gender: str  # "male" | "female"
+    side_image_data_url: Optional[str] = None
+
+
+class MeasurementManualPayload(BaseModel):
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    bust_cm: Optional[float] = None
+    waist_cm: Optional[float] = None
+    hips_cm: Optional[float] = None
+    shoulder_cm: Optional[float] = None
+    arm_length_cm: Optional[float] = None
 
 
 class PasswordResetOtpSendPayload(BaseModel):
@@ -96,6 +120,12 @@ async def _delete_storage_object(image_url: Optional[str]) -> None:
         if response.status_code not in (200, 204, 404):
             print(f"WARNING: Failed to delete Supabase object {object_path}: {response.text}")
 
+# Accept BOTH `/users` and `/users/` so clients that include a trailing
+# slash (the two RN apps both POST to `/users/`) don't get a 307
+# redirect. The redirect was working server-side but some clients drop
+# the JSON body or fail the CORS preflight on the follow-up request,
+# which made signup silently 422 from the user's perspective.
+@router.post("/", response_model=UserSchema, include_in_schema=False)
 @router.post("", response_model=UserSchema)
 async def create_user(
     request: Request,
@@ -169,21 +199,79 @@ async def create_user(
 
     # Send a welcome email (best-effort).
     try:
-        if user.email and (user.role or "").strip().lower() == "buyer":
-            greeting = (user.full_name or "").strip() or "there"
-            await send_email(
-                to_email=user.email,
-                subject="Welcome to Dress Live",
-                text=(
-                    f"Hi {greeting},\n\n"
-                    "Welcome to Dress Live. You can now browse boutiques, shortlist dresses, and book fittings.\n\n"
-                    "If you didn’t create this account, you can ignore this email.\n\n"
-                    "— Dress Live"
-                ),
-            )
-    except Exception:
-        # Don't block signup if email fails.
-        pass
+        if user.email:
+            greeting_name = (user.full_name or "").strip().split()[0] if user.full_name else "there"
+            role = (user.role or "").strip().lower()
+
+            if role == "partner":
+                boutique_name = ""
+                if user_in.boutique_info:
+                    boutique_name = user_in.boutique_info.name or ""
+                await send_email(
+                    to_email=user.email,
+                    subject="Welcome to Dress Live — your boutique is live",
+                    text=(
+                        f"Hi {greeting_name},\n\n"
+                        f"Welcome to Dress Live! Your boutique{(' ' + boutique_name) if boutique_name else ''} "
+                        "is now set up.\n\n"
+                        "Here's what to do next:\n"
+                        "1. Upload your dress catalogue from the Dress Live partner app\n"
+                        "2. Set your availability for virtual fittings\n"
+                        "3. Wait for brides to book — you'll get a notification and email for every request\n\n"
+                        "When a bride books a fitting, you'll see their details and selected "
+                        "dresses right in the app. Accept the booking and join the video call "
+                        "at the scheduled time.\n\n"
+                        "— The Dress Live team"
+                    ),
+                    html=render_branded_email(
+                        preheader=f"Your boutique is live on Dress Live.",
+                        title=f"Welcome, {greeting_name}",
+                        intro=(
+                            f"Your boutique{(' ' + boutique_name) if boutique_name else ''} "
+                            "is now set up on Dress Live. You're ready to start receiving "
+                            "virtual fitting requests from brides."
+                        ),
+                        paragraphs=[
+                            "Upload your dress catalogue from the partner app, "
+                            "and brides will be able to browse and shortlist your designs.",
+                            "When a bride books a fitting, you'll receive a notification "
+                            "with her details and the dresses she'd like to try. Accept "
+                            "the booking, and join the video call at the scheduled time — "
+                            "she'll see herself in your dresses through our AI try-on.",
+                        ],
+                        footer_note="If you didn't create this account, ignore this email — nothing else happens.",
+                    ),
+                )
+            else:
+                await send_email(
+                    to_email=user.email,
+                    subject="Welcome to Dress Live",
+                    text=(
+                        f"Hi {greeting_name},\n\n"
+                        "Welcome to Dress Live. You can now browse boutiques, "
+                        "shortlist dresses, and book live virtual fittings with "
+                        "real consultants.\n\n"
+                        "If you didn't create this account, ignore this email.\n\n"
+                        "— Dress Live"
+                    ),
+                    html=render_branded_email(
+                        preheader="Welcome to live virtual fittings on Dress Live.",
+                        title=f"Welcome, {greeting_name}",
+                        intro=(
+                            "Your Dress Live account is ready. Browse boutiques, "
+                            "shortlist the dresses you'd love to try, and book a "
+                            "live video fitting with a real consultant."
+                        ),
+                        paragraphs=[
+                            "Pick up to 4 dresses for each fitting — your consultant "
+                            "switches between them in real time while you see "
+                            "yourself wearing each one through the app's AI try-on.",
+                        ],
+                        footer_note="If you didn't create this account, ignore this email — nothing else happens.",
+                    ),
+                )
+    except Exception as exc:
+        logger.warning("welcome email failed for user %s: %s", user.id, exc)
     return user
 
 
@@ -221,7 +309,17 @@ async def send_password_reset_otp(
         subject="Your Dress Live password reset code",
         text=(
             f"Your password reset code is {code}.\n\n"
-            "It expires in 10 minutes. If you didn’t request this, you can ignore this email."
+            "It expires in 10 minutes. If you didn't request this, ignore this email."
+        ),
+        html=render_branded_email(
+            preheader="Password reset code inside.",
+            title="Password reset code",
+            intro=f"Your one-time code is {code}.",
+            paragraphs=[
+                "Type it into the Dress Live app to set a new password. "
+                "The code expires in 10 minutes.",
+            ],
+            footer_note="If you didn't request a reset, ignore this email — your password stays the same.",
         ),
     )
 
@@ -454,6 +552,13 @@ async def send_password_change_otp(
         to_email=current_user.email,
         subject="Your Dress Live verification code",
         text=f"Your verification code is {code}. It expires in 10 minutes.",
+        html=render_branded_email(
+            preheader="Verification code inside.",
+            title="Verification code",
+            intro=f"Your one-time code is {code}.",
+            paragraphs=["Enter it in the app to confirm the action. The code expires in 10 minutes."],
+            footer_note="If you didn't request this, ignore the email.",
+        ),
     )
 
     return {"success": True, "expires_in_seconds": 600}
@@ -499,6 +604,84 @@ async def verify_password_change_otp(
         },
     )
     return user
+
+
+def _measurements_dict(user: User) -> dict:
+    return {
+        "height_cm": user.height_cm,
+        "weight_kg": user.weight_kg,
+        "bust_cm": user.bust_cm,
+        "waist_cm": user.waist_cm,
+        "hips_cm": user.hips_cm,
+        "shoulder_cm": user.shoulder_cm,
+        "arm_length_cm": user.arm_length_cm,
+        "measurements_source": user.measurements_source,
+    }
+
+
+@router.get("/me/measurements")
+def get_measurements(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    return _measurements_dict(current_user)
+
+
+@router.post("/me/measurements/scan")
+async def scan_measurements(
+    payload: MeasurementScanPayload,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    if not (settings.BODYGRAM_API_KEY or "").strip() or not (settings.BODYGRAM_ORG_ID or "").strip():
+        raise HTTPException(status_code=503, detail="AI measurement scan is not configured.")
+
+    try:
+        measurements = await bodygram_service.run_scan(
+            api_key=settings.BODYGRAM_API_KEY,
+            org_id=settings.BODYGRAM_ORG_ID,
+            height_cm=payload.height_cm,
+            weight_kg=payload.weight_kg,
+            front_image_data_url=payload.front_image_data_url,
+            age=payload.age,
+            gender=payload.gender,
+            side_image_data_url=payload.side_image_data_url,
+        )
+    except bodygram_service.PhotoScanRejected:
+        # The photos couldn't be read (bad framing, blur, covered lens, no body
+        # in frame). 400 so the app surfaces this verbatim and prompts a retake,
+        # instead of returning a stats-only estimate that looks like a real scan.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "We couldn't read your photos clearly. Make sure your full body is "
+                "in frame, the camera lens isn't covered, and the lighting is good, "
+                "then retake."
+            ),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    update_data = {
+        "height_cm": payload.height_cm,
+        "weight_kg": payload.weight_kg,
+        "measurements_source": "bodygram",
+        **{k: v for k, v in measurements.items() if v is not None},
+    }
+    user = crud_user.update(db, db_obj=current_user, obj_in=update_data)
+    return _measurements_dict(user)
+
+
+@router.put("/me/measurements")
+def update_measurements(
+    payload: MeasurementManualPayload,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+    update_data["measurements_source"] = "manual"
+    user = crud_user.update(db, db_obj=current_user, obj_in=update_data)
+    return _measurements_dict(user)
 
 
 @router.delete("/me")

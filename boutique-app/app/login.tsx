@@ -89,9 +89,11 @@ export default function LoginScreen() {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      if (user.role !== 'partner') {
+      // Partners (owners) and advisors (invited team members) both use this
+      // app — advisors just get a limited view. Buyers are turned away.
+      if (user.role !== 'partner' && user.role !== 'advisor') {
         logout();
-        Alert.alert('Seller Access Only', 'This app is only available to boutique partner accounts.');
+        Alert.alert('Access Restricted', 'This app is only available to boutique partner and advisor accounts.');
         return;
       }
 
@@ -118,7 +120,7 @@ export default function LoginScreen() {
           </View>
 
           {/* Dress Live Title */}
-          <Text 
+          <Text
             className="text-black text-center mb-20"
             style={LOGIN_TITLE_STYLE}
           >
@@ -186,14 +188,19 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {/* Action Button */}
-          <TouchableOpacity 
+          <TouchableOpacity
             activeOpacity={0.9}
             onPress={handleLogin}
             disabled={loading}
-            className="bg-[#1A1A1A] py-6 items-center mb-8"
+            className="bg-[#1A1A1A] py-6 items-center mb-8 flex-row justify-center"
           >
             {loading ? (
-              <ActivityIndicator color="white" />
+              <>
+                <ActivityIndicator color="white" />
+                <Text style={[BUTTON_TEXT_STYLE, { marginLeft: 10 }]}>
+                  Signing In…
+                </Text>
+              </>
             ) : (
               <Text style={BUTTON_TEXT_STYLE}>
                 Log In

@@ -14,6 +14,7 @@ import {
   UIManager,
   Dimensions,
   StyleSheet,
+  RefreshControl,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -23,6 +24,8 @@ import * as Location from 'expo-location';
 import { api } from '@shared/api/api';
 import { useFocusEffect } from '@react-navigation/native';
 import { BlurView } from 'expo-blur';
+import { FlashList, ListRenderItemInfo } from '@shopify/flash-list';
+import { FadeInView } from '@/components/ui/fade-in-view';
 
 const MARKER_ICON = require('@/assets/svg/marker.svg');
 const PLUS_ICON = require('@/assets/svg/plus.svg');
@@ -122,6 +125,15 @@ export default function DashboardScreen() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Debounced copy of the query used for the (expensive) filtering. Typing only
+  // updates `searchQuery` (cheap → keeps the TextInput in sync); the heavy
+  // re-filter/re-render runs after a short pause. Without this, filtering on
+  // every keystroke desynced the controlled input and duplicated characters.
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery), 200);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const [activePriceFilter, setActivePriceFilter] = useState<(typeof PRICE_FILTERS)[number]['id']>('any');
   const [activeLocationFilter, setActiveLocationFilter] = useState<string>('All');
   const [activeDistanceFilter, setActiveDistanceFilter] = useState<DistanceFilterId>('any');
@@ -194,6 +206,10 @@ export default function DashboardScreen() {
     return Object.values(boutiques).some((b) => typeof b.latitude === 'number' && typeof b.longitude === 'number');
   }, [boutiques, currentCoords]);
 
+  // Stamp the last successful catalog refresh so the focus-effect below
+  // can skip duplicate fetches when the buyer bounces between tabs.
+  const lastCatalogFetchRef = useRef<number>(0);
+
   const loadCatalog = useCallback(async () => {
     try {
       const [dressData, boutiqueData] = await Promise.all([
@@ -201,15 +217,34 @@ export default function DashboardScreen() {
         api.get('/boutiques/'),
       ]);
 
-      setDresses(Array.isArray(dressData) ? dressData : []);
+      const dressList = Array.isArray(dressData) ? (dressData as Dress[]) : [];
+      const boutiqueList = Array.isArray(boutiqueData) ? (boutiqueData as Boutique[]) : [];
+
+      setDresses(dressList);
       setBoutiques(
-        Array.isArray(boutiqueData)
-          ? boutiqueData.reduce((acc: Record<number, Boutique>, boutique: Boutique) => {
-              acc[boutique.id] = boutique;
-              return acc;
-            }, {})
-          : {}
+        boutiqueList.reduce((acc: Record<number, Boutique>, boutique: Boutique) => {
+          acc[boutique.id] = boutique;
+          return acc;
+        }, {})
       );
+      lastCatalogFetchRef.current = Date.now();
+
+      // Warm the image cache for the first few boutique covers so they render
+      // instantly when the user starts scrolling.
+      const coverUrls = boutiqueList
+        .map((b) => (b.header_image_url || '').trim())
+        .filter((url): url is string => url.length > 0)
+        .slice(0, 5);
+      const dressFallbackUrls = dressList
+        .map((d) => (d.image_url || '').trim())
+        .filter((url): url is string => url.length > 0)
+        .slice(0, 5);
+      const toPrefetch = Array.from(new Set([...coverUrls, ...dressFallbackUrls])).slice(0, 6);
+      if (toPrefetch.length > 0) {
+        Image.prefetch(toPrefetch, 'memory-disk').catch(() => {
+          // Prefetch is best-effort; ignore failures.
+        });
+      }
     } catch (error) {
       console.error('Failed to load customer catalog:', error);
     } finally {
@@ -217,27 +252,53 @@ export default function DashboardScreen() {
     }
   }, []);
 
+  // Skip the catalog refetch if we loaded within the last 60s — bouncing
+  // between tabs used to fire a fresh /dresses + /boutiques pair each time.
+  // Pull-to-refresh below always bypasses this gate.
+  const CATALOG_STALE_MS = 60_000;
   useFocusEffect(
     useCallback(() => {
+      const now = Date.now();
+      if (now - lastCatalogFetchRef.current < CATALOG_STALE_MS) return;
       setLoading(true);
       loadCatalog();
     }, [loadCatalog])
   );
 
+  // Manual pull-to-refresh — bypasses the staleness gate.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadCatalog();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadCatalog]);
+
   const visibleDresses = useMemo(() => {
+    // Normalize away case/spacing/hyphens so the buyer chip "Add-Ons" matches
+    // the value the seller saves ("Add Ons"), and dresses tagged with multiple
+    // comma-separated categories match on any one of them.
+    const normCategory = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
     const categoryFiltered =
       activeCategory === 'All'
         ? dresses
         : dresses.filter((dress) => {
             const raw =
               (typeof dress.category === 'string' ? dress.category : null) ??
-              (Array.isArray(dress.categories) ? dress.categories.join(' ') : null) ??
+              (Array.isArray(dress.categories) ? dress.categories.join(',') : null) ??
               ((dress as any)?.dress_category as string | null) ??
               ((dress as any)?.type as string | null) ??
               '';
-            return raw.toLowerCase().includes(activeCategory.toLowerCase());
+            const target = normCategory(activeCategory);
+            return raw
+              .split(',')
+              .map((c) => normCategory(c))
+              .filter(Boolean)
+              .includes(target);
           });
-    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const normalizedQuery = debouncedQuery.trim().toLowerCase();
     const priceTest = PRICE_FILTERS.find((p) => p.id === activePriceFilter)?.test ?? PRICE_FILTERS[0].test;
     const activeDistance = DISTANCE_FILTERS.find((d) => d.id === activeDistanceFilter)?.maxKm ?? null;
 
@@ -328,7 +389,7 @@ export default function DashboardScreen() {
     canUseDistanceFilter,
     currentCoords,
     dresses,
-    searchQuery,
+    debouncedQuery,
     sortId,
   ]);
 
@@ -359,6 +420,48 @@ export default function DashboardScreen() {
     cards.sort((a, b) => a.boutiqueName.localeCompare(b.boutiqueName));
     return cards;
   }, [boutiques, visibleDresses]);
+
+  // Visible-dress count per boutique (single pass) — labels the search results.
+  const dressCountByBoutique = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const d of dresses) {
+      if (d.boutique_id) counts[d.boutique_id] = (counts[d.boutique_id] || 0) + 1;
+    }
+    return counts;
+  }, [dresses]);
+
+  // Boutiques whose shop name (or location) matches the search query. Rendered
+  // as their own "Boutiques" section so a shop-name search surfaces the
+  // boutique itself — not just the dresses it carries — and finds boutiques
+  // even when they currently have no dresses. Hidden boutiques are excluded.
+  const matchingBoutiques = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase();
+    if (!q) return [] as BoutiqueCard[];
+    const cards: BoutiqueCard[] = [];
+    for (const b of Object.values(boutiques)) {
+      if (!b || b.is_visible_to_customers === false) continue;
+      const name = (b.name || '').toLowerCase();
+      const loc = (b.location || '').toLowerCase();
+      if (!name.includes(q) && !loc.includes(q)) continue;
+      const cover =
+        (b.header_image_url || '').trim() ||
+        (dresses.find((d) => d.boutique_id === b.id)?.image_url || null);
+      cards.push({
+        boutiqueId: b.id,
+        boutiqueName: (b.name || '').trim() || 'Boutique',
+        boutiqueLocation: formatBoutiqueCardLocation(b.location),
+        coverImageUrl: cover,
+        matchingDressCount: dressCountByBoutique[b.id] || 0,
+      });
+    }
+    cards.sort((a, b) => a.boutiqueName.localeCompare(b.boutiqueName));
+    return cards;
+  }, [boutiques, dresses, debouncedQuery, dressCountByBoutique]);
+
+  // When the user is searching, show matching DRESSES (a 2-col grid) instead of
+  // boutique cards — so a dress-name search surfaces the actual dresses, not
+  // just the boutiques that carry them.
+  const isSearching = debouncedQuery.trim().length > 0;
 
   const openFilters = () => {
     setDraftPriceFilter(activePriceFilter);
@@ -510,25 +613,8 @@ export default function DashboardScreen() {
             Dress Live
           </Text>
 
-          {/* <TouchableOpacity
-            onPress={() => router.push('/notifications' as any)}
-            className="absolute right-0"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ zIndex: 20 }}
-          >
-            <View className="relative">
-              <Ionicons name="notifications-outline" size={20} color="#1A1A1A" />
-              {unreadCount > 0 ? (
-                <View
-                  className="absolute -top-1 -right-2 bg-black rounded-full min-w-[16px] h-[16px] items-center justify-center px-1"
-                >
-                  <Text className="text-white text-[9px] font-bold">
-                    {unreadCount > 9 ? '9+' : String(unreadCount)}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          </TouchableOpacity> */}
+          {/* Notification bell intentionally hidden — push notifications are the
+              single source of truth; no in-app inbox surface for buyers right now. */}
         </View>
 
         <View style={{ paddingTop: 4, paddingBottom: 4 }}>
@@ -544,12 +630,25 @@ export default function DashboardScreen() {
             }}
           >
             <TextInput
-              value={searchQuery}
+              // Uncontrolled (defaultValue, not value): the screen runs heavy
+              // memoized filters and the results list remounts when search mode
+              // toggles, which on a slower device lands mid-keystroke and blocks
+              // the JS thread. With a controlled `value`, React then re-applies
+              // its (stale) value to the native input and characters get
+              // duplicated/desynced — exactly the reported bug. Keeping the
+              // input uncontrolled lets the native text buffer stay the source
+              // of truth; we still drive searchQuery via onChangeText for the
+              // debounced filter, but never write back into the field.
+              defaultValue={searchQuery}
               onChangeText={setSearchQuery}
               placeholder="WHAT ARE YOU LOOKING?"
               placeholderTextColor="#9B9B9B"
-              className="text-[#1A1A1A]"
+              // Color folded into `style` (was a NativeWind className): the
+              // className interop re-wraps the TextInput on render, which can
+              // echo keystrokes on RN 0.81 / React 19. Plain style keeps this
+              // hot input off the interop path.
               style={{
+                color: '#1A1A1A',
                 fontFamily: 'Helvetica Neue',
                 fontWeight: '300',
                 fontSize: 12,
@@ -570,193 +669,297 @@ export default function DashboardScreen() {
           </View>
         </View>
       </View>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          onPress={handleFetchCurrentLocation}
-          className="flex-row items-center justify-center px-5"
-          style={{ minHeight: 36, marginTop: 4, marginBottom: 10 }}
-        >
-          <Image source={MARKER_ICON} style={{ width: 17, height: 17 }} contentFit="contain" />
-          {locationLoading ? (
-            <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
-          ) : (
-            <Text
-              className="text-[#1A1A1A] ml-2"
-              numberOfLines={1}
-              style={{
-                fontFamily: 'Helvetica Neue',
-                fontSize: 12,
-                fontWeight: '400',
-                lineHeight: 12,
-                letterSpacing: 0,
-              }}
-            >
-              {currentLocationLabel}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Categories Tab Bar */}
-        <View>
-          <View className="relative">
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{
-                marginLeft: screenWidth < 400 ? 24 : 0,
-                marginRight: screenWidth < 400 ? 24 : 0,
-              }}
-              contentContainerStyle={{
-                flexGrow: 1,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingTop: 4,
-                paddingBottom: 14,
-                paddingLeft: 0,
-                paddingRight: showHomeFilters ? 64 : 0,
-              }}
-            >
-              {CATEGORIES.map((cat, idx) => (
-                <TouchableOpacity
-                  key={cat}
-                  onPress={() => {
-                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-                    setActiveCategory(cat);
-                  }}
-                  activeOpacity={0.85}
-                  style={{
-                    paddingLeft: idx === 0 ? 0 : screenWidth < 400 ? 4 : 8,
-                    paddingRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 4 : 8,
-                    paddingVertical: 6,
-                    marginRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 2 : 12,
-                  }}
-                >
+      {loading ? (
+        <View className="flex-1 items-center justify-center" style={{ paddingBottom: 80 }}>
+          <ActivityIndicator color="#1A1A1A" />
+        </View>
+      ) : (
+        <FlashList<any>
+          key={isSearching ? 'search-dresses' : 'boutiques'}
+          data={isSearching ? visibleDresses : boutiqueCards}
+          numColumns={isSearching ? 2 : 1}
+          keyExtractor={(item) => (isSearching ? `d-${item.id}` : `b-${item.boutiqueId}`)}
+          contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#1A1A1A"
+              colors={['#1A1A1A']}
+            />
+          }
+          ListHeaderComponent={
+            <View style={{ marginHorizontal: -20 }}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleFetchCurrentLocation}
+                className="flex-row items-center justify-center px-5"
+                style={{ minHeight: 36, marginTop: 4, marginBottom: 10 }}
+              >
+                <Image source={MARKER_ICON} style={{ width: 17, height: 17 }} contentFit="contain" />
+                {locationLoading ? (
+                  <ActivityIndicator color="#1A1A1A" size="small" style={{ marginLeft: 8 }} />
+                ) : (
                   <Text
+                    className="text-[#1A1A1A] ml-2"
                     numberOfLines={1}
-                    className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#6E6E6E]'}
                     style={{
                       fontFamily: 'Helvetica Neue',
+                      fontSize: 12,
                       fontWeight: '400',
-                      fontSize: 14,
-                      lineHeight: 14,
+                      lineHeight: 12,
                       letterSpacing: 0,
                     }}
                   >
-                    {cat}
+                    {currentLocationLabel}
                   </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+                )}
+              </TouchableOpacity>
 
-            {showHomeFilters ? (
-              <View
-                ref={(n) => {
-                  filtersButtonRef.current = n;
-                }}
-                className="absolute right-4 top-0 bottom-0 justify-center"
-                pointerEvents="box-none"
-              >
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={openFilters}
-                  className="w-10 h-10 items-center justify-center border border-[#E7E7E7] bg-white"
-                >
-                  <Ionicons name="options-outline" size={18} color="#1A1A1A" />
-                </TouchableOpacity>
-              </View>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Product Feed */}
-        <View className="px-5 pt-2 pb-6">
-          {loading ? (
-            <View className="py-20 items-center justify-center">
-              <ActivityIndicator color="#1A1A1A" />
-            </View>
-          ) : boutiqueCards.length === 0 ? (
-            <View className="py-20 items-center justify-center">
-              <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">No dresses available</Text>
-              <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
-                Try adjusting your search or browse another category to see more results.
-              </Text>
-            </View>
-          ) : (
-            boutiqueCards.map((b) => (
-              <View key={b.boutiqueId} className="mb-7">
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  className="mb-3"
-                  onPress={() =>
-                    router.push({
-                      pathname: '/(tabs)/boutique-details',
-                      params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
-                    })
-                  }
-                >
-                  <View style={{ width: '100%', height: 196, overflow: 'hidden' }}>
-                    <Image
-                      source={
-                        b.coverImageUrl
-                          ? { uri: b.coverImageUrl }
-                          : require('@/assets/images/Dashboard image 1.png')
-                      }
-                      style={{ width: '100%', height: 260, marginTop: -14 }}
-                      contentFit="cover"
-                    />
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() =>
-                    router.push({
-                      pathname: '/(tabs)/boutique-details',
-                      params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
-                    })
-                  }
-                  activeOpacity={0.85}
-                >
-                  <View className="flex-row items-center justify-between mb-2 ">
-                    <Text
-                      className="flex-1 pr-3 mb-1.5"
-                      style={{
-                        color: '#000000',
-                        fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
-                        fontWeight: '700',
-                        fontSize: 14,
-                        lineHeight: 14,
-                        letterSpacing: 2,
-                        includeFontPadding: false,
-                      }}
-                      numberOfLines={1}
-                    >
-                      {b.boutiqueName}
-                    </Text>
-                    <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
-                  </View>
-                  <Text
+              <View>
+                <View className="relative">
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
                     style={{
-                      color: '#6E6E6E',
+                      marginLeft: screenWidth < 400 ? 24 : 0,
+                      marginRight: screenWidth < 400 ? 24 : 0,
+                    }}
+                    contentContainerStyle={{
+                      flexGrow: 1,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      paddingTop: 4,
+                      paddingBottom: 14,
+                      paddingLeft: 0,
+                      paddingRight: showHomeFilters ? 64 : 0,
+                    }}
+                  >
+                    {CATEGORIES.map((cat, idx) => (
+                      <TouchableOpacity
+                        key={cat}
+                        onPress={() => {
+                          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                          setActiveCategory(cat);
+                        }}
+                        activeOpacity={0.85}
+                        style={{
+                          paddingLeft: idx === 0 ? 0 : screenWidth < 400 ? 4 : 8,
+                          paddingRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 4 : 8,
+                          paddingVertical: 6,
+                          marginRight: idx === CATEGORIES.length - 1 ? 0 : screenWidth < 400 ? 2 : 12,
+                        }}
+                      >
+                        <Text
+                          numberOfLines={1}
+                          className={activeCategory === cat ? 'text-[#1A1A1A]' : 'text-[#6E6E6E]'}
+                          style={{
+                            fontFamily: 'Helvetica Neue',
+                            fontWeight: '400',
+                            fontSize: 14,
+                            lineHeight: 14,
+                            letterSpacing: 0,
+                          }}
+                        >
+                          {cat}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+
+                  {showHomeFilters ? (
+                    <View
+                      ref={(n) => {
+                        filtersButtonRef.current = n;
+                      }}
+                      className="absolute right-4 top-0 bottom-0 justify-center"
+                      pointerEvents="box-none"
+                    >
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={openFilters}
+                        className="w-10 h-10 items-center justify-center border border-[#E7E7E7] bg-white"
+                      >
+                        <Ionicons name="options-outline" size={18} color="#1A1A1A" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+              {isSearching && matchingBoutiques.length > 0 ? (
+                <View style={{ paddingHorizontal: 20, marginBottom: 4 }}>
+                  <Text style={{ fontFamily: 'Helvetica Neue', fontWeight: '700', fontSize: 11, letterSpacing: 1.5, color: '#1A1A1A', marginBottom: 4 }}>
+                    BOUTIQUES
+                  </Text>
+                  {matchingBoutiques.map((mb) => (
+                    <TouchableOpacity
+                      key={`mb-${mb.boutiqueId}`}
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/(tabs)/boutique-details',
+                          params: { boutiqueId: String(mb.boutiqueId), coverImageUrl: mb.coverImageUrl ?? undefined },
+                        })
+                      }
+                      className="flex-row items-center py-2.5"
+                    >
+                      <Image
+                        source={mb.coverImageUrl ? { uri: mb.coverImageUrl } : require('@/assets/images/Dashboard image 1.png')}
+                        style={{ width: 54, height: 54 }}
+                        contentFit="cover"
+                        cachePolicy="memory-disk"
+                      />
+                      <View className="flex-1 ml-3">
+                        <Text numberOfLines={1} style={{ fontFamily: 'Helvetica Neue', fontWeight: '700', fontSize: 13, letterSpacing: 1, color: '#000000' }}>
+                          {mb.boutiqueName}
+                        </Text>
+                        <Text numberOfLines={1} style={{ fontFamily: 'Helvetica Neue', fontWeight: '400', fontSize: 12, color: '#6E6E6E', marginTop: 3 }}>
+                          {mb.boutiqueLocation}
+                        </Text>
+                      </View>
+                      <Text style={{ fontFamily: 'Helvetica Neue', fontSize: 11, color: '#9B9B9B', marginLeft: 8 }}>
+                        {mb.matchingDressCount > 0 ? `${mb.matchingDressCount} ${mb.matchingDressCount === 1 ? 'dress' : 'dresses'}` : 'View'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  {visibleDresses.length > 0 ? (
+                    <Text style={{ fontFamily: 'Helvetica Neue', fontWeight: '700', fontSize: 11, letterSpacing: 1.5, color: '#1A1A1A', marginTop: 14, marginBottom: 2 }}>
+                      DRESSES
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          }
+          ListEmptyComponent={
+            isSearching && matchingBoutiques.length > 0 ? null : (
+            <FadeInView>
+              <View className="py-20 items-center justify-center">
+                <Text className="text-[#1A1A1A] text-[14px] font-medium mb-2">
+                  {isSearching ? 'No matches found' : 'No dresses available'}
+                </Text>
+                <Text className="text-[#1A1A1A]/40 text-[12px] text-center leading-5 px-8">
+                  {isSearching
+                    ? 'Try a different boutique or dress name.'
+                    : 'Try adjusting your search or browse another category to see more results.'}
+                </Text>
+              </View>
+            </FadeInView>
+            )
+          }
+          renderItem={(info: ListRenderItemInfo<any>) => {
+            const idx = info.index;
+            if (isSearching) {
+              const dress = info.item as Dress;
+              const cover = boutiques[dress.boutique_id]?.header_image_url || undefined;
+              const priceLabel = `${typeof dress.price === 'number' ? Math.round(dress.price) : dress.price} €`;
+              return (
+                <FadeInView delay={Math.min(idx * 40, 240)} style={{ flex: 1, paddingHorizontal: 6, paddingTop: 8, marginBottom: 20 }}>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/(tabs)/product-details',
+                        params: { id: String(dress.id), boutiqueId: String(dress.boutique_id), coverImageUrl: cover },
+                      })
+                    }
+                  >
+                    <Image
+                      source={dress.image_url ? { uri: dress.image_url } : require('@/assets/images/Dashboard image 3.png')}
+                      style={{ width: '100%', height: 220 }}
+                      contentFit="cover"
+                      cachePolicy="memory-disk"
+                      transition={150}
+                      recyclingKey={String(dress.id)}
+                    />
+                    <Text className="text-black mt-2" numberOfLines={1} style={{ fontFamily: 'Helvetica Neue', fontWeight: '500', fontSize: 13, lineHeight: 16 }}>
+                      {dress.name}
+                    </Text>
+                    <Text className="text-[#6E6E6E] mt-1" style={{ fontFamily: 'Helvetica Neue', fontWeight: '400', fontSize: 12, lineHeight: 12 }}>
+                      {priceLabel}
+                    </Text>
+                  </TouchableOpacity>
+                </FadeInView>
+              );
+            }
+            const b = info.item as BoutiqueCard;
+            return (
+            <FadeInView delay={Math.min(idx * 60, 360)} className="mb-7" style={{ paddingTop: 8 }}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                className="mb-3"
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/boutique-details',
+                    params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                  })
+                }
+              >
+                <View style={{ width: '100%', height: 196, overflow: 'hidden' }}>
+                  <Image
+                    source={
+                      b.coverImageUrl
+                        ? { uri: b.coverImageUrl }
+                        : require('@/assets/images/Dashboard image 1.png')
+                    }
+                    style={{ width: '100%', height: 260, marginTop: -14 }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    transition={180}
+                    recyclingKey={String(b.boutiqueId)}
+                  />
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/boutique-details',
+                    params: { boutiqueId: String(b.boutiqueId), coverImageUrl: b.coverImageUrl ?? undefined },
+                  })
+                }
+                activeOpacity={0.85}
+              >
+                <View className="flex-row items-center justify-between mb-2 ">
+                  <Text
+                    className="flex-1 pr-3 mb-1.5"
+                    style={{
+                      color: '#000000',
                       fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
-                      fontWeight: '600',
+                      fontWeight: '700',
                       fontSize: 14,
                       lineHeight: 14,
-                      letterSpacing: 0,
+                      letterSpacing: 2,
                       includeFontPadding: false,
                     }}
                     numberOfLines={1}
                   >
-                    {b.boutiqueLocation}
+                    {b.boutiqueName}
                   </Text>
-                </TouchableOpacity>
-              </View>
-            ))
-          )}
-        </View>
-
-      </ScrollView>
+                  <Image source={PLUS_ICON} style={{ width: 10, height: 10 }} contentFit="contain" />
+                </View>
+                <Text
+                  style={{
+                    color: '#6E6E6E',
+                    fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'Helvetica Neue',
+                    fontWeight: '600',
+                    fontSize: 14,
+                    lineHeight: 14,
+                    letterSpacing: 0,
+                    includeFontPadding: false,
+                  }}
+                  numberOfLines={1}
+                >
+                  {b.boutiqueLocation}
+                </Text>
+              </TouchableOpacity>
+            </FadeInView>
+            );
+          }}
+        />
+      )}
 
       {/* Filters Popover - hidden for now */}
       {showHomeFilters ? (

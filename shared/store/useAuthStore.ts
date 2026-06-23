@@ -17,7 +17,7 @@ interface User {
   country_code?: string | null;
   is_active: boolean;
   is_superuser: boolean;
-  role?: 'buyer' | 'partner';
+  role?: 'buyer' | 'partner' | 'advisor';
   boutique_id?: number | null;
 }
 
@@ -27,7 +27,7 @@ interface AuthState {
   isAuthenticated: boolean;
   setToken: (token: string | null) => void;
   setUser: (user: User | null) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   initialize: () => Promise<void>;
 }
 
@@ -58,16 +58,62 @@ const secureStorage = {
 };
 
 
+/**
+ * Best-effort unregister of this device's Expo push token so the user
+ * doesn't keep receiving pushes for someone else after they log out (and
+ * so the next person who logs in on this device doesn't inherit them).
+ *
+ * Runs only on native (web doesn't have expo-notifications, and
+ * Constants.appOwnership === 'expo' is Expo Go which can't get a token
+ * anyway). Wrapped in try/catch so a slow Expo lookup or a 401 doesn't
+ * block the logout flow.
+ */
+async function unregisterPushTokenForCurrentDevice(authBearer: string | null): Promise<void> {
+  if (!authBearer) return;
+  if (Platform.OS === 'web') return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Constants = require('expo-constants').default ?? require('expo-constants');
+    if (Constants?.appOwnership === 'expo') return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Notifications = require('expo-notifications') as typeof import('expo-notifications');
+    const tokenRes = await Notifications.getExpoPushTokenAsync();
+    const expoToken = tokenRes?.data;
+    if (!expoToken) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { api } = require('../api/api') as typeof import('../api/api');
+    await api.delete('/notifications/push-tokens', {
+      body: JSON.stringify({ expo_token: expoToken }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authBearer}`,
+      },
+    });
+  } catch {
+    // Best-effort — never let push-token cleanup failure block logout.
+  }
+}
+
+
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       token: null,
       isAuthenticated: false,
       setToken: (token) => set({ token, isAuthenticated: !!token }),
       setUser: (user) => set({ user }),
-      logout: () => {
+      logout: async () => {
+        // Snapshot the token BEFORE clearing it — the API call below
+        // needs the Authorization header and we're about to wipe it.
+        const currentToken = get().token;
+        // Clear local state immediately so the UI doesn't sit on a
+        // half-logged-out screen waiting for the network round-trip. The
+        // server-side cleanup runs in the background.
         set({ user: null, token: null, isAuthenticated: false });
+        // Fire-and-forget; logout shouldn't await network failures.
+        void unregisterPushTokenForCurrentDevice(currentToken);
       },
       initialize: async () => {
         // Zustand persist handles most of this, but we can add extra logic here if needed
@@ -79,4 +125,3 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
-

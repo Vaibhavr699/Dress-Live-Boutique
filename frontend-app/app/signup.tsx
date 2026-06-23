@@ -6,8 +6,12 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from '@shared/api/api';
+import { ensureMediaPermission } from '@shared/permissions/media';
+import { useAuthStore } from '@shared/store/useAuthStore';
 
 export default function SignupScreen() {
+  const setToken = useAuthStore((s: any) => s.setToken);
+  const setUser = useAuthStore((s: any) => s.setUser);
   const insets = useSafeAreaInsets();
   const router = useRouter();
   
@@ -24,12 +28,7 @@ export default function SignupScreen() {
   const [image, setImage] = useState<string | null>(null);
 
   const pickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'We need permission to access your photos to upload a profile picture.');
-      return;
-    }
+    if (!(await ensureMediaPermission('library'))) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
@@ -55,18 +54,58 @@ export default function SignupScreen() {
 
     setLoading(true);
     try {
+      // 1. Create the account. Phone now travels through here so it lands
+      //    on the User row immediately — previously only email/full_name
+      //    were sent, which is why the profile tab never showed a phone.
+      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedPhone = phone.trim();
       await api.post('/users/', {
-        email,
+        email: normalizedEmail,
         password,
-        full_name: name,
+        full_name: name.trim(),
         role: 'buyer',
+        ...(normalizedPhone ? { phone: normalizedPhone } : {}),
       });
 
-      Alert.alert(
-        'Success', 
-        'Account created successfully! Please log in.',
-        [{ text: 'OK', onPress: () => router.replace('/login') }]
-      );
+      // 2. Auto-login so we have a token to (a) upload the profile image
+      //    she just picked, and (b) drop her straight into the app instead
+      //    of bouncing back to the login screen.
+      const tokenForm = new URLSearchParams();
+      tokenForm.append('username', normalizedEmail);
+      tokenForm.append('password', password);
+      const loginData = await api.postForm('/login/access-token', tokenForm);
+      const token: string = loginData.access_token;
+      setToken(token);
+
+      // 3. Upload the profile image she picked, if any. The backend
+      //    endpoint takes multipart/form-data with a `file` field; once
+      //    Supabase hands back the public URL, /users/me reflects it.
+      if (image) {
+        try {
+          const formData = new FormData();
+          // RN-specific FormData entry — URI + type + name
+          formData.append('file', {
+            uri: image,
+            name: 'profile.jpg',
+            type: 'image/jpeg',
+          } as unknown as Blob);
+          await api.postMultipart('/users/me/profile-image', formData, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch (uploadErr) {
+          // Don't fail the whole signup if image upload fails — the
+          // account exists, she can re-upload from the profile tab.
+          console.warn('[signup] profile-image upload failed', uploadErr);
+        }
+      }
+
+      // 4. Hydrate the auth store with the (possibly-just-updated) user.
+      const me = await api.get('/users/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setUser(me);
+
+      router.replace('/(tabs)' as any);
     } catch (error: any) {
       Alert.alert('Signup Failed', error.message || 'An unexpected error occurred');
     } finally {

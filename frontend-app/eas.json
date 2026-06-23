@@ -4,10 +4,11 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "preview": {
+    "development": {
+      "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app"
       },
       "android": {
         "buildType": "apk"
@@ -16,10 +17,44 @@
         "simulator": false
       }
     },
+    "development-sim": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app"
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app",
+        "EXPO_PUBLIC_DECART_BUYER_ENABLED": "true",
+        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_51TTGjmIktpAAQfyrHvGDomKbANEh3p6jcCkpp2fuJGTK13aFnYNtOjp8MOiE9I0wKIpQbmLW9T5sKfH3kbxw5BMy00UDhro0E8"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      }
+    },
+    "ios-simulator": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app"
+      },
+      "ios": {
+        "simulator": true
+      }
+    },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique.onrender.com"
+        "EXPO_PUBLIC_API_URL": "https://dress-live-boutique-production.up.railway.app",
+        "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY": "pk_test_51TTGjmIktpAAQfyrHvGDomKbANEh3p6jcCkpp2fuJGTK13aFnYNtOjp8MOiE9I0wKIpQbmLW9T5sKfH3kbxw5BMy00UDhro0E8"
       }
     }
   }
