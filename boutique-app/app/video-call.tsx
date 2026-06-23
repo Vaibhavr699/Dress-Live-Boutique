@@ -500,8 +500,20 @@ export default function BoutiqueVideoCallScreen() {
   // room is churning, rejected, or whether the customer ever joins.
   const [debugLines, setDebugLines] = useState<string[]>([]);
   const [debugVisible, setDebugVisible] = useState(false);
+  // Mirror `debugVisible` into a ref so pushDebug can stay a STABLE callback
+  // while still reading the current visibility. Critical: LiveKit fires many
+  // events during connect; if pushDebug called setState on every one (even with
+  // the overlay hidden) the whole screen re-rendered constantly, which churned
+  // the <LiveKitRoom> connect effect into a connect→disconnect loop ("Client
+  // initiated disconnect"). When the overlay is hidden we record nothing, so the
+  // diagnostics are passive and never cause re-renders.
+  const debugVisibleRef = useRef(false);
+  useEffect(() => {
+    debugVisibleRef.current = debugVisible;
+  }, [debugVisible]);
   const debugTapCountRef = useRef(0);
   const pushDebug = useCallback((line: string) => {
+    if (!debugVisibleRef.current) return;
     const stamp = `${line}`;
     setDebugLines((prev) => [...prev.slice(-13), stamp]);
   }, []);
@@ -512,6 +524,32 @@ export default function BoutiqueVideoCallScreen() {
       setDebugVisible((v) => !v);
     }
   }, []);
+
+  // STABLE <LiveKitRoom> callbacks. Inline arrow props get a fresh identity on
+  // every render; combined with frequent re-renders that churned the room's
+  // connect effect into a connect→disconnect loop. Memoizing them (pushDebug is
+  // already stable) keeps the room mounted and connected across re-renders —
+  // same reasoning as the memoized `liveKitRoomOptions`.
+  const handleLkConnected = useCallback(() => {
+    setLkConnected(true);
+    setLkError(null);
+    pushDebug('LiveKitRoom onConnected');
+  }, [pushDebug]);
+  const handleLkError = useCallback((e: any) => {
+    // A failed connect/handshake lands here. Surface it so the advisor (and we)
+    // can see WHY the room never came up instead of staring at "waiting".
+    const msg = e?.message || String(e) || 'Unknown LiveKit error';
+    console.warn('LiveKit room error:', msg);
+    setLkError(msg);
+    pushDebug(`onError: ${msg}`);
+  }, [pushDebug]);
+  const handleLkDisconnected = useCallback((reason?: any) => {
+    setLkConnected(false);
+    pushDebug(`LiveKitRoom onDisconnected reason=${reason ?? '?'}`);
+    if (reason != null) {
+      console.warn('LiveKit disconnected:', reason);
+    }
+  }, [pushDebug]);
 
   const bookingId = useMemo(() => {
     const raw = params.bookingId;
@@ -823,7 +861,7 @@ export default function BoutiqueVideoCallScreen() {
         <View className="px-4 pb-4 border-b border-[#EFEFEF]">
           <View className="flex-row items-center justify-between">
             <Text className="text-[12px] text-black">
-              {stage === 'live' ? 'Live Video Fitting' : 'Waiting for Advisor To Join'}
+              {stage === 'live' ? 'Live Video Fitting' : 'Waiting for the customer…'}
             </Text>
 
             <View className="flex-row items-center">
@@ -940,27 +978,9 @@ export default function BoutiqueVideoCallScreen() {
                     audio={micOn}
                     video={cameraOn}
                     options={liveKitRoomOptions}
-                    onConnected={() => {
-                      setLkConnected(true);
-                      setLkError(null);
-                      pushDebug('LiveKitRoom onConnected');
-                    }}
-                    onError={(e: any) => {
-                      // A failed connect/handshake lands here. Surface it so the
-                      // advisor (and we) can see WHY the room never came up
-                      // instead of staring at "waiting" forever.
-                      const msg = e?.message || String(e) || 'Unknown LiveKit error';
-                      console.warn('LiveKit room error:', msg);
-                      setLkError(msg);
-                      pushDebug(`onError: ${msg}`);
-                    }}
-                    onDisconnected={(reason?: any) => {
-                      setLkConnected(false);
-                      pushDebug(`LiveKitRoom onDisconnected reason=${reason ?? '?'}`);
-                      if (reason != null) {
-                        console.warn('LiveKit disconnected:', reason);
-                      }
-                    }}
+                    onConnected={handleLkConnected}
+                    onError={handleLkError}
+                    onDisconnected={handleLkDisconnected}
                   >
                     {/* elevation forces this wrapper into Android's hardware
                         layer for shadow rendering, which keeps the WebRTC
