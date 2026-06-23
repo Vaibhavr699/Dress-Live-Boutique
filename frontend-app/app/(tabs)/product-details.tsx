@@ -18,12 +18,8 @@ const CART_SMALL_ICON = require('@/assets/svg/cart small.svg');
 const CART_BLACK_ICON = require('@/assets/svg/Cart Black.svg');
 const HEART_ICON = require('@/assets/svg/Heart.svg');
 
-const DUMMY_GALLERY_URLS = [
-  'https://images.unsplash.com/photo-1520962917969-0f8a4c6c4c57?auto=format&fit=crop&w=1600&q=80',
-  'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1600&q=80',
-  'https://images.unsplash.com/photo-1526045478516-99145907023c?auto=format&fit=crop&w=1600&q=80',
-  'https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=1600&q=80',
-] as const;
+// Roles that are not customer-facing photographs — kept out of the gallery.
+const NON_GALLERY_ROLES = ['standardized', 'swatch'];
 
 function formatPriceWithSpaces(price: number): string {
   return Math.round(price).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -44,7 +40,6 @@ export default function ProductDetailsScreen() {
   const [imageViewerVisible, setImageViewerVisible] = useState(false);
   const [loading, setLoading] = useState(!!id);
   const [dress, setDress] = useState<any>(null);
-  const [relatedImageUrls, setRelatedImageUrls] = useState<string[]>([]);
   const [isShortlisted, setIsShortlisted] = useState(false);
   // How many dresses the user currently has shortlisted overall — used to
   // gate the +1 action client-side so we don't fire the heart animation
@@ -65,7 +60,6 @@ export default function ProductDetailsScreen() {
   useEffect(() => {
     if (!id) {
       setDress(null);
-      setRelatedImageUrls([]);
       setIsShortlisted(false);
       setLoading(false);
       return;
@@ -114,35 +108,6 @@ export default function ProductDetailsScreen() {
     };
   }, [id, isAuthenticated]);
 
-  useEffect(() => {
-    const numericBoutiqueId = boutiqueId ? Number(boutiqueId) : NaN;
-    if (!Number.isFinite(numericBoutiqueId)) {
-      setRelatedImageUrls([]);
-      return;
-    }
-
-    let alive = true;
-    (async () => {
-      try {
-        const data = await api.get(`/dresses/?boutique_id=${numericBoutiqueId}&limit=24`);
-        if (!alive) return;
-        const currentUrl = typeof dress?.image_url === 'string' ? dress.image_url.trim() : '';
-        const urls = (Array.isArray(data) ? data : [])
-          .map((d: any) => (typeof d?.image_url === 'string' ? d.image_url.trim() : ''))
-          .filter(Boolean)
-          .filter((url: string) => /^https?:\/\//i.test(url))
-          .filter((url: string) => url !== currentUrl);
-        setRelatedImageUrls(Array.from(new Set(urls)).slice(0, 4));
-      } catch {
-        if (alive) setRelatedImageUrls([]);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [boutiqueId, dress?.image_url]);
-
   const product = useMemo(() => {
     const normalizedPrice =
       typeof dress?.price === 'number' ? `${formatPriceWithSpaces(dress.price)} €` : '1 800 €';
@@ -167,33 +132,44 @@ export default function ProductDetailsScreen() {
     return cover || null;
   }, [dress?.image_url, coverImageUrl]);
 
+  // Gallery = THIS dress's own photos. Show the four angle images
+  // (front/back/left/right) first, then the primary/cover image, then any other
+  // real photos — never other dresses from the boutique. Legacy single-image
+  // dresses simply show their one image.
   const galleryImages = useMemo(() => {
     const items: Array<{ key: string; source: any }> = [];
+    const seen = new Set<string>();
 
-    const primary = (headerImageUrl || '').trim();
-    if (/^https?:\/\//i.test(primary)) {
-      items.push({ key: 'primary', source: { uri: primary } });
-    }
+    const pushUrl = (url: string | undefined | null, key: string) => {
+      const u = (url || '').trim();
+      if (!/^https?:\/\//i.test(u) || seen.has(u)) return;
+      seen.add(u);
+      items.push({ key, source: { uri: u } });
+    };
 
-    relatedImageUrls.forEach((url, idx) => {
-      items.push({ key: `related-${idx}`, source: { uri: url } });
+    const images: any[] = Array.isArray(dress?.images) ? dress.images : [];
+    const byRole = (role: string) =>
+      images.find((im) => im?.role === role && typeof im?.url === 'string')?.url;
+
+    // 1. The four customer-facing angles, in viewing order.
+    ['front', 'back', 'left', 'right'].forEach((role) => pushUrl(byRole(role), `angle-${role}`));
+
+    // 2. Primary/cover image (covers legacy single-image dresses).
+    pushUrl(headerImageUrl, 'primary');
+
+    // 3. Any remaining real photos on this dress (e.g. detail), excluding the
+    //    non-customer-facing helper roles (standardized / swatch).
+    images.forEach((im, idx) => {
+      if (im?.role && NON_GALLERY_ROLES.includes(im.role)) return;
+      pushUrl(im?.url, `extra-${idx}`);
     });
-
-    // Ensure the carousel can always scroll (avoid blank pages).
-    if (items.length < 2) {
-      const used = new Set<string>(items.map((i) => (i?.source?.uri as string | undefined) || '').filter(Boolean));
-      DUMMY_GALLERY_URLS.forEach((url, idx) => {
-        if (used.has(url)) return;
-        items.push({ key: `dummy-${idx}`, source: { uri: url } });
-      });
-    }
 
     if (items.length === 0) {
       items.push({ key: 'primary-fallback', source: require('@/assets/images/icon.png') });
     }
 
     return items;
-  }, [headerImageUrl, relatedImageUrls]);
+  }, [dress?.images, headerImageUrl]);
 
   const productInfo = [
     { label: 'Dress Price:', value: product.price },
