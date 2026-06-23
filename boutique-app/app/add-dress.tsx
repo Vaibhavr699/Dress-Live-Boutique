@@ -667,12 +667,12 @@ export default function AddDressScreen() {
         </View>
             <SectionHeader
               title="Basic Information"
-              subtitle="Dress name, references id, and high-level info user across catalogs."
+              subtitle="Dress name, reference ID, and the core details shown across your catalog."
             />
 
             <LabeledInput
               label="Dress Name *"
-              placeholder="Type here"
+              placeholder="e.g. Elegant Satin A-Line"
               value={name}
               onChangeText={setName}
               errorText={nameError}
@@ -680,7 +680,7 @@ export default function AddDressScreen() {
 
             <LabeledInput
               label="Dress Description"
-              placeholder="Type here"
+              placeholder="Fabric, neckline, silhouette, train, fit…"
               value={description}
               onChangeText={setDescription}
             />
@@ -759,7 +759,10 @@ export default function AddDressScreen() {
               </View>
             </View>
 
-            <SectionHeader title="Choose Categories" />
+            <SectionHeader
+              title="Choose Categories"
+              subtitle="Where this dress appears in your catalog."
+            />
             <View className="flex-row flex-wrap mb-6">
               {CATEGORY_OPTIONS.map((option, index) => (
                 <View
@@ -776,7 +779,10 @@ export default function AddDressScreen() {
               ))}
             </View>
 
-            <SectionHeader title="Choose Options" subtitle="Service Options" />
+            <SectionHeader
+              title="Choose Options"
+              subtitle="What customers can do with this dress — AI try-on, live try-on, add to cart, in-store visit."
+            />
             <View className="flex-row flex-wrap mb-6">
               {SERVICE_OPTIONS.map((option, index) => (
                 <View
@@ -808,7 +814,7 @@ export default function AddDressScreen() {
                     Improve AI Try-On Quality
                   </Text>
                   <Text className="text-[9px] text-black/45 leading-4 mb-3">
-                    For the best AI Try-On results, upload photos from multiple angles.
+                    For the sharpest results, add 4 angle photos — front, back, left, right — in the multi-angle setup that opens after you save.
                   </Text>
                   <TouchableOpacity
                     activeOpacity={0.9}
@@ -839,8 +845,8 @@ export default function AddDressScreen() {
             />
 
             <LabeledInput
-              label="Add Final Fix Price *"
-              placeholder="Type here"
+              label="Final Price (€) *"
+              placeholder="e.g. 1800"
               value={price}
               onChangeText={setPrice}
               keyboardType="numeric"
@@ -1049,7 +1055,7 @@ export default function AddDressScreen() {
             </View>
 
             <UploadRow
-              label="Upload AI Video Try For AI 3D Photo *"
+              label="Upload Video Asset for AI 3D Photo *"
               hasFile={!!videoAsset}
               previewUri={videoAsset}
               onPress={() => pickAsset(setVideoAsset)}
@@ -1072,7 +1078,7 @@ export default function AddDressScreen() {
                     Availability For Video Fitting
                   </Text>
                   <Text className="text-[10px] text-black/45 leading-5">
-                    Customers can only book if minimum 1 selected dresses are video-ready
+                    Customers can only book a video fitting if at least 1 of their selected dresses is video-ready.
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -1097,8 +1103,8 @@ export default function AddDressScreen() {
                 subtitle="Only visible to advisors during calls."
               />
               <LabeledInput
-                label="Fit & Alteration Notes *"
-                placeholder="e.g., Romantic wedding lace mermaid dress with low back and lack details."
+                label="Fit & Alteration Notes"
+                placeholder="e.g. Runs small — size up; bustle adds ~20 min; sample is ivory."
                 value={internalNotes}
                 onChangeText={setInternalNotes}
                 multiline
